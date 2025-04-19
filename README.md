@@ -40,76 +40,80 @@ The `.exe` contains everything — no setup needed.
 ### 💻 Option 2: Python (Manual / Development Mode)
 
 1. Install **Python 3.7+**
-2. Place `ffmpeg.exe`, `ffprobe.exe`, and `cloudflared.exe` in the project root
+2. **Required:** Download and place these 3 executables in the project root:
+   - [`ffmpeg.exe`](https://ffmpeg.org/download.html)
+   - `ffprobe.exe` (comes with ffmpeg)
+   - [`cloudflared.exe`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation)
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
-   ```
-4. Start the server:
-   ```bash
-   python media_server.py
-   ```
-   Or use the helper:
-   ```bash
-   start_server.bat
-   ```
-5. Open your browser manually to: [http://localhost:5000](http://localhost:5000)
 
-> 💡 Tunnel will prompt automatically if `cloudflared.exe` is present
+	4.	Start the server:
 
----
+python media_server.py
 
-## 🛠️ Building the Executable
+Or use the helper:
 
-Use `build_exe.bat` to automate the process.
+start_server.bat
 
-### 📦 What it does:
-- Checks for Python and PyInstaller
-- Installs any missing packages (including `dnspython` for eventlet)
-- Asks if you want debug mode
-- Builds a clean `.exe` using `ghosthub.spec`
 
-### ↺ Build Instructions:
-```bash
+	5.	Open your browser manually to: http://localhost:5000
+
+💡 Tunnel will prompt automatically if cloudflared.exe is present
+
+⸻
+
+🛠️ Building the Executable
+
+Use build_exe.bat to automate the process.
+
+📦 What it does:
+	•	Checks for Python and PyInstaller
+	•	Installs any missing packages (including dnspython for eventlet)
+	•	Asks if you want debug mode
+	•	Builds a clean .exe using ghosthub.spec
+
+↺ Build Instructions:
+
 build_exe.bat
-```
-Output appears in the `/dist` folder as `GhostHub.exe`
 
----
+Output appears in the /dist folder as GhostHub.exe
 
-## 📁 Media Categories
+⸻
 
-1. Click "Add Category" in the UI
-2. Name it and select a folder path
-3. It will persist in `media_categories.json`
+📁 Media Categories
+	1.	Click “Add Category” in the UI
+	2.	Name it and select a folder path
+	3.	It will persist in media_categories.json
 
----
+⸻
 
-## 🎥 Supported Formats
+🎥 Supported Formats
 
-**Images:** `jpg`, `jpeg`, `png`, `gif`, `bmp`, `tiff`, `svg`, `webp`, `heic`, `raw`, `psd`, `xcf`, etc.  
-**Videos:** `mp4`, `webm`, `mov`, `avi`, `mkv`, `wmv`, `flv`, `m4v`, `ts`, `mpg`, `ogv`, etc.
+Images: jpg, jpeg, png, gif, bmp, tiff, svg, webp, heic, raw, psd, xcf, etc.
+Videos: mp4, webm, mov, avi, mkv, wmv, flv, m4v, ts, mpg, ogv, etc.
 
----
+⸻
 
-## 🧪 Troubleshooting
+🧪 Troubleshooting
+	•	Media not loading? Check your paths and file types
+	•	Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
+	•	Chat or sync buggy? Refresh — GhostHub is resilient and stateless
+	•	Crashes? Run from terminal for logs:
 
-- **Media not loading?** Check your paths and file types
-- **Tunnel not starting?** Ensure `cloudflared.exe` is present (for `.bat`/Python mode)
-- **Chat or sync buggy?** Refresh — GhostHub is resilient and stateless
-- **Crashes?** Run from terminal for logs:
-  ```bash
-  cd dist
-  GhostHub.exe
-  ```
+cd dist
+GhostHub.exe
 
----
 
-## 💬 Final Notes
 
-GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. Spin it up, invite a few ghosts, and shut it down when you're done.
+⸻
+
+💬 Final Notes
+
+GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. Spin it up, invite a few ghosts, and shut it down when you’re done.
 
 No setup. No tracking. No trace.
 
-**Ghost on, my friend. 👻**
+Ghost on, my friend. 👻
 
+Let me know if you want this turned into a `README.md` file and committed via a branch + PR structure.
