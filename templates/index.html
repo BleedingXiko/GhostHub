@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GhostHub</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#1a1a3a">
+    <meta name="description" content="A lightweight, modular media server with TikTok-style swipe interface">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GhostHub">
+    
+    <!-- PWA Icons -->
+    <link rel="icon" href="/static/icons/Ghosthub1024.png" type="image/png">
+    <link rel="apple-touch-icon" href="/static/icons/Ghosthub180.png">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+</head>
+<body>
+<div class="app-header">
+    <!-- New element for status display on the left -->
+    <div id="sync-status-display" class="sync-status-display">Sync Mode: OFF</div>
+    <div class="header-title">
+        <img src="/static/icons/Ghosthub192.png" alt="GhostHub" class="header-logo" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
+        GhostHub
+    </div>
+    <div id="sync-toggle-container" class="sync-toggle-container">
+        <!-- Button text will be simplified by JS -->
+        <button id="sync-toggle-btn" class="sync-toggle-btn">
+            Sync
+        </button>
+    </div>
+</div>
+    <div id="tiktok-container" class="hidden">
+        <div class="spinner-container">
+            <div class="spinner"></div>
+        </div>
+        <!-- Media elements will be dynamically inserted here -->
+        
+        <!-- Mobile-optimized permanent back button with better touch handling -->
+        <a href="#" id="permanent-back-button" style="
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: rgba(26, 26, 58, 0.9);
+            color: white; /* Better visibility */
+            border: 3px solid #1a1a3a;
+            font-size: 36px;
+            display: none; /* Start hidden, will be shown when needed */
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 200; /* Reasonable z-index to ensure it's above the header (which has z-index 100) */
+            box-shadow: 0 0 20px #1a1a3a;
+            text-decoration: none;
+            -webkit-tap-highlight-color: rgba(0,0,0,0);
+            touch-action: manipulation;
+            pointer-events: auto !important; /* Ensure it's always clickable */
+            user-select: none; /* Prevent text selection */
+        ">
+            ← 
+            <!-- Loading spinner for back button -->
+            <span id="back-button-spinner" style="display: none; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top: 3px solid white; animation: spin 1s linear infinite; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%)"></span>
+        </a>
+        
+        <style>
+            @keyframes spin {
+                0% { transform: translate(-50%, -50%) rotate(0deg); }
+                100% { transform: translate(-50%, -50%) rotate(360deg); }
+            }
+        </style>
+        
+        <script>
+            // Separate back button handler to ensure touch works on mobile
+            // Simplest back button handler - just reload on click/touch
+            document.addEventListener('DOMContentLoaded', function() {
+                const backButton = document.getElementById('permanent-back-button');
+                
+                function handleAction(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Back button action - reloading page");
+                    // Show spinner visually (optional, as page reloads quickly)
+                    const spinner = document.getElementById('back-button-spinner');
+                    if (spinner) spinner.style.display = 'inline-block';
+                    // Force reload
+                    window.location.reload(true); 
+                }
+
+                // Attach to both events, browser should handle preventing double actions
+                backButton.addEventListener('click', handleAction);
+                backButton.addEventListener('touchend', handleAction); 
+            });
+        </script>
+    </div>
+
+    <div class="container">
+        <!-- Keep the h1 for the category view title -->
+        <h1 class="hidden-title">GhostHub</h1> <!-- Hidden title, header is now separate -->
+        
+        <div id="categoryView">
+            <div class="category-header">
+                <h2>Categories</h2>
+                <div class="action-buttons">
+                    <a href="/add_category" class="add-category-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 4V20M4 12H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        Add Category
+                    </a>
+                </div>
+            </div>
+            <div class="category-list" id="categoryList">
+                <!-- Categories will be loaded here -->
+            </div>
+        </div>
+        
+        <div id="mediaView" class="hidden">
+            <!-- Media view elements -->
+        </div>
+    </div>
+
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO" crossorigin="anonymous"></script>
+    
+    <script type="module" src="/static/js/main.js"></script>
+    
+    <!-- PWA Installer Script -->
+    <script src="/static/js/pwa-installer.js"></script>
+</body>
+</html>

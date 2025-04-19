@@ -1,0 +1,37 @@
+{
+  "name": "GhostHub",
+  "short_name": "GhostHub",
+  "description": "A lightweight, modular media server with TikTok-style swipe interface",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a3a",
+  "theme_color": "#1a1a3a",
+  "icons": [
+    {
+      "src": "/static/icons/Ghosthub1024.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/Ghosthub512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/Ghosthub192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/Ghosthub180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "orientation": "portrait",
+  "scope": "/"
+}

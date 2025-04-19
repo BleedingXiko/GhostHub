@@ -1,0 +1,13 @@
+Flask>=2.0.0
+Werkzeug>=2.0.0
+Jinja2>=3.0.0
+Flask-SocketIO>=5.3.4 # Using latest stable version
+gevent>=21.12.0 # Added for gevent async mode
+gevent-websocket>=0.10.1 # Required for gevent WebSocket support
+# eventlet>=0.33.3 # Removed, using gevent instead
+dnspython>=2.2.0 # Required for DNS operations
+PyInstaller>=5.6.0 # Required for building executable
+requests>=2.28.0 # Required for test script
+pyperclip>=1.8.2 # Required for clipboard operations
+Pillow>=9.0.0 # Required for image thumbnail generation
+moviepy>=1.0.3 # Required for video thumbnail generation (needs ffmpeg)

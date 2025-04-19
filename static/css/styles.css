@@ -1,0 +1,781 @@
+/* TikTok Style Media Browser Styles */
+:root {
+    --primary-color: #1a1a3a; /* Dark blue */
+    --secondary-color: #3a3a5a; /* Darker blue */
+    --background-color: #121212; /* Dark background */
+    --text-color: #ffffff;
+    --card-background: #1e1e1e;
+    --primary-color-rgb: 26, 26, 58;
+    --secondary-color-rgb: 58, 58, 90;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header Styles */
+.app-header {
+    display: flex; /* Use flexbox for alignment */
+    align-items: center; /* Vertically center items */
+    justify-content: space-between; /* Space out left, center, right */
+    background-color: #1a1a3a;
+    color: white;
+    padding: 10px 16px; /* Adjusted padding */
+    font-weight: 600;
+    font-size: 1.1em; /* Slightly smaller base font */
+    flex-shrink: 0;
+    border-bottom: 2px solid #3a3a5a;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    position: relative; /* Needed for absolute positioning of children */
+    z-index: 50; /* Ensure header is above content */
+}
+
+.sync-status-display {
+    font-size: 0.8em; /* Smaller font for status */
+    color: rgba(255, 255, 255, 0.7); /* Dimmed color */
+    flex-basis: 100px; /* Give it some space */
+    text-align: left;
+}
+
+.header-title {
+    flex-grow: 1; /* Allow title to take remaining space */
+    text-align: center; /* Center the main title */
+    font-size: 1.2em; /* Make title slightly larger */
+}
+
+.sync-toggle-container {
+    position: static; /* Remove absolute positioning */
+    transform: none; /* Remove transform */
+    flex-basis: 100px; /* Give it some space */
+    text-align: right;
+}
+
+/* TikTok Container Styles */
+#tiktok-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--background-color);
+}
+
+.tiktok-media {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none !important; /* Force hide with !important */
+    /* Prevent fullscreen behavior */
+    max-width: 100vw;
+    max-height: 100vh;
+    z-index: 10; /* Ensure media is above background but below controls */
+    background-color: #000; /* Black background for all media */
+}
+
+/* Specific styles for video elements to prevent fullscreen */
+video.tiktok-media {
+    object-position: center;
+    background-color: #000;
+    object-fit: contain; /* Ensure videos maintain aspect ratio */
+}
+
+/* Specific styles for image elements */
+img.tiktok-media {
+    object-fit: contain; /* Ensure images maintain aspect ratio */
+    background-color: #000; /* Black background for images */
+}
+
+.tiktok-media.active {
+    display: block !important;
+    z-index: 15;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* Loading Spinner Styles */
+.spinner-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 60;
+    display: none;
+}
+
+.spinner {
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top: 4px solid #fff;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Media Controls Styles */
+.media-controls {
+    position: fixed;
+    bottom: 20px;
+    left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    z-index: 10;
+}
+
+.media-controls button {
+    background: var(--primary-color);
+    color: white;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+/* Container Styles */
+.container {
+    max-width: 100%;
+    padding: 15px;
+    overflow-y: auto;
+    height: calc(100vh - 60px - 30px);
+    -webkit-overflow-scrolling: touch;
+    margin-top: 0;
+}
+
+/* Typography */
+h1, h2 {
+    color: var(--primary-color);
+    margin-bottom: 15px;
+    text-shadow: 0 0 5px var(--primary-color);
+}
+
+/* Category List Styles */
+.category-list {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); /* Increased card width */
+    gap: 16px; /* Increased gap between cards */
+    padding: 8px;
+    padding-bottom: 80px;
+}
+
+.category-item {
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 0;
+    transition: all 0.2s ease;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+    height: 240px; /* Increased height */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    cursor: pointer; /* Add cursor pointer to indicate clickable */
+}
+
+.category-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(26, 26, 58, 0.3);
+}
+
+/* Add a subtle glow effect on hover to indicate clickability */
+.category-item:hover::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 12px;
+    box-shadow: inset 0 0 20px rgba(254, 44, 85, 0.3);
+    pointer-events: none;
+}
+
+.category-item::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--primary-color);
+    z-index: 1;
+}
+
+.thumbnail {
+    width: 100%;
+    height: 180px; /* Increased height to match larger card */
+    object-fit: cover;
+    border-radius: 12px 12px 0 0;
+    background-color: #333;
+}
+
+/* Category Info Styles - kept for reference but not used */
+.category-info {
+    font-size: 0.9em;
+    font-weight: 600;
+    color: var(--text-color);
+    padding: 8px 10px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.category-info::after {
+    content: attr(data-path);
+    display: block;
+    font-size: 0.7em;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Button Group Styles */
+.button-group {
+    display: flex;
+    justify-content: flex-end; /* Changed from space-between to flex-end */
+    padding: 0 10px 10px;
+    margin-top: auto;
+    gap: 8px;
+    position: relative;
+    z-index: 10; /* Ensure buttons are above the card for proper clicking */
+}
+
+.button-group button {
+    width: auto;
+    padding: 8px 10px;
+    font-size: 18px;
+    line-height: 1;
+    background: none;
+    border: 1px solid;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    color: var(--secondary-color);
+    border-color: var(--secondary-color);
+}
+
+.delete-btn:hover {
+    transform: scale(1.1);
+    background-color: rgba(var(--secondary-color-rgb), 0.2);
+    box-shadow: 0 0 8px var(--secondary-color);
+}
+
+/* Media Count Badge */
+.media-count-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 0.7em;
+    font-weight: 700;
+    color: white;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 6px;
+    border-radius: 10px;
+    z-index: 1;
+}
+
+/* Style for the new media type icon */
+.media-type-icon {
+    position: absolute;
+    bottom: 8px; /* Position near the bottom */
+    left: 8px;  /* Position near the left */
+    font-size: 1.1em; /* Adjust size as needed */
+    background-color: rgba(0, 0, 0, 0.6); /* Semi-transparent background */
+    color: white;
+    padding: 2px 5px; /* Small padding */
+    border-radius: 4px; /* Slightly rounded corners */
+    z-index: 1; /* Ensure it's above the thumbnail but below buttons if overlapping */
+    line-height: 1; /* Prevent extra vertical space */
+    user-select: none; /* Prevent text selection */
+}
+
+/* Form Elements */
+input[type="text"] {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 1em;
+}
+
+/* Button Styles */
+button {
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    color: #000;
+    font-weight: 600;
+    border: none;
+    padding: 12px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    width: 100%;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+button:active {
+    transform: translateY(0px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Back Button Styles */
+.back-button {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    pointer-events: auto;
+    z-index: 100;
+    background-color: rgba(26, 26, 58, 0.9);
+    color: var(--primary-color);
+    border: 2px solid var(--primary-color);
+    padding: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    width: 60px;
+    height: 60px;
+    font-size: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 15px var(--primary-color);
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+    touch-action: manipulation;
+}
+
+.back-button:hover {
+    background-color: rgba(var(--primary-color-rgb), 0.3);
+    box-shadow: 0 0 20px var(--primary-color);
+    color: white;
+    border-color: white;
+}
+
+/* Category Header */
+.category-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+/* Action Buttons Container */
+.action-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+/* Add Category Button */
+.add-category-btn {
+    background: var(--primary-color);
+    color: white;
+    font-weight: 600;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 10px rgba(26, 26, 58, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.add-category-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(254, 44, 85, 0.5);
+}
+
+/* Swipe Indicators */
+.swipe-indicator {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 40px;
+    background-color: rgba(0, 0, 0, 0.5);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 24px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 90;
+}
+
+.swipe-indicator.up {
+    top: 20px;
+}
+
+.swipe-indicator.down {
+    bottom: 20px;
+}
+
+.swipe-indicator.visible {
+    opacity: 0.7;
+}
+
+/* Lazy Loading Styles */
+.lazy-load {
+    opacity: 0;
+    transition: opacity 0.3s ease-in;
+}
+
+.lazy-load.loaded {
+    opacity: 1;
+}
+
+/* Utility Classes */
+.hidden-title, .hidden {
+    display: none;
+}
+
+/* Sync Mode Styles */
+.sync-toggle-container {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 55; /* Ensure it's above other elements but below back button */
+}
+
+/* Style adjustments for the sync button itself */
+/* #permanent-back-button style is defined inline in index.html, z-index is already high */
+
+.sync-toggle-btn {
+    background: var(--primary-color);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 15px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: auto; /* Let button size naturally */
+    text-transform: none;
+    letter-spacing: normal;
+    padding: 6px 12px; /* Adjust padding */
+    font-size: 0.9em; /* Adjust font size */
+}
+
+.sync-toggle-btn:hover {
+    background: var(--secondary-color);
+    transform: translateY(-1px);
+}
+
+.sync-toggle-btn.active {
+    background: #3a1a1a;
+    border-color: rgba(255,255,255,0.5);
+}
+
+/* Chat Styles */
+.chat-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--card-background);
+    border-top: 2px solid var(--primary-color);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+    z-index: 70;
+    transition: height 0.3s ease;
+    overflow: hidden;
+}
+
+.chat-container.collapsed {
+    height: 50px;
+}
+
+.chat-container.expanded {
+    height: 300px;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background-color: var(--primary-color);
+    cursor: pointer;
+    position: relative;
+    transition: background-color 0.2s ease;
+}
+
+.chat-header:hover {
+    background-color: var(--secondary-color);
+}
+
+.chat-header::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 50px;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid rgba(255, 255, 255, 0.7);
+    transition: transform 0.2s ease;
+}
+
+.chat-container.expanded .chat-header::after {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.latest-message {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: white;
+    font-size: 14px;
+}
+
+.chat-toggle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background-color: var(--secondary-color);
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+}
+
+.chat-toggle.has-unread::after {
+    content: attr(data-count);
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background-color: #ff4757;
+    color: white;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-body {
+    display: flex;
+    flex-direction: column;
+    height: calc(100% - 50px);
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.chat-message {
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background-color: var(--secondary-color);
+    max-width: 80%;
+    word-break: break-word;
+}
+
+.chat-user {
+    font-weight: bold;
+    color: #ddd;
+    font-size: 12px;
+    display: block;
+    margin-bottom: 3px;
+}
+
+.chat-text {
+    color: white;
+    font-size: 14px;
+}
+
+.chat-time {
+    float: right;
+    color: #aaa;
+    font-size: 10px;
+    margin-top: 5px;
+    margin-left: 10px;
+}
+
+.chat-notification {
+    text-align: center;
+    color: #aaa;
+    font-size: 12px;
+    margin: 10px 0;
+    font-style: italic;
+}
+
+.chat-form {
+    display: flex;
+    padding: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--secondary-color);
+    border-radius: 20px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-size: 14px;
+}
+
+.chat-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-send {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--primary-color);
+    border: none;
+    margin-left: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.chat-send:hover {
+    background-color: var(--secondary-color);
+}
+
+/* Media Queries for Mobile Devices */
+@media (max-width: 768px) {
+    /* Enhance TikTok-style interface for mobile */
+    .category-list {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); /* Smaller cards on mobile */
+        gap: 12px; /* Tighter spacing */
+    }
+    
+    .category-item {
+        height: 200px; /* Shorter cards on mobile */
+        transform: scale(0.98); /* Slightly smaller by default */
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .category-item:hover, .category-item:active {
+        transform: scale(1.02); /* Grow slightly on interaction */
+        box-shadow: 0 8px 25px rgba(254, 44, 85, 0.3);
+    }
+    
+    .thumbnail {
+        height: 150px; /* Adjust thumbnail height for mobile */
+    }
+    
+    /* Enhance TikTok-style media viewing */
+    #tiktok-container {
+        background-color: #000; /* Pure black background for better contrast */
+    }
+    
+    .tiktok-media.active {
+        object-fit: contain; /* Ensure media fits properly on mobile */
+    }
+    
+    /* Make swipe indicators more visible on mobile */
+    .swipe-indicator {
+        width: 50px;
+        height: 50px;
+        font-size: 28px;
+        background-color: rgba(0, 0, 0, 0.6);
+    }
+    
+    .swipe-indicator.visible {
+        opacity: 0.8;
+    }
+    
+    /* Enhance media controls for touch */
+    .media-controls button {
+        width: 60px;
+        height: 60px;
+        font-size: 24px;
+    }
+    
+    /* Mobile-specific chat styles */
+    .chat-container.expanded {
+        height: 250px; /* Smaller height on mobile */
+    }
+    
+    .chat-message {
+        max-width: 90%; /* Wider messages on mobile */
+    }
+    
+    .chat-input {
+        font-size: 16px; /* Larger font for better typing on mobile */
+    }
+}

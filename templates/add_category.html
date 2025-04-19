@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GhostHub - Add Category</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#1a1a3a">
+    <meta name="description" content="A lightweight, modular media server with TikTok-style swipe interface">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GhostHub">
+    
+    <!-- PWA Icons -->
+    <link rel="icon" href="/static/icons/Ghosthub1024.png" type="image/png">
+    <link rel="apple-touch-icon" href="/static/icons/Ghosthub180.png">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+    <style>
+        /* Add specific styles for the form container if needed, inheriting base styles */
+        .add-category-form-container {
+            max-width: 600px; /* Limit form width */
+            margin: 20px auto; /* Center the form */
+            background: var(--card-background);
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        .add-category-form-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.8);
+        }
+        .add-category-form-container input[type="text"] {
+            /* Inherits base styles, add specific overrides if needed */
+            margin-bottom: 15px; /* Consistent spacing */
+            background-color: rgba(0,0,0,0.3); /* Darker input */
+            border: 1px solid var(--secondary-color);
+        }
+         .add-category-form-container input[type="text"]:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.3);
+         }
+        .form-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .form-actions button, .form-actions a {
+             flex-grow: 1; /* Make buttons share space */
+             text-align: center;
+        }
+        .browse-button { /* Specific style for browse button */
+             background: var(--secondary-color); /* Use secondary color */
+             width: auto !important; /* Override width: 100% */
+             flex-grow: 0 !important; /* Don't grow */
+             padding: 10px 15px !important;
+             font-size: 0.9em !important;
+        }
+        .browse-button:hover {
+             background: var(--primary-color); /* Use primary on hover */
+        }
+        #message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        #message.success {
+            background-color: rgba(var(--primary-color-rgb), 0.2);
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+        #message.error {
+            background-color: rgba(255, 80, 80, 0.2);
+            color: #ff5050;
+            border: 1px solid #ff5050;
+        }
+        .supported-formats {
+            font-size: 0.8em;
+            color: rgba(255,255,255,0.6);
+            margin-bottom: 15px;
+            line-height: 1.4;
+        }
+        .supported-formats p {
+            margin-bottom: 3px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Use the same header structure as index.html -->
+    <div class="app-header">
+        <div class="header-title">
+            <img src="/static/icons/Ghosthub192.png" alt="GhostHub" class="header-logo" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
+            GhostHub
+        </div>
+        <!-- Sync toggle removed as it's likely not needed here -->
+    </div>
+
+    <div class="container">
+        <div class="add-category-form-container">
+            <h2>Add New Category</h2>
+            <label for="categoryName">Category Name:</label>
+            <input type="text" id="categoryName" placeholder="e.g., Vacation Pics">
+
+            <label for="folderPath">Full Folder Path:</label>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
+                <input type="text" id="folderPath" placeholder="Select a folder using the Browse button" style="flex-grow: 1; margin: 0;">
+                <button type="button" id="browseBtn" class="browse-button">Browse...</button>
+            </div>
+
+            <div class="supported-formats">
+                <p>Supported formats:</p>
+                <p>Images: jpg, jpeg, png, gif, bmp, tiff, tif, svg, webp, ico, heic, heif, raw, cr2, nef, arw, dng, orf, sr2, psd, xcf</p>
+                <p>Videos: mp4, webm, mov, avi, mkv, wmv, flv, m4v, 3gp, mpg, mpeg, ts, m2ts, vob, ogv, mts, m2v, divx, asf, rm, rmvb, mp2, mpv, f4v, swf</p>
+            </div>
+
+            <div id="message"></div> <!-- Message area -->
+
+            <div class="form-actions">
+                 <a href="/" class="add-category-btn" style="background: var(--secondary-color); text-decoration: none;">← Back</a>
+                 <button id="addCategoryBtn">Add Category</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const addCategoryBtn = document.getElementById('addCategoryBtn');
+            const browseBtn = document.getElementById('browseBtn');
+            const categoryNameInput = document.getElementById('categoryName');
+            const folderPathInput = document.getElementById('folderPath');
+            const messageDiv = document.getElementById('message');
+
+            function showMessage(text, type = 'info') {
+                messageDiv.textContent = text;
+                messageDiv.className = type; // 'success' or 'error'
+                // Auto-clear message after some time?
+                // setTimeout(() => { messageDiv.textContent = ''; messageDiv.className = ''; }, 5000);
+            }
+
+            browseBtn.addEventListener('click', async () => {
+                showMessage('Opening folder browser...', 'info');
+                try {
+                    const response = await fetch('/api/browse-folders');
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.path) {
+                            folderPathInput.value = data.path;
+                            showMessage('Folder selected.', 'success');
+                        } else {
+                            showMessage('No folder selected or browser cancelled.', 'info');
+                        }
+                    } else {
+                        const data = await response.json();
+                        showMessage(`Error opening browser: ${data.error || 'Server error'}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error browsing folders:', error);
+                    showMessage('Error contacting server for folder browser.', 'error');
+                }
+            });
+
+            addCategoryBtn.addEventListener('click', async () => {
+                const name = categoryNameInput.value.trim();
+                const path = folderPathInput.value.trim();
+                messageDiv.textContent = ''; // Clear previous messages
+                messageDiv.className = '';
+
+                if (!name || !path) {
+                    showMessage('Please enter both category name and folder path.', 'error');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/categories', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ name, path })
+                    });
+
+                    if (response.ok) {
+                        showMessage('Category added successfully!', 'success');
+                        categoryNameInput.value = '';
+                        folderPathInput.value = '';
+                        // Redirect back after a short delay
+                        setTimeout(() => { window.location.href = '/'; }, 1500);
+                    } else {
+                        const data = await response.json();
+                        showMessage(`Error: ${data.error || 'Failed to add category'}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error adding category:', error);
+                    showMessage('An unexpected error occurred.', 'error');
+                }
+            });
+        });
+    </script>
+    
+    <!-- PWA Installer Script -->
+    <script src="/static/js/pwa-installer.js"></script>
+</body>
+</html>
