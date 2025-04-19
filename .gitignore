@@ -39,12 +39,6 @@ ENV/
 Thumbs.db
 desktop.ini
 
-# ───────────── GhostHub Specific ─────────────
-ghosthub.spec
-*.log
-*.tmp
-*.bak
-
 # Media config backup files
 media_categories.json.bak
 media_categories.json.bak.*
