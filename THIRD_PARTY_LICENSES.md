@@ -16,15 +16,4 @@ Used for secure tunnel access via Cloudflare Tunnel.
 
 ---
 
-### FFmpeg / FFprobe
-Used for video metadata parsing and media compatibility support.
-
-- Source: https://ffmpeg.org  
-- License: GNU Lesser General Public License (LGPL) 2.1 or later
-
-> FFmpeg is licensed under the GNU Lesser General Public License (LGPL) version 2.1 or later.  
-> Full license: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
-
----
-
 These tools are used as unmodified executables and not directly linked or compiled into the software.
