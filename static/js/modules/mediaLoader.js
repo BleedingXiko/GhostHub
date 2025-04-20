@@ -564,6 +564,29 @@ function optimizeVideoElement(videoElement) {
     // Use a data URL for the poster to avoid an extra network request
     videoElement.poster = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxYTFhM2EiLz48L3N2Zz4=';
     
+    // iOS specific optimizations
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+        // These attributes are needed for proper iOS video behavior
+        videoElement.setAttribute('playsinline', 'true');
+        videoElement.setAttribute('webkit-playsinline', 'true');
+        videoElement.setAttribute('x-webkit-airplay', 'allow');
+        
+        // For iOS fullscreen support
+        videoElement.setAttribute('webkit-allows-inline-media-playback', 'true');
+        
+        // For iOS 10+ fullscreen support
+        if (typeof videoElement.webkitEnterFullscreen === 'function') {
+            // Make sure the video can be played
+            videoElement.addEventListener('canplay', () => {
+                // Add a fullscreen button if needed
+                if (window.appModules && window.appModules.fullscreenManager) {
+                    window.appModules.fullscreenManager.addFullscreenButton(videoElement);
+                }
+            });
+        }
+    }
+    
     // Add event listeners for better performance monitoring
     videoElement.addEventListener('loadstart', () => console.log('Video loadstart'));
     videoElement.addEventListener('loadedmetadata', () => console.log('Video loadedmetadata'));

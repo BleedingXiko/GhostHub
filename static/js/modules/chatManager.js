@@ -41,18 +41,29 @@ function initChat(socketInstance) {
     
     socket = socketInstance;
     
-    // Create chat UI elements if they don't exist
-    if (!document.getElementById('chat-container')) {
-        createChatUI();
-    }
-    
-    // Initialize DOM references
+    // Initialize DOM references - use existing elements from index.html
     chatContainer = document.getElementById('chat-container');
     chatMessages = document.getElementById('chat-messages');
     chatInput = document.getElementById('chat-input');
     chatToggle = document.getElementById('chat-toggle');
     chatForm = document.getElementById('chat-form');
     latestMessage = document.getElementById('latest-message');
+    
+    // Check if all elements exist
+    if (!chatContainer || !chatMessages || !chatInput || !chatToggle || !chatForm || !latestMessage) {
+        console.error('Chat initialization failed: Missing UI elements');
+        console.log('Missing elements:', {
+            chatContainer: !!chatContainer,
+            chatMessages: !!chatMessages,
+            chatInput: !!chatInput,
+            chatToggle: !!chatToggle,
+            chatForm: !!chatForm,
+            latestMessage: !!latestMessage
+        });
+        return;
+    }
+    
+    console.log('Chat UI elements found successfully');
     
     // Set up event listeners
     setupEventListeners();
@@ -152,38 +163,7 @@ function clearChatHistory() {
     }
 }
 
-/**
- * Create the chat UI elements and append them to the DOM
- */
-function createChatUI() {
-    const chatHTML = `
-        <div id="chat-container" class="chat-container collapsed">
-            <div id="chat-header" class="chat-header">
-                <div id="latest-message" class="latest-message">No messages yet</div>
-                <button id="chat-toggle" class="chat-toggle">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                    </svg>
-                </button>
-            </div>
-            <div id="chat-body" class="chat-body">
-                <div id="chat-messages" class="chat-messages"></div>
-                <form id="chat-form" class="chat-form">
-                    <input type="text" id="chat-input" class="chat-input" placeholder="Type a message..." autocomplete="off">
-                    <button type="submit" class="chat-send">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                        </svg>
-                    </button>
-                </form>
-            </div>
-        </div>
-    `;
-    
-    // Append the chat UI to the body
-    document.body.insertAdjacentHTML('beforeend', chatHTML);
-}
+// Function removed as we're using the existing chat UI from index.html
 
 /**
  * Set up event listeners for chat UI elements

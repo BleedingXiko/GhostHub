@@ -4,10 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>GhostHub - Add Category</title>
+    
+    <!-- Google Fonts - Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Main Stylesheet -->
     <link rel="stylesheet" href="/static/css/styles.css">
     
     <!-- PWA Meta Tags -->
-    <meta name="theme-color" content="#1a1a3a">
+    <meta name="theme-color" content="#2d3250">
     <meta name="description" content="A lightweight, modular media server with TikTok-style swipe interface">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,115 +27,163 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="/static/manifest.json">
     <style>
-        /* Add specific styles for the form container if needed, inheriting base styles */
+        /* Add Category Form Styles */
         .add-category-form-container {
-            max-width: 600px; /* Limit form width */
-            margin: 20px auto; /* Center the form */
-            background: var(--card-background);
-            padding: 25px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            max-width: 600px;
+            margin: var(--space-lg) auto;
+            background: var(--surface-color);
+            padding: var(--space-xl);
+            border-radius: var(--radius-lg);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: var(--shadow-lg);
         }
+        
+        .add-category-form-container h2 {
+            margin-bottom: var(--space-lg);
+            position: relative;
+            padding-bottom: var(--space-sm);
+        }
+        
+        .add-category-form-container h2::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 40px;
+            height: 3px;
+            background: var(--accent-color);
+            border-radius: var(--radius-sm);
+        }
+        
         .add-category-form-container label {
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: var(--space-xs);
             font-weight: 600;
-            color: rgba(255, 255, 255, 0.8);
+            color: var(--text-secondary);
         }
-        .add-category-form-container input[type="text"] {
-            /* Inherits base styles, add specific overrides if needed */
-            margin-bottom: 15px; /* Consistent spacing */
-            background-color: rgba(0,0,0,0.3); /* Darker input */
-            border: 1px solid var(--secondary-color);
-        }
-         .add-category-form-container input[type="text"]:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.3);
-         }
+        
         .form-actions {
             display: flex;
-            gap: 15px;
-            margin-top: 20px;
+            gap: var(--space-md);
+            margin-top: var(--space-lg);
         }
-        .form-actions button, .form-actions a {
-             flex-grow: 1; /* Make buttons share space */
-             text-align: center;
-        }
-        .browse-button { /* Specific style for browse button */
-             background: var(--secondary-color); /* Use secondary color */
-             width: auto !important; /* Override width: 100% */
-             flex-grow: 0 !important; /* Don't grow */
-             padding: 10px 15px !important;
-             font-size: 0.9em !important;
-        }
-        .browse-button:hover {
-             background: var(--primary-color); /* Use primary on hover */
-        }
-        #message {
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 6px;
+        
+        .form-actions button, 
+        .form-actions a {
+            flex-grow: 1;
             text-align: center;
         }
+        
+        .browse-button {
+            background: var(--secondary-color);
+            width: auto !important;
+            flex-grow: 0 !important;
+            padding: var(--space-sm) var(--space-md) !important;
+            font-size: 0.9rem !important;
+            border-radius: var(--radius-md);
+            transition: all var(--transition-fast) ease;
+        }
+        
+        .browse-button:hover {
+            background: var(--primary-color-light);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        #message {
+            margin-top: var(--space-md);
+            padding: var(--space-md);
+            border-radius: var(--radius-md);
+            text-align: center;
+            font-weight: 500;
+            animation: fade-in var(--transition-normal) ease;
+        }
+        
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
         #message.success {
-            background-color: rgba(var(--primary-color-rgb), 0.2);
-            color: var(--primary-color);
-            border: 1px solid var(--primary-color);
+            background-color: rgba(76, 175, 80, 0.1);
+            color: var(--success-color);
+            border: 1px solid rgba(76, 175, 80, 0.3);
         }
+        
         #message.error {
-            background-color: rgba(255, 80, 80, 0.2);
-            color: #ff5050;
-            border: 1px solid #ff5050;
+            background-color: rgba(255, 82, 82, 0.1);
+            color: var(--error-color);
+            border: 1px solid rgba(255, 82, 82, 0.3);
         }
+        
         .supported-formats {
-            font-size: 0.8em;
-            color: rgba(255,255,255,0.6);
-            margin-bottom: 15px;
-            line-height: 1.4;
+            font-size: 0.85rem;
+            color: var(--text-tertiary);
+            margin-bottom: var(--space-md);
+            line-height: 1.5;
+            padding: var(--space-md);
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius-md);
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
+        
         .supported-formats p {
-            margin-bottom: 3px;
+            margin-bottom: var(--space-xs);
+        }
+        
+        .supported-formats p:first-child {
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-bottom: var(--space-sm);
         }
     </style>
 </head>
 <body>
-    <!-- Use the same header structure as index.html -->
+    <!-- App Header -->
     <div class="app-header">
+        <div class="sync-status-display" style="visibility: hidden;">Placeholder</div>
         <div class="header-title">
-            <img src="/static/icons/Ghosthub192.png" alt="GhostHub" class="header-logo" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
+            <img src="/static/icons/Ghosthub192.png" alt="GhostHub" class="header-logo">
             GhostHub
         </div>
-        <!-- Sync toggle removed as it's likely not needed here -->
+        <div style="flex-basis: 120px;"></div>
     </div>
 
+    <!-- Main Container -->
     <div class="container">
         <div class="add-category-form-container">
             <h2>Add New Category</h2>
+            
             <label for="categoryName">Category Name:</label>
-            <input type="text" id="categoryName" placeholder="e.g., Vacation Pics">
+            <input type="text" id="categoryName" placeholder="e.g., Vacation Photos">
 
             <label for="folderPath">Full Folder Path:</label>
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-md);">
                 <input type="text" id="folderPath" placeholder="Select a folder using the Browse button" style="flex-grow: 1; margin: 0;">
                 <button type="button" id="browseBtn" class="browse-button">Browse...</button>
             </div>
 
             <div class="supported-formats">
-                <p>Supported formats:</p>
-                <p>Images: jpg, jpeg, png, gif, bmp, tiff, tif, svg, webp, ico, heic, heif, raw, cr2, nef, arw, dng, orf, sr2, psd, xcf</p>
-                <p>Videos: mp4, webm, mov, avi, mkv, wmv, flv, m4v, 3gp, mpg, mpeg, ts, m2ts, vob, ogv, mts, m2v, divx, asf, rm, rmvb, mp2, mpv, f4v, swf</p>
+                <p>Supported Media Formats</p>
+                <p><strong>Images:</strong> jpg, jpeg, png, gif, bmp, tiff, tif, svg, webp, ico, heic, heif, raw, cr2, nef, arw, dng, orf, sr2, psd, xcf</p>
+                <p><strong>Videos:</strong> mp4, webm, mov, avi, mkv, wmv, flv, m4v, 3gp, mpg, mpeg, ts, m2ts, vob, ogv, mts, m2v, divx, asf, rm, rmvb, mp2, mpv, f4v, swf</p>
             </div>
 
-            <div id="message"></div> <!-- Message area -->
+            <div id="message"></div>
 
             <div class="form-actions">
-                 <a href="/" class="add-category-btn" style="background: var(--secondary-color); text-decoration: none;">← Back</a>
-                 <button id="addCategoryBtn">Add Category</button>
+                <a href="/" class="add-category-btn" style="background: var(--primary-color-dark);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Back
+                </a>
+                <button id="addCategoryBtn">Add Category</button>
             </div>
         </div>
     </div>
 
+    <!-- Scripts -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const addCategoryBtn = document.getElementById('addCategoryBtn');
@@ -140,8 +195,11 @@
             function showMessage(text, type = 'info') {
                 messageDiv.textContent = text;
                 messageDiv.className = type; // 'success' or 'error'
-                // Auto-clear message after some time?
-                // setTimeout(() => { messageDiv.textContent = ''; messageDiv.className = ''; }, 5000);
+                
+                // Add animation by removing and re-adding the element
+                messageDiv.style.animation = 'none';
+                messageDiv.offsetHeight; // Trigger reflow
+                messageDiv.style.animation = 'fade-in var(--transition-normal) ease';
             }
 
             browseBtn.addEventListener('click', async () => {
@@ -152,7 +210,7 @@
                         const data = await response.json();
                         if (data.path) {
                             folderPathInput.value = data.path;
-                            showMessage('Folder selected.', 'success');
+                            showMessage('Folder selected successfully.', 'success');
                         } else {
                             showMessage('No folder selected or browser cancelled.', 'info');
                         }
@@ -178,6 +236,9 @@
                 }
 
                 try {
+                    addCategoryBtn.disabled = true;
+                    addCategoryBtn.textContent = 'Adding...';
+                    
                     const response = await fetch('/api/categories', {
                         method: 'POST',
                         headers: {
@@ -195,16 +256,16 @@
                     } else {
                         const data = await response.json();
                         showMessage(`Error: ${data.error || 'Failed to add category'}`, 'error');
+                        addCategoryBtn.disabled = false;
+                        addCategoryBtn.textContent = 'Add Category';
                     }
                 } catch (error) {
                     console.error('Error adding category:', error);
                     showMessage('An unexpected error occurred.', 'error');
+                    addCategoryBtn.disabled = false;
+                    addCategoryBtn.textContent = 'Add Category';
                 }
             });
         });
     </script>
     
-    <!-- PWA Installer Script -->
-    <script src="/static/js/pwa-installer.js"></script>
-</body>
-</html>

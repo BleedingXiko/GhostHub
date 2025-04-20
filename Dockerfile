@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Explicitly install OpenCV and its dependencies
-RUN pip install --no-cache-dir opencv-python numpy
+# Ensure we have the correct versions of critical packages
+RUN pip install --no-cache-dir "numpy<2.0.0" "Flask-SocketIO==5.1.1" "python-socketio==5.4.0" "python-engineio==4.2.1"
 
 # Download and install cloudflared
 RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared \
@@ -45,6 +45,7 @@ EXPOSE 5000
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:0
+ENV DOCKER_ENV=true
 
 # Set environment variables for Cloudflare Tunnel
 ENV USE_CLOUDFLARE_TUNNEL=n

@@ -102,29 +102,33 @@ function toggleSpinner(show) {
 
 /**
  * Disable navigation controls for guests in sync mode
+ * Modified to allow chat interaction while preventing media navigation
  */
 function disableNavigationControls() {
-    // Remove swipe and keyboard event listeners for guests
-    document.body.removeEventListener('touchstart', window.appModules.eventHandlers.handleTouchStart);
-    document.body.removeEventListener('touchmove', window.appModules.eventHandlers.handleTouchMove);
-    document.body.removeEventListener('touchend', window.appModules.eventHandlers.handleTouchEnd);
+    // Instead of removing all touch events, we'll use a more targeted approach
+    // that allows chat interaction but prevents media navigation
+    
+    // Create an overlay that covers only the media area to prevent swipes
+    const mediaOverlay = document.createElement('div');
+    mediaOverlay.id = 'media-navigation-overlay';
+    mediaOverlay.style.position = 'absolute';
+    mediaOverlay.style.top = '0';
+    mediaOverlay.style.left = '0';
+    mediaOverlay.style.width = '100%';
+    mediaOverlay.style.height = '100%';
+    mediaOverlay.style.zIndex = '999';
+    mediaOverlay.style.backgroundColor = 'transparent';
+    mediaOverlay.style.pointerEvents = 'auto';
+    
+    // Add the overlay to the tiktok container only (not covering chat)
+    const tiktokContainer = document.getElementById('tiktok-container');
+    if (tiktokContainer) {
+        tiktokContainer.appendChild(mediaOverlay);
+    }
+    
+    // Still disable keyboard navigation
     document.removeEventListener('keydown', window.appModules.eventHandlers.handleKeyDown);
     
-    // Add a message or visual indicator that controls are disabled
-    const message = document.createElement('div');
-    message.id = 'guest-message';
-    message.style.position = 'fixed';
-    message.style.bottom = '20px';
-    message.style.left = '0';
-    message.style.width = '100%';
-    message.style.textAlign = 'center';
-    message.style.color = 'rgba(255,255,255,0.7)';
-    message.style.fontSize = '14px';
-    message.style.padding = '10px';
-    message.style.zIndex = '1000';
-    message.textContent = 'Navigation controlled by host';
-    
-    document.body.appendChild(message);
 }
 
 /**
@@ -133,6 +137,12 @@ function disableNavigationControls() {
 function enableNavigationControls() {
     // Re-add event listeners
     window.appModules.eventHandlers.setupMediaNavigation();
+    
+    // Remove the media overlay
+    const mediaOverlay = document.getElementById('media-navigation-overlay');
+    if (mediaOverlay) {
+        mediaOverlay.remove();
+    }
     
     // Remove the guest message
     const message = document.getElementById('guest-message');

@@ -268,6 +268,8 @@ document.addEventListener('DOMContentLoaded', () => {
         document.removeEventListener('keydown', handleKeyDown);
         
         // Add a message or visual indicator that controls are disabled
+        // Gets in the way of chat
+        /*
         const message = document.createElement('div');
         message.id = 'guest-message';
         message.style.position = 'fixed';
@@ -280,6 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
         message.style.padding = '10px';
         message.style.zIndex = '1000';
         message.textContent = 'Navigation controlled by host';
+      */
         
         document.body.appendChild(message);
     }

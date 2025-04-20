@@ -1,0 +1,272 @@
+/* Component Styles */
+
+/* Button Styles */
+button {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: var(--text-primary);
+    font-weight: 600;
+    border: none;
+    padding: var(--space-md) var(--space-lg);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    width: 100%;
+    transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, background var(--transition-fast) ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: relative;
+    overflow: hidden;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    background: linear-gradient(135deg, var(--primary-color-light), var(--secondary-color));
+}
+
+button:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow-sm);
+}
+
+button::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(rgba(255, 255, 255, 0.1), transparent);
+    opacity: 0;
+    transition: opacity var(--transition-fast) ease;
+}
+
+button:hover::after {
+    opacity: 1;
+}
+
+/* Back Button Styles */
+.back-button {
+    position: fixed;
+    top: calc(60px + var(--space-md)); /* Position below header */
+    left: var(--space-lg);
+    pointer-events: auto;
+    z-index: 100;
+    background-color: var(--primary-color);
+    color: var(--text-primary);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    padding: 0;
+    border-radius: var(--radius-circle);
+    cursor: pointer;
+    width: 60px;
+    height: 60px;
+    font-size: 1.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-normal) ease;
+    box-shadow: var(--shadow-lg);
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+    touch-action: manipulation;
+}
+
+.back-button:hover {
+    background-color: var(--primary-color-light);
+    box-shadow: 0 0 20px rgba(var(--accent-color-rgb), 0.4);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+/* Add Category Button */
+.add-category-btn {
+    background: var(--accent-color);
+    color: var(--text-primary);
+    font-weight: 600;
+    border: none;
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-decoration: none;
+    transition: all var(--transition-fast) ease;
+    box-shadow: var(--shadow-md);
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.add-category-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    background: var(--accent-color-light);
+}
+
+.add-category-btn::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(rgba(255, 255, 255, 0.1), transparent);
+    opacity: 0;
+    transition: opacity var(--transition-fast) ease;
+}
+
+.add-category-btn:hover::after {
+    opacity: 1;
+}
+
+/* Form Elements */
+input[type="text"] {
+    width: 100%;
+    padding: var(--space-md);
+    margin: var(--space-sm) 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    font-size: 1rem;
+    background-color: rgba(0, 0, 0, 0.2);
+    color: var(--text-primary);
+    transition: border-color var(--transition-fast) ease, box-shadow var(--transition-fast) ease;
+}
+
+input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(var(--accent-color-rgb), 0.2);
+}
+
+/* Sync Toggle Button */
+.sync-toggle-btn {
+    background: var(--primary-color-dark);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    padding: 6px 12px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all var(--transition-fast) ease;
+    width: auto;
+    text-transform: none;
+    letter-spacing: normal;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.sync-toggle-btn::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-circle);
+    background-color: var(--text-tertiary);
+}
+
+.sync-toggle-btn:hover {
+    background: var(--primary-color-light);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.sync-toggle-btn.active {
+    background: var(--accent-color);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.sync-toggle-btn.active::before {
+    background-color: var(--text-primary);
+}
+
+/* Delete Button */
+.delete-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-circle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(var(--accent-color-rgb), 0.3);
+    cursor: pointer;
+    background: rgba(var(--accent-color-rgb), 0.1);
+    color: var(--accent-color);
+    font-size: 1rem;
+    transition: all var(--transition-fast) ease;
+}
+
+.delete-btn:hover {
+    transform: scale(1.1);
+    background-color: rgba(var(--accent-color-rgb), 0.2);
+    box-shadow: 0 0 12px rgba(var(--accent-color-rgb), 0.4);
+    border-color: rgba(var(--accent-color-rgb), 0.5);
+}
+
+/* Swipe Indicators */
+.swipe-indicator {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 48px;
+    height: 48px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: var(--radius-circle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    opacity: 0;
+    transition: opacity var(--transition-normal) ease, transform var(--transition-normal) ease;
+    z-index: 90;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--shadow-md);
+}
+
+.swipe-indicator.up {
+    top: var(--space-lg);
+}
+
+.swipe-indicator.down {
+    bottom: var(--space-lg);
+}
+
+.swipe-indicator.visible {
+    opacity: 0.9;
+}
+
+.swipe-indicator.up.visible {
+    transform: translateX(-50%) translateY(5px);
+}
+
+.swipe-indicator.down.visible {
+    transform: translateX(-50%) translateY(-5px);
+}
+
+/* Button Group */
+.button-group {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 var(--space-md) var(--space-md);
+    margin-top: auto;
+    gap: var(--space-sm);
+    position: relative;
+    z-index: 10;
+}
+
+.button-group button {
+    width: auto;
+    padding: 0;
+    font-size: 1.125rem;
+    line-height: 1;
+    background: none;
+    border: none;
+    border-radius: var(--radius-circle);
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+}

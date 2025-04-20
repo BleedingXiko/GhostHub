@@ -93,6 +93,9 @@ function navigateMedia(direction) {
     if (nextIndex !== app.state.currentMediaIndex) {
         renderMediaWindow(nextIndex);
         
+        // Update media info overlay
+        updateMediaInfoOverlay(app.state.fullMediaList[nextIndex]);
+        
         // If sync mode is enabled and we're the host, send update to server
         if (app.state.syncModeEnabled && app.state.isHost) {
             const currentFile = app.state.fullMediaList[nextIndex];
@@ -121,8 +124,9 @@ function renderMediaWindow(index) {
         // Save the spinner container before clearing
         const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
         
-        // Remove all media elements but keep other elements like controls
+        // Remove all media elements and fullscreen buttons
         tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
+        tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
         
         // Re-add the spinner if it was removed
         if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
@@ -132,6 +136,9 @@ function renderMediaWindow(index) {
         // Store the previous index for sync update check
         const previousIndex = app.state.currentMediaIndex;
         app.state.currentMediaIndex = index;
+        
+        // Update media info overlay with current file information
+        updateMediaInfoOverlay(app.state.fullMediaList[index]);
 
         const startIndex = Math.max(0, index - renderWindowSize);
         const endIndex = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
@@ -268,6 +275,24 @@ function createVideoElement(file, isActive) {
     mediaElement.autoplay = isActive;
     mediaElement.setAttribute('autoplay', isActive ? 'true' : 'false');
     
+    // Add controls attribute for native video controls
+    mediaElement.controls = true;
+    mediaElement.setAttribute('controlsList', 'nodownload'); // Remove download button
+    
+    // iOS specific attributes for better fullscreen support
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+        // These attributes are needed for proper iOS video behavior
+        mediaElement.setAttribute('playsinline', 'true');
+        mediaElement.setAttribute('webkit-playsinline', 'true');
+        mediaElement.setAttribute('x-webkit-airplay', 'allow');
+        
+        // For iOS 10+ fullscreen support
+        if (typeof mediaElement.webkitEnterFullscreen === 'function') {
+            mediaElement.setAttribute('webkit-playsinline', 'true');
+        }
+    }
+    
     // Add fetchpriority for active videos
     if (isActive) {
         mediaElement.setAttribute('fetchpriority', 'high');
@@ -276,7 +301,6 @@ function createVideoElement(file, isActive) {
     // Create a placeholder element that will be shown if loading fails
     const placeholder = createPlaceholderElement(file, 'video');
     
-    // Add error handling for videos
     // Add error handling with retry logic for videos
     mediaElement.onerror = function() {
         console.error(`Error loading video: ${file.url}`, this.error);
@@ -333,6 +357,11 @@ function createVideoElement(file, isActive) {
     
     // Force load
     mediaElement.load();
+    
+    // Add fullscreen button after the video is loaded
+    mediaElement.addEventListener('loadeddata', () => {
+        window.appModules.fullscreenManager.addFullscreenButton(mediaElement);
+    });
     
     return mediaElement;
 }
@@ -433,10 +462,61 @@ function createPlaceholderElement(file, type) {
     return mediaElement;
 }
 
+/**
+ * Update the media info overlay with current file information
+ * @param {Object} file - The current media file object
+ */
+function updateMediaInfoOverlay(file) {
+    if (!file) return;
+    
+    const overlay = document.querySelector('.media-info-overlay');
+    if (!overlay) return;
+    
+    const filename = overlay.querySelector('.filename');
+    const metadata = overlay.querySelector('.metadata');
+    
+    if (filename && metadata) {
+        // Set filename
+        filename.textContent = file.name || 'Unknown file';
+        
+        // Format file size
+        let sizeText = '';
+        if (file.size) {
+            const sizeInMB = file.size / (1024 * 1024);
+            sizeText = sizeInMB < 1 ? 
+                `${Math.round(sizeInMB * 1000) / 10} KB` : 
+                `${Math.round(sizeInMB * 10) / 10} MB`;
+        }
+        
+        // Format dimensions
+        let dimensionsText = '';
+        if (file.width && file.height) {
+            dimensionsText = `${file.width} × ${file.height}`;
+        }
+        
+        // Format date
+        let dateText = '';
+        if (file.date) {
+            const date = new Date(file.date);
+            dateText = date.toLocaleDateString();
+        }
+        
+        // Update metadata spans
+        const dimensionsSpan = metadata.querySelector('.dimensions');
+        const sizeSpan = metadata.querySelector('.size');
+        const dateSpan = metadata.querySelector('.date');
+        
+        if (dimensionsSpan) dimensionsSpan.textContent = dimensionsText || 'Unknown dimensions';
+        if (sizeSpan) sizeSpan.textContent = sizeText || 'Unknown size';
+        if (dateSpan) dateSpan.textContent = dateText || 'Unknown date';
+    }
+}
+
 export {
     navigateMedia,
     renderMediaWindow,
     createVideoElement,
     createImageElement,
-    createPlaceholderElement
+    createPlaceholderElement,
+    updateMediaInfoOverlay
 };

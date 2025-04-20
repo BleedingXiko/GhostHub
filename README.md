@@ -4,6 +4,8 @@
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
+![GhostHub Preview](preview.png)
+
 ---
 
 ## 🚀 Features
@@ -43,24 +45,25 @@ The `.exe` contains everything — no setup needed.
 1. Install **Python 3.7+**
 
 2. **Required:** Download and place this executable in the project root:
-
    - [`cloudflared.exe`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation)
+
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   ```
 
-	4.	Start the server:
+4. Start the server:
+   ```bash
+   python media_server.py
+   ```
+   Or use the helper:
+   ```bash
+   start_server.bat
+   ```
 
-python media_server.py
+5. Open your browser manually to: [http://localhost:5000](http://localhost:5000)
 
-Or use the helper:
-
-start_server.bat
-
-
-	5.	Open your browser manually to: http://localhost:5000
-
-💡 Tunnel will prompt automatically if cloudflared.exe is present
+> 💡 Tunnel will prompt automatically if cloudflared.exe is present
 
 ---
 
@@ -69,6 +72,7 @@ start_server.bat
 Run GhostHub in a Docker container for easy deployment on any platform.
 
 1. Install [Docker](https://www.docker.com/products/docker-desktop)
+
 2. Add your media directories to `docker-compose.yml`:
    ```yaml
    volumes:
@@ -81,10 +85,12 @@ Run GhostHub in a Docker container for easy deployment on any platform.
      # - /home/user/Pictures:/media/pictures
      # - /home/user/Videos:/media/videos
    ```
+
 3. Build and start the container:
    ```bash
    docker-compose up -d
    ```
+
 4. Open your browser to: [http://localhost:5000](http://localhost:5000)
 
 > 📌 **Automatic Media Categories**: The Docker container automatically creates media categories for all directories mounted under `/media`. No need to manually add them in the UI!
@@ -97,7 +103,8 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 >   - Docker Desktop: `C:/Users/username/path:/media/category`
 >   - WSL2/Git Bash: `/c/Users/username/path:/media/category`
 
-Docker commands:
+#### Docker Commands
+
 ```bash
 # Start the container
 docker-compose up -d
@@ -115,7 +122,7 @@ docker-compose build
 # Edit docker-compose.yml and set USE_CLOUDFLARE_TUNNEL=y
 ```
 
-### Docker Environment Variables
+#### Docker Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -123,121 +130,64 @@ docker-compose build
 | FLASK_CONFIG | Flask configuration (development/production) | development |
 | USE_CLOUDFLARE_TUNNEL | Enable Cloudflare Tunnel (y/n) | n |
 
-⸻
+---
 
-🛠️ Building the Executable
+## 🛠️ Building the Executable
 
-Use build_exe.bat to automate the process.
-
-📦 What it does:
-	•	Checks for Python and PyInstaller
-	•	Installs any missing packages (including dnspython for eventlet)
-	•	Asks if you want debug mode
-	•	Builds a clean .exe using ghosthub.spec
-
-↺ Build Instructions:
-
-build_exe.bat
-
-Output appears in the /dist folder as GhostHub.exe
-
-⸻
-
-📁 Media Categories
-	1.	Click “Add Category” in the UI
-	2.	Name it and select a folder path
-	3.	It will persist in media_categories.json
-
-⸻
-
-🎥 Supported Formats
-
-Images: jpg, jpeg, png, gif, bmp, tiff, svg, webp, heic, raw, psd, xcf, etc.
-Videos: mp4, webm, mov, avi, mkv, wmv, flv, m4v, ts, mpg, ogv, etc.
-
-⸻
-
-🧪 Troubleshooting
-	•	Media not loading? Check your paths and file types
-	•	Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
-	•	Chat or sync buggy? Refresh — GhostHub is resilient and stateless
-	•	Crashes? Run from terminal for logs:
-
-cd dist
-GhostHub.exe
-
-
-
-⸻
-
- Final Notes
-
-=======
-
-	4.	Start the server:
-
-python media_server.py
-
-Or use the helper:
-
-start_server.bat
-
-
-	5.	Open your browser manually to: http://localhost:5000
-
-💡 Tunnel will prompt automatically if cloudflared.exe is present
-
-⸻
-
-🛠️ Building the Executable
-
-Use build_exe.bat to automate the process.
+Use `build_exe.bat` to automate the process.
 
 📦 What it does:
-	•	Checks for Python and PyInstaller
-	•	Installs any missing packages (including dnspython for eventlet)
-	•	Asks if you want debug mode
-	•	Builds a clean .exe using ghosthub.spec
+- Checks for Python and PyInstaller
+- Installs any missing packages (including dnspython for eventlet)
+- Asks if you want debug mode
+- Builds a clean .exe using ghosthub.spec
 
-↺ Build Instructions:
-
+Build Instructions:
+```bash
 build_exe.bat
+```
 
-Output appears in the /dist folder as GhostHub.exe
+Output appears in the `/dist` folder as `GhostHub.exe`
 
-⸻
+---
 
-📁 Media Categories
-	1.	Click “Add Category” in the UI
-	2.	Name it and select a folder path
-	3.	It will persist in media_categories.json
+## 📁 Media Categories
 
-⸻
+1. Click "Add Category" in the UI
+2. Name it and select a folder path
+3. It will persist in media_categories.json
 
-🎥 Supported Formats
+---
 
-Images: jpg, jpeg, png, gif, bmp, tiff, svg, webp, heic, raw, psd, xcf, etc.
-Videos: mp4, webm, mov, avi, mkv, wmv, flv, m4v, ts, mpg, ogv, etc.
+## 🎥 Supported Formats
 
-⸻
+**Images**: jpg, jpeg, png, gif, bmp, tiff, svg, webp, heic, raw, psd, xcf, etc.
 
-🧪 Troubleshooting
-	•	Media not loading? Check your paths and file types
-	•	Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
-	•	Chat or sync buggy? Refresh — GhostHub is resilient and stateless
-	•	Crashes? Run from terminal for logs:
+**Videos**: mp4, webm, mov, avi, mkv, wmv, flv, m4v, ts, mpg, ogv, etc.
 
-cd dist
-GhostHub.exe
+---
 
+## 🧪 Troubleshooting
 
+- Media not loading? Check your paths and file types
+- Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
+- Chat or sync buggy? Refresh — GhostHub is resilient and stateless
+- Crashes? Run from terminal for logs:
+  ```bash
+  cd dist
+  GhostHub.exe
+  ```
 
-⸻
+---
 
-💬 Final Notes
+## ⚠️ Known Issues
 
+- **iOS Fullscreen**: Some iOS devices may require tapping the video twice to enter fullscreen mode.
+- **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
 
-GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. Spin it up, invite a few ghosts, and shut it down when you’re done.
+## 💬 Final Notes
+
+GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. Spin it up, invite a few ghosts, and shut it down when you're done.
 
 No setup. No tracking. No trace.
 

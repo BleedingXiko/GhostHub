@@ -10,6 +10,8 @@ import { navigateMedia } from './mediaNavigation.js';
 let startY = 0;
 let isSwiping = false;
 const swipeThreshold = 50;
+let lastTap = 0;
+const doubleTapDelay = 300; // ms
 
 // Event handler functions
 let handleTouchStart, handleTouchMove, handleTouchEnd, handleKeyDown;
@@ -65,24 +67,41 @@ function setupMediaNavigation() {
         const diffY = startY - endY;
         console.log(`touchend: endY = ${endY}, diffY = ${diffY}`);
 
-        // Vertical Swipe - Navigate Media
-        if (diffY > swipeThreshold) {
-            console.log('Swipe Up detected');
-            navigateMedia('next');
-        } else if (diffY < -swipeThreshold) {
-            console.log('Swipe Down detected');
-            navigateMedia('prev');
-        } else {
-            console.log('Swipe threshold not met, resuming video');
-            // No vertical threshold met, resume video
+        // Check for double tap
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap;
+        
+        if (tapLength < doubleTapDelay && tapLength > 0) {
+            // Double tap detected
+            console.log('Double tap detected');
             const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
             if (activeElement && activeElement.tagName === 'VIDEO') {
-                // Ensure loop is set before playing
-                activeElement.loop = true;
-                activeElement.setAttribute('loop', 'true');
-                activeElement.play().catch(e => console.error("Resume play failed:", e));
+                // Toggle fullscreen on double tap
+                window.appModules.fullscreenManager.toggleFullscreen(activeElement);
+                e.preventDefault();
+            }
+        } else {
+            // Vertical Swipe - Navigate Media
+            if (diffY > swipeThreshold) {
+                console.log('Swipe Up detected');
+                navigateMedia('next');
+            } else if (diffY < -swipeThreshold) {
+                console.log('Swipe Down detected');
+                navigateMedia('prev');
+            } else {
+                console.log('Swipe threshold not met, resuming video');
+                // No vertical threshold met, resume video
+                const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                if (activeElement && activeElement.tagName === 'VIDEO') {
+                    // Ensure loop is set before playing
+                    activeElement.loop = true;
+                    activeElement.setAttribute('loop', 'true');
+                    activeElement.play().catch(e => console.error("Resume play failed:", e));
+                }
             }
         }
+        
+        lastTap = currentTime;
     };
 
     // Define key down handler
@@ -97,6 +116,13 @@ function setupMediaNavigation() {
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             navigateMedia('prev');
+        } else if (e.key === 'f') {
+            // 'f' key toggles fullscreen
+            e.preventDefault();
+            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+            if (activeElement && activeElement.tagName === 'VIDEO') {
+                window.appModules.fullscreenManager.toggleFullscreen(activeElement);
+            }
         }
     };
 
