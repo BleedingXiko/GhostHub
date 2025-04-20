@@ -33,4 +33,5 @@ services:
     environment:
       - PORT=5000
       - FLASK_CONFIG=production
+      - DOCKER_ENV=true
       - USE_CLOUDFLARE_TUNNEL=n  # Set to 'y' to enable Cloudflare Tunnel

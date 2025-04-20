@@ -4,7 +4,9 @@ Werkzeug==2.0.3
 Jinja2==3.1.2
 
 # WebSocket Support
-Flask-SocketIO==5.3.4
+Flask-SocketIO==5.1.1
+python-socketio==5.4.0
+python-engineio==4.2.1
 gevent==21.12.0
 gevent-websocket==0.10.1
 dnspython==2.3.0
@@ -12,6 +14,7 @@ dnspython==2.3.0
 # Media Processing
 Pillow==9.5.0  # Image processing and thumbnail generation
 opencv-python==4.7.0.72  # Video processing and thumbnail generation
+numpy<2.0.0  # Pin NumPy to version below 2.0 for OpenCV compatibility
 
 # Utilities
 pyperclip==1.8.2  # Clipboard operations for sharing URLs

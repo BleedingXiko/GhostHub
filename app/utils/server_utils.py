@@ -258,15 +258,31 @@ def run_server(app, port, debug=False):
         apply_socket_options(socket_options)
 
         # Run the app with SocketIO using gevent for WebSockets
-        socketio.run(
-            app,
-            host='0.0.0.0', # Listen on all interfaces
-            port=port,
-            debug=debug,
-            use_reloader=False,  # Disable reloader for production
-            log_output=False,    # Disable default logging for cleaner output
-            allow_unsafe_werkzeug=True  # Allow unsafe Werkzeug options for better performance
-        )
+        # Check if we're running in Docker environment
+        in_docker = os.environ.get('DOCKER_ENV', 'false').lower() == 'true'
+        
+        # Different parameters for Docker vs non-Docker environments
+        if in_docker:
+            # Docker environment - don't use allow_unsafe_werkzeug
+            socketio.run(
+                app,
+                host='0.0.0.0', # Listen on all interfaces
+                port=port,
+                debug=debug,
+                use_reloader=False,  # Disable reloader for production
+                log_output=False     # Disable default logging for cleaner output
+            )
+        else:
+            # Non-Docker environment - can use allow_unsafe_werkzeug
+            socketio.run(
+                app,
+                host='0.0.0.0', # Listen on all interfaces
+                port=port,
+                debug=debug,
+                use_reloader=False,  # Disable reloader for production
+                log_output=False,    # Disable default logging for cleaner output
+                allow_unsafe_werkzeug=True  # Allow unsafe Werkzeug options for better performance
+            )
     except Exception as server_err:
          app_logger.error(f"Failed to start server: {server_err}")
          print(f"[!] Failed to start server: {server_err}")

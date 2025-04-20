@@ -17,6 +17,7 @@ import * as uiController from './modules/uiController.js';
 import * as syncManager from './modules/syncManager.js';
 import * as eventHandlers from './modules/eventHandlers.js';
 import * as chatManager from './modules/chatManager.js';
+import * as fullscreenManager from './modules/fullscreenManager.js';
 
 // Create a global namespace for modules to avoid circular dependencies
 window.appModules = {
@@ -27,7 +28,8 @@ window.appModules = {
     uiController,
     syncManager,
     eventHandlers,
-    chatManager
+    chatManager,
+    fullscreenManager
 };
 
 // Initialize the application when the DOM is loaded
@@ -47,6 +49,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load categories on page load
     categoryManager.loadCategories();
+    
+    // Initialize fullscreen change listener
+    fullscreenManager.setupFullscreenChangeListener();
     
     // Initialize chat module
     // We need to wait for the socket to be available

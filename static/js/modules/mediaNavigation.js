@@ -124,8 +124,9 @@ function renderMediaWindow(index) {
         // Save the spinner container before clearing
         const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
         
-        // Remove all media elements but keep other elements like controls
+        // Remove all media elements and fullscreen buttons
         tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
+        tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
         
         // Re-add the spinner if it was removed
         if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
@@ -274,6 +275,24 @@ function createVideoElement(file, isActive) {
     mediaElement.autoplay = isActive;
     mediaElement.setAttribute('autoplay', isActive ? 'true' : 'false');
     
+    // Add controls attribute for native video controls
+    mediaElement.controls = true;
+    mediaElement.setAttribute('controlsList', 'nodownload'); // Remove download button
+    
+    // iOS specific attributes for better fullscreen support
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+        // These attributes are needed for proper iOS video behavior
+        mediaElement.setAttribute('playsinline', 'true');
+        mediaElement.setAttribute('webkit-playsinline', 'true');
+        mediaElement.setAttribute('x-webkit-airplay', 'allow');
+        
+        // For iOS 10+ fullscreen support
+        if (typeof mediaElement.webkitEnterFullscreen === 'function') {
+            mediaElement.setAttribute('webkit-playsinline', 'true');
+        }
+    }
+    
     // Add fetchpriority for active videos
     if (isActive) {
         mediaElement.setAttribute('fetchpriority', 'high');
@@ -282,7 +301,6 @@ function createVideoElement(file, isActive) {
     // Create a placeholder element that will be shown if loading fails
     const placeholder = createPlaceholderElement(file, 'video');
     
-    // Add error handling for videos
     // Add error handling with retry logic for videos
     mediaElement.onerror = function() {
         console.error(`Error loading video: ${file.url}`, this.error);
@@ -339,6 +357,11 @@ function createVideoElement(file, isActive) {
     
     // Force load
     mediaElement.load();
+    
+    // Add fullscreen button after the video is loaded
+    mediaElement.addEventListener('loadeddata', () => {
+        window.appModules.fullscreenManager.addFullscreenButton(mediaElement);
+    });
     
     return mediaElement;
 }
