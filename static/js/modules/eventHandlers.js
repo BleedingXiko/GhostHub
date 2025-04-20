@@ -28,12 +28,25 @@ function setupMediaNavigation() {
 
     // Define touch start handler
     handleTouchStart = function(e) {
+        // Ignore touch events on the chat container
+        if (e.target.closest('#chat-container')) {
+            console.log('touchstart ignored: target is chat container');
+            return;
+        }
+        
         if (tiktokContainer.classList.contains('hidden')) return;
         console.log('touchstart event fired on body');
         if (e.target.closest('.media-controls, .back-button')) {
             console.log('touchstart ignored: target is controls/back button');
             return;
         }
+        
+        // Check if we've recently exited fullscreen mode
+        if (window.fullscreenExited) {
+            console.log('touchstart ignored: recently exited fullscreen');
+            return;
+        }
+        
         startY = e.touches[0].clientY;
         isSwiping = true;
         console.log(`touchstart: startY = ${startY}`);
@@ -47,6 +60,11 @@ function setupMediaNavigation() {
 
     // Define touch move handler
     handleTouchMove = function(e) {
+        // Ignore touch events on the chat container
+        if (e.target.closest('#chat-container')) {
+            return;
+        }
+        
         if (tiktokContainer.classList.contains('hidden') || !isSwiping) return;
         // Only prevent default if we're actually swiping
         if (Math.abs(e.touches[0].clientY - startY) > 10) {
@@ -56,6 +74,12 @@ function setupMediaNavigation() {
 
     // Define touch end handler
     handleTouchEnd = function(e) {
+        // Ignore touch events on the chat container
+        if (e.target.closest('#chat-container')) {
+            console.log('touchend ignored: target is chat container');
+            return;
+        }
+        
         if (tiktokContainer.classList.contains('hidden')) return;
         console.log('touchend event fired on body');
         if (!isSwiping) {
@@ -81,14 +105,14 @@ function setupMediaNavigation() {
                 e.preventDefault();
             }
         } else {
-            // Vertical Swipe - Navigate Media
-            if (diffY > swipeThreshold) {
-                console.log('Swipe Up detected');
-                navigateMedia('next');
-            } else if (diffY < -swipeThreshold) {
-                console.log('Swipe Down detected');
-                navigateMedia('prev');
-            } else {
+        // Vertical Swipe - Navigate Media
+        if (diffY > swipeThreshold) {
+            console.log('Swipe Up detected');
+            navigateMedia('next', e);
+        } else if (diffY < -swipeThreshold) {
+            console.log('Swipe Down detected');
+            navigateMedia('prev', e);
+        } else {
                 console.log('Swipe threshold not met, resuming video');
                 // No vertical threshold met, resume video
                 const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
@@ -112,10 +136,10 @@ function setupMediaNavigation() {
 
         if (e.key === 'ArrowDown') {
             e.preventDefault();
-            navigateMedia('next');
+            navigateMedia('next', e);
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            navigateMedia('prev');
+            navigateMedia('prev', e);
         } else if (e.key === 'f') {
             // 'f' key toggles fullscreen
             e.preventDefault();

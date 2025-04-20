@@ -30,6 +30,7 @@
     --primary-color-rgb: 45, 50, 80;
     --secondary-color-rgb: 66, 72, 116;
     --accent-color-rgb: 240, 84, 84;
+    --surface-color-rgb: 30, 30, 46; /* RGB for surface-color */
     
     /* Spacing System */
     --space-xs: 4px;

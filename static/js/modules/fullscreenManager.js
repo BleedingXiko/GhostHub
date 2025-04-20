@@ -47,6 +47,9 @@ function getFullscreenAPI(element) {
 
 // Toggle fullscreen for a video element
 function toggleFullscreen(videoElement) {
+    // Get chat container reference
+    const chatContainer = document.getElementById('chat-container');
+    
     // Special handling for iOS
     if (isIOS) {
         // For iOS, we need to use the webkitEnterFullscreen API
@@ -88,6 +91,10 @@ function tryStandardFullscreen(videoElement) {
     if (!document[fullscreenAPI.fullscreenElement]) {
         // Enter fullscreen
         videoElement[fullscreenAPI.requestFullscreen]()
+            .then(() => {
+                // Ensure chat container remains visible in fullscreen
+                ensureChatVisibilityInFullscreen();
+            })
             .catch(err => {
                 console.error(`Error attempting to enable fullscreen: ${err.message}`);
             });
@@ -95,6 +102,19 @@ function tryStandardFullscreen(videoElement) {
         // Exit fullscreen
         document[fullscreenAPI.exitFullscreen]();
     }
+}
+
+// Ensure chat container remains visible in fullscreen
+function ensureChatVisibilityInFullscreen() {
+    // Get chat container reference
+    const chatContainer = document.getElementById('chat-container');
+    if (!chatContainer) return;
+    
+    // Add a class to indicate fullscreen mode
+    document.documentElement.classList.add('is-fullscreen');
+    
+    // Make sure chat is visible above fullscreen content
+    chatContainer.style.zIndex = '9999';
 }
 
 // Add fullscreen button to video
@@ -161,11 +181,49 @@ function setupFullscreenChangeListener() {
         fullscreenBtns.forEach(btn => {
             btn.classList.toggle('active', isFullscreen);
         });
+        
+        // Update chat container visibility
+        if (isFullscreen) {
+            ensureChatVisibilityInFullscreen();
+        } else {
+            // Reset when exiting fullscreen
+            document.documentElement.classList.remove('is-fullscreen');
+            
+            // Get chat container reference
+            const chatContainer = document.getElementById('chat-container');
+            if (chatContainer) {
+                // Reset any fullscreen-specific styles
+                chatContainer.style.zIndex = ''; // Reset to CSS default
+                
+                // Add a small delay to ensure fullscreen is fully exited before allowing chat interactions
+                setTimeout(() => {
+                    // Set a flag to indicate fullscreen has been properly exited
+                    window.fullscreenExited = true;
+                    
+                    // Clear the flag after a short period to allow normal operation
+                    setTimeout(() => {
+                        window.fullscreenExited = false;
+                    }, 1000);
+                }, 100);
+            }
+        }
     });
+}
+
+// Add a function to check if we're in a safe state to toggle fullscreen
+function isSafeToToggleFullscreen() {
+    // If we've just exited fullscreen, prevent immediate re-entry
+    if (window.fullscreenExited) {
+        console.log('Preventing immediate fullscreen re-entry after exit');
+        return false;
+    }
+    
+    return true;
 }
 
 export {
     toggleFullscreen,
     addFullscreenButton,
-    setupFullscreenChangeListener
+    setupFullscreenChangeListener,
+    isSafeToToggleFullscreen
 };

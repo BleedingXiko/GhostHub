@@ -4,6 +4,7 @@
  */
 
 import { app, MOBILE_DEVICE } from '../core/app.js';
+import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 
 // Session storage keys
 const STORAGE_KEY = 'ghosthub_chat_messages';
@@ -25,6 +26,14 @@ let chatInput = null;
 let chatToggle = null;
 let chatForm = null;
 let latestMessage = null;
+let chatHeader = null;
+
+// Dragging state
+let isDragging = false;
+let initialX = 0;
+let initialY = 0;
+let offsetX = 0;
+let offsetY = 0;
 
 // Socket reference (will use the existing socket connection)
 let socket = null;
@@ -48,9 +57,10 @@ function initChat(socketInstance) {
     chatToggle = document.getElementById('chat-toggle');
     chatForm = document.getElementById('chat-form');
     latestMessage = document.getElementById('latest-message');
+    chatHeader = document.getElementById('chat-header');
     
     // Check if all elements exist
-    if (!chatContainer || !chatMessages || !chatInput || !chatToggle || !chatForm || !latestMessage) {
+    if (!chatContainer || !chatMessages || !chatInput || !chatToggle || !chatForm || !latestMessage || !chatHeader) {
         console.error('Chat initialization failed: Missing UI elements');
         console.log('Missing elements:', {
             chatContainer: !!chatContainer,
@@ -58,7 +68,8 @@ function initChat(socketInstance) {
             chatInput: !!chatInput,
             chatToggle: !!chatToggle,
             chatForm: !!chatForm,
-            latestMessage: !!latestMessage
+            latestMessage: !!latestMessage,
+            chatHeader: !!chatHeader
         });
         return;
     }
@@ -70,6 +81,9 @@ function initChat(socketInstance) {
     
     // Set up socket event handlers
     setupSocketHandlers();
+    
+    // Set up draggable functionality
+    setupDraggable();
     
     // Load chat history from localStorage
     loadChatHistory();
@@ -170,13 +184,28 @@ function clearChatHistory() {
  */
 function setupEventListeners() {
     // Toggle chat expansion when clicking the toggle button
-    chatToggle.addEventListener('click', toggleChat);
+    chatToggle.addEventListener('click', (e) => {
+        // Prevent event from bubbling up to document
+        e.stopPropagation();
+        // Prevent default behavior
+        e.preventDefault();
+        // Toggle chat
+        toggleChat();
+    });
     
     // Toggle chat expansion when clicking the header
-    document.getElementById('chat-header').addEventListener('click', (e) => {
+    chatHeader.addEventListener('click', (e) => {
         // Don't toggle if clicking directly on the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            toggleChat();
+            // Only toggle if not dragging
+            if (!isDragging) {
+                // Prevent event from bubbling up to document
+                e.stopPropagation();
+                // Prevent default behavior
+                e.preventDefault();
+                // Toggle chat
+                toggleChat();
+            }
         }
     });
     
@@ -199,6 +228,147 @@ function setupEventListeners() {
     chatContainer.addEventListener('click', (e) => {
         e.stopPropagation();
     });
+}
+
+/**
+ * Set up draggable functionality for the chat container
+ */
+function setupDraggable() {
+    // Mouse events
+    chatHeader.addEventListener('mousedown', startDrag);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', stopDrag);
+    
+    // Touch events for mobile
+    chatHeader.addEventListener('touchstart', startDragTouch);
+    document.addEventListener('touchmove', dragTouch);
+    document.addEventListener('touchend', stopDrag);
+}
+
+/**
+ * Start dragging (mouse event)
+ * @param {MouseEvent} e - The mouse event
+ */
+function startDrag(e) {
+    // Don't start drag if clicking on the toggle button
+    if (e.target.closest('#chat-toggle')) return;
+    
+    isDragging = true;
+    
+    // Get initial mouse position
+    initialX = e.clientX;
+    initialY = e.clientY;
+    
+    // Get current container position
+    const rect = chatContainer.getBoundingClientRect();
+    offsetX = initialX - rect.left;
+    offsetY = initialY - rect.top;
+    
+    // Add active class for styling
+    chatContainer.classList.add('dragging');
+    
+    // Prevent default behavior
+    e.preventDefault();
+}
+
+/**
+ * Start dragging (touch event)
+ * @param {TouchEvent} e - The touch event
+ */
+function startDragTouch(e) {
+    // Don't start drag if touching the toggle button
+    if (e.target.closest('#chat-toggle')) return;
+    
+    if (e.touches.length === 1) {
+        isDragging = true;
+        
+        // Get initial touch position
+        initialX = e.touches[0].clientX;
+        initialY = e.touches[0].clientY;
+        
+        // Get current container position
+        const rect = chatContainer.getBoundingClientRect();
+        offsetX = initialX - rect.left;
+        offsetY = initialY - rect.top;
+        
+        // Add active class for styling
+        chatContainer.classList.add('dragging');
+    }
+}
+
+/**
+ * Drag the container (mouse event)
+ * @param {MouseEvent} e - The mouse event
+ */
+function drag(e) {
+    if (!isDragging) return;
+    
+    // Calculate new position
+    const x = e.clientX - offsetX;
+    const y = e.clientY - offsetY;
+    
+    // Apply new position
+    updatePosition(x, y);
+    
+    // Prevent default behavior
+    e.preventDefault();
+}
+
+/**
+ * Drag the container (touch event)
+ * @param {TouchEvent} e - The touch event
+ */
+function dragTouch(e) {
+    if (!isDragging || e.touches.length !== 1) return;
+    
+    // Calculate new position
+    const x = e.touches[0].clientX - offsetX;
+    const y = e.touches[0].clientY - offsetY;
+    
+    // Apply new position
+    updatePosition(x, y);
+    
+    // Prevent default behavior
+    e.preventDefault();
+}
+
+/**
+ * Update the container position
+ * @param {number} x - The x position
+ * @param {number} y - The y position
+ */
+function updatePosition(x, y) {
+    // Get viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    // Get container dimensions
+    const containerWidth = chatContainer.offsetWidth;
+    const containerHeight = chatContainer.offsetHeight;
+    
+    // Constrain position to viewport
+    const constrainedX = Math.max(0, Math.min(x, viewportWidth - containerWidth));
+    const constrainedY = Math.max(0, Math.min(y, viewportHeight - containerHeight));
+    
+    // Apply position
+    chatContainer.style.left = `${constrainedX}px`;
+    chatContainer.style.top = `${constrainedY}px`;
+    
+    // Remove bottom/right positioning
+    chatContainer.style.bottom = 'auto';
+    chatContainer.style.right = 'auto';
+}
+
+/**
+ * Stop dragging
+ */
+function stopDrag() {
+    if (!isDragging) return;
+    
+    isDragging = false;
+    
+    // Remove active class
+    chatContainer.classList.remove('dragging');
 }
 
 /**
@@ -242,6 +412,35 @@ function leaveChat() {
  * Toggle chat expansion state
  */
 function toggleChat() {
+    // Check if it's safe to interact with the chat (not immediately after exiting fullscreen)
+    if (!isSafeToToggleFullscreen()) {
+        console.log('Delaying chat toggle to prevent fullscreen issues');
+        // Delay the toggle to prevent fullscreen issues
+        setTimeout(() => {
+            performChatToggle();
+        }, 300);
+        return;
+    }
+    
+    performChatToggle();
+}
+
+/**
+ * Perform the actual chat toggle operation
+ */
+function performChatToggle() {
+    // Ensure we're not in fullscreen mode when toggling chat
+    const fullscreenElement = document.fullscreenElement || 
+                             document.webkitFullscreenElement || 
+                             document.mozFullScreenElement || 
+                             document.msFullscreenElement;
+    
+    // If we're in fullscreen mode, don't toggle fullscreen again
+    if (fullscreenElement) {
+        // Just toggle the chat state without affecting fullscreen
+        console.log('Toggling chat while in fullscreen mode');
+    }
+    
     if (chatState.isExpanded) {
         collapseChat();
     } else {
