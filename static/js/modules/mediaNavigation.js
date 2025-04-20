@@ -93,6 +93,9 @@ function navigateMedia(direction) {
     if (nextIndex !== app.state.currentMediaIndex) {
         renderMediaWindow(nextIndex);
         
+        // Update media info overlay
+        updateMediaInfoOverlay(app.state.fullMediaList[nextIndex]);
+        
         // If sync mode is enabled and we're the host, send update to server
         if (app.state.syncModeEnabled && app.state.isHost) {
             const currentFile = app.state.fullMediaList[nextIndex];
@@ -132,6 +135,9 @@ function renderMediaWindow(index) {
         // Store the previous index for sync update check
         const previousIndex = app.state.currentMediaIndex;
         app.state.currentMediaIndex = index;
+        
+        // Update media info overlay with current file information
+        updateMediaInfoOverlay(app.state.fullMediaList[index]);
 
         const startIndex = Math.max(0, index - renderWindowSize);
         const endIndex = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
@@ -433,10 +439,61 @@ function createPlaceholderElement(file, type) {
     return mediaElement;
 }
 
+/**
+ * Update the media info overlay with current file information
+ * @param {Object} file - The current media file object
+ */
+function updateMediaInfoOverlay(file) {
+    if (!file) return;
+    
+    const overlay = document.querySelector('.media-info-overlay');
+    if (!overlay) return;
+    
+    const filename = overlay.querySelector('.filename');
+    const metadata = overlay.querySelector('.metadata');
+    
+    if (filename && metadata) {
+        // Set filename
+        filename.textContent = file.name || 'Unknown file';
+        
+        // Format file size
+        let sizeText = '';
+        if (file.size) {
+            const sizeInMB = file.size / (1024 * 1024);
+            sizeText = sizeInMB < 1 ? 
+                `${Math.round(sizeInMB * 1000) / 10} KB` : 
+                `${Math.round(sizeInMB * 10) / 10} MB`;
+        }
+        
+        // Format dimensions
+        let dimensionsText = '';
+        if (file.width && file.height) {
+            dimensionsText = `${file.width} × ${file.height}`;
+        }
+        
+        // Format date
+        let dateText = '';
+        if (file.date) {
+            const date = new Date(file.date);
+            dateText = date.toLocaleDateString();
+        }
+        
+        // Update metadata spans
+        const dimensionsSpan = metadata.querySelector('.dimensions');
+        const sizeSpan = metadata.querySelector('.size');
+        const dateSpan = metadata.querySelector('.date');
+        
+        if (dimensionsSpan) dimensionsSpan.textContent = dimensionsText || 'Unknown dimensions';
+        if (sizeSpan) sizeSpan.textContent = sizeText || 'Unknown size';
+        if (dateSpan) dateSpan.textContent = dateText || 'Unknown date';
+    }
+}
+
 export {
     navigateMedia,
     renderMediaWindow,
     createVideoElement,
     createImageElement,
-    createPlaceholderElement
+    createPlaceholderElement,
+    updateMediaInfoOverlay
 };

@@ -4,8 +4,8 @@
   "description": "A lightweight, modular media server with TikTok-style swipe interface",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1a1a3a",
-  "theme_color": "#1a1a3a",
+  "background_color": "#2d3250",
+  "theme_color": "#2d3250",
   "icons": [
     {
       "src": "/static/icons/Ghosthub1024.png",

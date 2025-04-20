@@ -1,0 +1,191 @@
+/* Responsive Styles for Mobile Devices */
+@media (max-width: 768px) {
+    /* Adjust root variables for mobile */
+    :root {
+        --space-xs: 4px;
+        --space-sm: 6px;
+        --space-md: 12px;
+        --space-lg: 16px;
+        --space-xl: 24px;
+    }
+    
+    /* Adjust header for mobile */
+    .app-header {
+        padding: var(--space-xs) var(--space-sm);
+        height: 40px;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        display: flex !important;
+    }
+    
+    .header-title {
+        font-size: 0.9rem;
+    }
+    
+    .header-logo {
+        height: 16px;
+        width: 16px;
+        margin-right: 3px;
+    }
+    
+    .sync-status-display,
+    .sync-toggle-container {
+        flex-basis: 80px;
+        font-size: 0.75rem;
+    }
+    
+    /* Enhance TikTok-style interface for mobile */
+    .category-list {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); /* Smaller cards on mobile */
+        gap: var(--space-sm); /* Tighter spacing */
+        padding: var(--space-xs);
+    }
+    
+    .category-item {
+        height: 200px; /* Shorter cards on mobile */
+    }
+    
+    .thumbnail {
+        height: 140px; /* Adjust thumbnail height for mobile */
+    }
+    
+    .category-info {
+        font-size: 0.9rem;
+        bottom: 36px;
+    }
+    
+    .media-count-badge {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+    }
+    
+    .media-type-icon {
+        font-size: 1rem;
+        padding: 2px 6px;
+    }
+    
+    /* Enhance TikTok-style media viewing */
+    #tiktok-container {
+        background-color: #000; /* Pure black background for better contrast */
+    }
+    
+    /* Make swipe indicators more visible on mobile */
+    .swipe-indicator {
+        width: 48px;
+        height: 48px;
+        font-size: 1.5rem;
+    }
+    
+    /* Enhance media controls for touch */
+    .media-controls {
+        bottom: var(--space-lg);
+    }
+    
+    .media-controls button {
+        width: 56px;
+        height: 56px;
+        font-size: 1.25rem;
+    }
+    
+    .media-controls button.primary {
+        width: 64px;
+        height: 64px;
+    }
+    
+    /* Improve back button for mobile */
+    .back-button {
+        top: calc(40px + var(--space-md)); /* Position below mobile header */
+        left: var(--space-md);
+        width: 48px;
+        height: 48px;
+        font-size: 1.5rem;
+    }
+    
+    /* Mobile-specific chat styles */
+    .chat-container {
+        bottom: 0;
+        height: 40px; /* Smaller collapsed height */
+    }
+    
+    .chat-container.expanded {
+        height: 50%; /* Use percentage of screen height */
+        max-height: 300px;
+    }
+    
+    .chat-header {
+        padding: var(--space-xs) var(--space-md);
+    }
+    
+    .chat-message {
+        max-width: 90%; /* Wider messages on mobile */
+        padding: var(--space-xs) var(--space-md);
+        margin-bottom: var(--space-sm);
+    }
+    
+    .chat-input {
+        font-size: 1rem; /* Larger font for better typing on mobile */
+        padding: var(--space-xs) var(--space-md);
+    }
+    
+    .chat-form {
+        padding: var(--space-xs);
+    }
+    
+    .chat-send {
+        width: 36px;
+        height: 36px;
+    }
+    
+    /* Adjust spacing for mobile */
+    .container {
+        padding: var(--space-md);
+        height: calc(100vh - 40px); /* Adjust for smaller header */
+        padding-top: var(--space-lg);
+        margin-top: 0;
+    }
+    
+    /* Ensure buttons are large enough for touch */
+    .delete-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 1.1rem;
+    }
+    
+    /* Improve form elements for mobile */
+    input[type="text"] {
+        padding: var(--space-md);
+        font-size: 1rem;
+    }
+    
+    /* Media info overlay adjustments */
+    .media-info-overlay {
+        padding: var(--space-sm) var(--space-md);
+    }
+    
+    .media-info-overlay .filename {
+        font-size: 0.9rem;
+    }
+    
+    .media-info-overlay .metadata {
+        font-size: 0.75rem;
+        gap: var(--space-sm);
+    }
+    
+    /* Category header adjustments */
+    .category-header {
+        margin-bottom: var(--space-md);
+        padding-bottom: var(--space-sm);
+        margin-top: var(--space-md);
+        display: flex !important;
+    }
+    
+    .category-header h2 {
+        font-size: 1.4rem;
+    }
+    
+    .add-category-btn {
+        padding: var(--space-xs) var(--space-md);
+        font-size: 0.9rem;
+    }
+}
