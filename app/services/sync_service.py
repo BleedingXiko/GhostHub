@@ -1,6 +1,4 @@
 # app/services/sync_service.py
-# app/services/sync_service.py
-# app/services/sync_service.py
 import time
 import logging
 from flask import request, current_app
