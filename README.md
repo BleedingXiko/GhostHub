@@ -41,9 +41,7 @@ The `.exe` contains everything — no setup needed.
 ### 💻 Option 2: Python (Manual / Development Mode)
 
 1. Install **Python 3.7+**
-2. **Required:** Download and place these 3 executables in the project root:
-   - [`ffmpeg.exe`](https://ffmpeg.org/download.html)
-   - `ffprobe.exe` (comes with ffmpeg)
+2. **Required:** Download and place this executable in the project root:
    - [`cloudflared.exe`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation)
 3. Install dependencies:
    ```bash
@@ -170,7 +168,7 @@ GhostHub.exe
 
 ⸻
 
-💬 Final Notes
+ Final Notes
 
 GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. Spin it up, invite a few ghosts, and shut it down when you’re done.
 

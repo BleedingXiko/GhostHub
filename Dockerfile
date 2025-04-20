@@ -6,21 +6,21 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
-    ffmpeg \
     tk \
     python3-tk \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libglib2.0-0 \
+    libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Explicitly install moviepy and its dependencies
-RUN pip install --no-cache-dir moviepy decorator imageio imageio-ffmpeg numpy proglog tqdm
+# Explicitly install OpenCV and its dependencies
+RUN pip install --no-cache-dir opencv-python numpy
 
 # Download and install cloudflared
 RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared \
@@ -32,8 +32,6 @@ COPY . .
 # Create symbolic links to required executables in the app directory
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared.exe
-RUN ln -sf /usr/bin/ffmpeg /app/ffmpeg.exe
-RUN ln -sf /usr/bin/ffprobe /app/ffprobe.exe
 
 # Create media directory for mounting volumes
 RUN mkdir -p /media

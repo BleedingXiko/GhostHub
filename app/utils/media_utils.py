@@ -9,14 +9,15 @@ import threading # Use standard threading instead of eventlet
 
 logger = logging.getLogger(__name__)
 
-# Try to import moviepy, but provide a fallback if it's not available
+# Try to import OpenCV, but provide a fallback if it's not available
 try:
-    from moviepy.editor import VideoFileClip
-    MOVIEPY_AVAILABLE = True
-    logger.info("MoviePy is available for video thumbnail generation")
+    import cv2
+    import numpy as np
+    OPENCV_AVAILABLE = True
+    logger.info("OpenCV is available for video thumbnail generation")
 except ImportError:
-    MOVIEPY_AVAILABLE = False
-    logger.warning("MoviePy is not available. Video thumbnail generation will be disabled.")
+    OPENCV_AVAILABLE = False
+    logger.warning("OpenCV is not available. Video thumbnail generation will be disabled.")
 
 def is_media_file(filename):
     """
@@ -105,32 +106,58 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                 logger.info(f"Successfully generated IMAGE thumbnail: {thumbnail_save_path}")
                 return True
             elif media_type == 'video':
-                # Check if moviepy is available
-                if not MOVIEPY_AVAILABLE:
-                    logger.warning(f"MoviePy not available, skipping video thumbnail generation for {original_media_path}")
+                # Check if OpenCV is available
+                if not OPENCV_AVAILABLE:
+                    logger.warning(f"OpenCV not available, skipping video thumbnail generation for {original_media_path}")
                     return False
                 
-                clip = None # Initialize clip to None
                 try:
-                    clip = VideoFileClip(original_media_path)
-                    duration = clip.duration
+                    # Open the video file
+                    cap = cv2.VideoCapture(original_media_path)
+                    if not cap.isOpened():
+                        logger.error(f"Could not open video file: {original_media_path}")
+                        return False
+                    
+                    # Get video properties
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    duration = total_frames / fps if fps > 0 else 0
+                    
+                    # Determine frame to extract (same logic as before)
                     time_to_extract = 1.0 if duration > 2.0 else (duration / 2.0 if duration > 0 else 0)
-                    clip.save_frame(thumbnail_save_path, t=time_to_extract)
-                    # Resize the saved frame using Pillow
-                    with Image.open(thumbnail_save_path) as img:
-                        if img.mode != 'RGB':
-                            img = img.convert('RGB')
-                        img.thumbnail(size)
-                        img.save(thumbnail_save_path, THUMBNAIL_FORMAT, quality=85)
+                    frame_to_extract = int(time_to_extract * fps) if fps > 0 else 0
+                    
+                    # Set the frame position
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_to_extract)
+                    
+                    # Read the frame
+                    ret, frame = cap.read()
+                    if not ret:
+                        logger.error(f"Failed to read frame from video: {original_media_path}")
+                        cap.release()
+                        return False
+                    
+                    # Convert BGR to RGB (OpenCV uses BGR by default)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Create PIL Image from the frame
+                    img = Image.fromarray(frame_rgb)
+                    
+                    # Resize and save as before
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    img.thumbnail(size)
+                    img.save(thumbnail_save_path, THUMBNAIL_FORMAT, quality=85)
+                    
+                    # Release the video capture object
+                    cap.release()
+                    
                     logger.info(f"Successfully generated VIDEO thumbnail: {thumbnail_save_path}")
                     return True
                 except Exception as video_err:
-                    logger.error(f"MoviePy/FFmpeg error generating video thumbnail for {original_media_path}: {video_err}")
+                    logger.error(f"OpenCV error generating video thumbnail for {original_media_path}: {video_err}")
                     logger.debug(traceback.format_exc())
                     return False
-                finally:
-                    if clip:
-                        clip.close() # Ensure resources are released if clip was opened
             else:
                 logger.warning(f"Unsupported media type for thumbnail generation: {media_type} for file {original_media_path}")
                 return False

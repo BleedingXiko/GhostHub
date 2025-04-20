@@ -25,7 +25,7 @@ services:
       # - /c/Users/username/path:/media/category_name
       # OR
       # - C:/Users/username/path:/media/category_name (on Docker Desktop)
-      
+
       # Examples:
       # - C:/Users/username/Pictures:/media/pictures
       # - C:/Users/username/Videos:/media/videos
@@ -34,4 +34,3 @@ services:
       - PORT=5000
       - FLASK_CONFIG=production
       - USE_CLOUDFLARE_TUNNEL=n  # Set to 'y' to enable Cloudflare Tunnel
-    restart: unless-stopped

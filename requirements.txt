@@ -10,4 +10,4 @@ PyInstaller>=5.6.0 # Required for building executable
 requests>=2.28.0 # Required for test script
 pyperclip>=1.8.2 # Required for clipboard operations
 Pillow>=9.0.0 # Required for image thumbnail generation
-moviepy>=1.0.3 # Required for video thumbnail generation (needs ffmpeg)
+opencv-python>=4.5.0 # Required for video thumbnail generation (no ffmpeg dependency)
