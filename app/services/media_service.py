@@ -17,27 +17,34 @@ media_file_cache = {}
 last_cache_cleanup = time.time()
 
 # Dictionary to track seen files for each category and session
-# Structure: {category_id: {session_id: {"seen": set(seen_files), "order": list(shuffled_files)}}}
+# Structure: {category_id: {session_id: {"seen": set(seen_files), "order": list(shuffled_files), "last_access": timestamp}}}
 seen_files_tracker = {}
+last_session_cleanup = time.time()
 
 # Global dictionary to store consistent sorted order for sync mode
 # Structure: {category_id: list(sorted_files)}
 sync_mode_order = {}
+
+# Constants for memory management
+MAX_CACHE_ENTRIES = 100  # Maximum number of categories to cache
+MAX_SESSIONS_PER_CATEGORY = 50  # Maximum number of sessions to track per category
+SESSION_EXPIRY = 3600  # Session data expires after 1 hour of inactivity
 
 class MediaService:
     """Service layer for managing media files within categories."""
 
     @staticmethod
     def clean_cache():
-        """Clean up expired entries in the media file cache."""
+        """Clean up expired entries in the media file cache and enforce size limits."""
         global last_cache_cleanup
         global media_file_cache
 
         current_time = time.time()
         # Clean up cache more frequently if it grows large, otherwise less often
-        cleanup_interval = 60 if len(media_file_cache) < 100 else 30
+        cleanup_interval = 60 if len(media_file_cache) < 50 else 30
         if current_time - last_cache_cleanup > cleanup_interval:
-            cache_expiry = current_app.config['CACHE_EXPIRY']
+            # 1. Remove expired entries
+            cache_expiry = current_app.config.get('CACHE_EXPIRY', 300)  # Default 5 minutes
             cleanup_keys = [
                 key for key, (timestamp, _) in media_file_cache.items()
                 if current_time - timestamp > cache_expiry
@@ -50,7 +57,75 @@ class MediaService:
             else:
                 logger.debug("Cache cleanup: No expired entries found.")
 
+            # 2. Enforce maximum cache size by removing oldest entries if needed
+            if len(media_file_cache) > MAX_CACHE_ENTRIES:
+                # Sort by timestamp (oldest first)
+                sorted_entries = sorted(
+                    media_file_cache.items(),
+                    key=lambda item: item[1][0]  # Sort by timestamp
+                )
+                # Remove oldest entries to get back to the limit
+                entries_to_remove = len(media_file_cache) - MAX_CACHE_ENTRIES
+                for key, _ in sorted_entries[:entries_to_remove]:
+                    del media_file_cache[key]
+                logger.info(f"Cache size limit enforced: removed {entries_to_remove} oldest entries.")
+
             last_cache_cleanup = current_time
+            
+            # Also clean up sessions while we're at it
+            MediaService.clean_sessions()
+
+    @staticmethod
+    def clean_sessions():
+        """Clean up inactive sessions and enforce session limits."""
+        global last_session_cleanup
+        global seen_files_tracker
+        
+        current_time = time.time()
+        # Only run session cleanup periodically
+        cleanup_interval = 300  # 5 minutes
+        if current_time - last_session_cleanup <= cleanup_interval:
+            return
+            
+        logger.info("Starting session tracker cleanup...")
+        session_expiry = current_app.config.get('SESSION_EXPIRY', SESSION_EXPIRY)
+        categories_cleaned = 0
+        sessions_removed = 0
+        
+        # For each category
+        for category_id in list(seen_files_tracker.keys()):
+            category_sessions = seen_files_tracker[category_id]
+            
+            # 1. Remove expired sessions (not accessed recently)
+            expired_sessions = [
+                session_id for session_id, data in category_sessions.items()
+                if current_time - data.get("last_access", 0) > session_expiry
+            ]
+            
+            for session_id in expired_sessions:
+                del category_sessions[session_id]
+                sessions_removed += 1
+            
+            # 2. Enforce maximum sessions per category by removing oldest
+            if len(category_sessions) > MAX_SESSIONS_PER_CATEGORY:
+                # Sort by last access time (oldest first)
+                sorted_sessions = sorted(
+                    category_sessions.items(),
+                    key=lambda item: item[1].get("last_access", 0)
+                )
+                # Remove oldest sessions to get back to the limit
+                sessions_to_remove = len(category_sessions) - MAX_SESSIONS_PER_CATEGORY
+                for session_id, _ in sorted_sessions[:sessions_to_remove]:
+                    del category_sessions[session_id]
+                    sessions_removed += 1
+            
+            # 3. Remove empty category entries
+            if not category_sessions:
+                del seen_files_tracker[category_id]
+                categories_cleaned += 1
+        
+        logger.info(f"Session cleanup complete: removed {sessions_removed} inactive sessions and {categories_cleaned} empty categories.")
+        last_session_cleanup = current_time
 
     @staticmethod
     def list_media_files(category_id, page=1, limit=None, force_refresh=False, shuffle=True):
@@ -138,10 +213,18 @@ class MediaService:
             session_id = str(uuid.uuid4())
             logger.warning("Session ID cookie not found, generated temporary ID.")
 
+        current_time = time.time()
         if category_id not in seen_files_tracker:
             seen_files_tracker[category_id] = {}
         if session_id not in seen_files_tracker[category_id]:
-            seen_files_tracker[category_id][session_id] = {"seen": set(), "order": []}
+            seen_files_tracker[category_id][session_id] = {
+                "seen": set(), 
+                "order": [],
+                "last_access": current_time
+            }
+        else:
+            # Update last access time
+            seen_files_tracker[category_id][session_id]["last_access"] = current_time
 
         session_data = seen_files_tracker[category_id][session_id]
         seen_files = session_data["seen"]

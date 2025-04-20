@@ -10,27 +10,15 @@ main_bp = Blueprint('main', __name__)
 def index():
     """Serve the main category listing page."""
     logger.info("Serving index page.")
-    # Set session cookie here if needed, or use @after_request
-    resp = make_response(render_template('index.html'))
-    if 'session_id' not in request.cookies:
-        session_id = str(uuid.uuid4())
-        max_age = current_app.config.get('SESSION_EXPIRY', 3600)
-        logger.info(f"Setting new session_id cookie: {session_id}")
-        resp.set_cookie('session_id', session_id, max_age=max_age, httponly=True, samesite='Lax')
-    return resp
+    # Session cookie is set by the global after_request handler in app/__init__.py
+    return render_template('index.html')
 
 @main_bp.route('/add_category')
 def add_category_page():
     """Serve the page for adding a new category."""
     logger.info("Serving add category page.")
-    # Set session cookie here as well, in case user lands here directly
-    resp = make_response(render_template('add_category.html'))
-    if 'session_id' not in request.cookies:
-        session_id = str(uuid.uuid4())
-        max_age = current_app.config.get('SESSION_EXPIRY', 3600)
-        logger.info(f"Setting new session_id cookie on add_category page: {session_id}")
-        resp.set_cookie('session_id', session_id, max_age=max_age, httponly=True, samesite='Lax')
-    return resp
+    # Session cookie is set by the global after_request handler in app/__init__.py
+    return render_template('add_category.html')
 
 # A global @after_request has been added in app/__init__.py for setting the cookie
 # @main_bp.after_request
