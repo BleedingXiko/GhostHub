@@ -30,3 +30,12 @@
     visibility: visible !important;
     opacity: 1 !important;
 }
+
+/* Fix for chat pushing content up */
+@media (max-width: 768px) {
+    /* Ensure category header stays visible when chat is open */
+    .chat-container.expanded ~ .container .category-header {
+        position: relative;
+        z-index: 50;
+    }
+}

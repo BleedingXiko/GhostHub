@@ -150,6 +150,18 @@ def register_socket_events(socketio):
             }, room=CHAT_ROOM, include_self=False)
         except Exception as e:
             logger.error(f"Error during join_chat: {str(e)}")
+            
+    @socketio.on(SE['REJOIN_CHAT'])
+    def handle_rejoin_chat():
+        """Handles a client rejoining the chat room after a page refresh without sending a notification."""
+        try:
+            client_id = request.sid
+            session_id = request.cookies.get('session_id')
+            logger.info(f"Client {client_id} (Session: {session_id}) rejoined chat room after refresh.")
+            join_room(CHAT_ROOM)
+            # No notification is sent to other users
+        except Exception as e:
+            logger.error(f"Error during rejoin_chat: {str(e)}")
 
     @socketio.on(SE['LEAVE_CHAT'])
     def handle_leave_chat():

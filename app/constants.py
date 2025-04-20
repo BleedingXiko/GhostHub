@@ -30,6 +30,7 @@ SOCKET_EVENTS = {
     
     # Chat events
     'JOIN_CHAT': 'join_chat',
+    'REJOIN_CHAT': 'rejoin_chat',  # Added for handling page refreshes without notifications
     'LEAVE_CHAT': 'leave_chat',
     'CHAT_MESSAGE': 'chat_message',
     'CHAT_NOTIFICATION': 'chat_notification',

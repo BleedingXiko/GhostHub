@@ -2,23 +2,56 @@
 
 .chat-container {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background-color: var(--surface-color);
-    border-top: 1px solid var(--primary-color-light);
+    bottom: 20px;
+    right: 20px;
+    width: 300px;
+    background-color: rgba(var(--surface-color-rgb), 0.9);
+    border: 1px solid var(--primary-color-light);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    z-index: 70;
-    transition: height var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 9999; /* Ensure it's above fullscreen content */
+    transition: height var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
     overflow: hidden;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    resize: both;
+    min-width: 250px;
+    min-height: 50px;
+    max-width: 80vw;
+    max-height: 80vh;
+}
+
+/* Dragging state */
+.chat-container.dragging {
+    opacity: 0.9;
+    box-shadow: var(--shadow-xl);
+    transition: none; /* Disable transitions during drag for better performance */
+    cursor: move;
+}
+
+/* Special handling for fullscreen mode */
+:fullscreen .chat-container,
+:-webkit-full-screen .chat-container,
+:-moz-full-screen .chat-container,
+:-ms-fullscreen .chat-container {
+    position: absolute;
+    z-index: 9999;
+}
+
+/* When document has fullscreen class */
+html.is-fullscreen .chat-container {
+    position: fixed;
+    z-index: 9999;
 }
 
 .chat-container.collapsed {
     height: 50px;
+    resize: none;
 }
 
 .chat-container.expanded {
     height: 300px;
+    resize: both;
 }
 
 .chat-header {
@@ -27,9 +60,11 @@
     align-items: center;
     padding: var(--space-md) var(--space-lg);
     background-color: var(--primary-color);
-    cursor: pointer;
+    cursor: move; /* Indicate draggable */
     position: relative;
     transition: background-color var(--transition-fast) ease;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    user-select: none; /* Prevent text selection during drag */
 }
 
 .chat-header:hover {

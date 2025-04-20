@@ -23,8 +23,21 @@ import { setupControls } from './uiController.js';
 /**
  * Navigate between media items with performance optimizations
  * @param {string} direction - The direction to navigate ('next', 'prev', or undefined for play/pause)
+ * @param {Event} event - Optional event object that triggered the navigation
  */
-function navigateMedia(direction) {
+function navigateMedia(direction, event) {
+    // Check if the event originated from the chat container
+    if (event && event.target && event.target.closest('#chat-container')) {
+        console.log('Navigation ignored: event originated from chat container');
+        return;
+    }
+    
+    // Check if we've recently exited fullscreen mode
+    if (window.fullscreenExited) {
+        console.log('Navigation ignored: recently exited fullscreen');
+        return;
+    }
+    
     let nextIndex = app.state.currentMediaIndex;
     const listLength = app.state.fullMediaList.length;
     const currentMediaElement = tiktokContainer.querySelector('.tiktok-media.active');
