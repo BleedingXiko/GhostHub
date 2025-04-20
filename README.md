@@ -115,5 +115,3 @@ GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. 
 No setup. No tracking. No trace.
 
 Ghost on, my friend. 👻
-
-Let me know if you want this turned into a `README.md` file and committed via a branch + PR structure.
