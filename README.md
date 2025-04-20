@@ -182,8 +182,8 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 
 ## ⚠️ Known Issues
 
-- **iOS Fullscreen**: Some iOS devices may require tapping the video twice to enter fullscreen mode.
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
+- **Rapid Navigation**: Extremely rapid scrolling through videos (especially on mobile) may occasionally cause temporary UI glitches. Simply pause for a moment to allow the app to catch up. In rare cases, you may need to close and reopen the site.
 
 ## 💬 Final Notes
 

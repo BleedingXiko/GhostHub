@@ -3,7 +3,7 @@
  * Handles media caching, size management, and resource cleanup
  */
 
-import { MAX_CACHE_SIZE, app } from '../core/app.js';
+import { MAX_CACHE_SIZE, MOBILE_DEVICE, MOBILE_CLEANUP_INTERVAL, app } from '../core/app.js';
 
 /**
  * Add an item to the media cache with size management
@@ -68,10 +68,61 @@ function clearCache() {
 function performCacheCleanup(aggressive = false) {
     const now = Date.now();
     
-    if (aggressive || now - app.state.lastCleanupTime > 60000) { // Every minute or when forced
-        console.log('Performing aggressive cache cleanup');
+    // Use the MEMORY_CLEANUP_INTERVAL from server config if available
+    const cleanupInterval = (window.serverConfig && window.serverConfig.MEMORY_CLEANUP_INTERVAL) || 60000;
+    
+    // Use the mobile cleanup interval from app.js if on mobile
+    const effectiveInterval = MOBILE_DEVICE ? MOBILE_CLEANUP_INTERVAL : cleanupInterval;
+    
+    if (aggressive || now - app.state.lastCleanupTime > effectiveInterval) {
+        console.log(`Performing ${aggressive ? 'aggressive' : 'periodic'} cache cleanup`);
         clearCache();
-        if (window.gc) window.gc();
+        
+        // Clear any media elements that might be detached but still referenced
+        if (aggressive) {
+            // Try to clear any detached media elements
+            const mediaElements = document.querySelectorAll('video, audio, img');
+            mediaElements.forEach(element => {
+                if (!document.body.contains(element) && element.parentNode) {
+                    try {
+                        // Remove from parent if it exists but is not in body
+                        element.parentNode.removeChild(element);
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                }
+                
+                // For videos and audio, explicitly release resources
+                if (element.tagName === 'VIDEO' || element.tagName === 'AUDIO') {
+                    try {
+                        element.pause();
+                        element.src = '';
+                        element.load();
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                }
+            });
+        }
+        
+        // Force a small garbage collection by creating and releasing objects
+        // This is more cross-browser compatible than window.gc()
+        try {
+            const garbageArray = [];
+            // Create fewer objects on mobile to avoid excessive memory pressure
+            const objectCount = MOBILE_DEVICE ? 1000 : 10000;
+            const bufferSize = MOBILE_DEVICE ? 512 : 1024;
+            
+            // Create a bunch of objects to force memory pressure
+            for (let i = 0; i < objectCount; i++) {
+                garbageArray.push(new ArrayBuffer(bufferSize));
+            }
+            // Clear the array to release the objects
+            garbageArray.length = 0;
+        } catch (e) {
+            console.log('Memory cleanup operation completed');
+        }
+        
         app.state.lastCleanupTime = now;
     }
 }
