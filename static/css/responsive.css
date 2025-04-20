@@ -141,8 +141,14 @@
     .container {
         padding: var(--space-md);
         height: calc(100vh - 40px); /* Adjust for smaller header */
-        padding-top: var(--space-lg);
+        padding-top: calc(var(--space-lg) + 10px); /* Increased top padding to prevent content hiding behind header */
         margin-top: 0;
+    }
+    
+    /* Fix for add category form being hidden behind header */
+    .add-category-form-container {
+        margin-top: calc(var(--space-xl) + 10px); /* Increased top margin to ensure visibility */
+        padding-top: var(--space-lg);
     }
     
     /* Ensure buttons are large enough for touch */

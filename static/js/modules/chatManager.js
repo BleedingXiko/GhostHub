@@ -9,6 +9,7 @@ import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 // Session storage keys
 const STORAGE_KEY = 'ghosthub_chat_messages';
 const STORAGE_TIMESTAMP_KEY = 'ghosthub_chat_timestamp';
+const STORAGE_JOINED_KEY = 'ghosthub_chat_joined';
 
 // Chat state
 const chatState = {
@@ -34,6 +35,9 @@ let initialX = 0;
 let initialY = 0;
 let offsetX = 0;
 let offsetY = 0;
+let dragDistance = 0; // Track drag distance to distinguish between drag and click
+let touchStartTime = 0; // Track touch start time for tap detection
+let isTouchClick = false; // Flag to indicate if a touch was a click
 
 // Socket reference (will use the existing socket connection)
 let socket = null;
@@ -193,12 +197,29 @@ function setupEventListeners() {
         toggleChat();
     });
     
-    // Toggle chat expansion when clicking the header
+    // Toggle chat expansion when clicking the header (for desktop)
     chatHeader.addEventListener('click', (e) => {
         // Don't toggle if clicking directly on the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            // Only toggle if not dragging
-            if (!isDragging) {
+            // Only toggle if not dragging or if drag distance is small (click vs drag)
+            if (!isDragging || dragDistance < 5) {
+                // Prevent event from bubbling up to document
+                e.stopPropagation();
+                // Prevent default behavior
+                e.preventDefault();
+                // Toggle chat
+                toggleChat();
+            }
+        }
+    });
+    
+    // Add a specific touchend handler for the chat header (for mobile)
+    chatHeader.addEventListener('touchend', (e) => {
+        // Don't toggle if touching the toggle button (it has its own handler)
+        if (!e.target.closest('#chat-toggle')) {
+            // Only toggle if it was a tap (short touch with minimal movement)
+            if (isTouchClick) {
+                console.log('Touch click detected on header');
                 // Prevent event from bubbling up to document
                 e.stopPropagation();
                 // Prevent default behavior
@@ -242,7 +263,7 @@ function setupDraggable() {
     // Touch events for mobile
     chatHeader.addEventListener('touchstart', startDragTouch);
     document.addEventListener('touchmove', dragTouch);
-    document.addEventListener('touchend', stopDrag);
+    document.addEventListener('touchend', stopDragTouch);
 }
 
 /**
@@ -253,6 +274,10 @@ function startDrag(e) {
     // Don't start drag if clicking on the toggle button
     if (e.target.closest('#chat-toggle')) return;
     
+    // Reset drag distance
+    dragDistance = 0;
+    
+    // Set dragging state
     isDragging = true;
     
     // Get initial mouse position
@@ -269,6 +294,10 @@ function startDrag(e) {
     
     // Prevent default behavior
     e.preventDefault();
+    e.stopPropagation();
+    
+    // Prevent page scrolling during drag
+    document.body.style.overflow = 'hidden';
 }
 
 /**
@@ -280,6 +309,12 @@ function startDragTouch(e) {
     if (e.target.closest('#chat-toggle')) return;
     
     if (e.touches.length === 1) {
+        // Reset drag distance and touch click flag
+        dragDistance = 0;
+        isTouchClick = true;
+        touchStartTime = Date.now();
+        
+        // Set dragging state
         isDragging = true;
         
         // Get initial touch position
@@ -293,6 +328,13 @@ function startDragTouch(e) {
         
         // Add active class for styling
         chatContainer.classList.add('dragging');
+        
+        // Prevent default behavior
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Prevent page scrolling during drag
+        document.body.style.overflow = 'hidden';
     }
 }
 
@@ -303,6 +345,16 @@ function startDragTouch(e) {
 function drag(e) {
     if (!isDragging) return;
     
+    // Calculate drag distance
+    const dx = e.clientX - initialX;
+    const dy = e.clientY - initialY;
+    dragDistance = Math.sqrt(dx * dx + dy * dy);
+    
+    // If drag distance is significant, it's not a click
+    if (dragDistance > 5) {
+        isTouchClick = false;
+    }
+    
     // Calculate new position
     const x = e.clientX - offsetX;
     const y = e.clientY - offsetY;
@@ -312,6 +364,7 @@ function drag(e) {
     
     // Prevent default behavior
     e.preventDefault();
+    e.stopPropagation();
 }
 
 /**
@@ -320,6 +373,16 @@ function drag(e) {
  */
 function dragTouch(e) {
     if (!isDragging || e.touches.length !== 1) return;
+    
+    // Calculate drag distance
+    const dx = e.touches[0].clientX - initialX;
+    const dy = e.touches[0].clientY - initialY;
+    dragDistance = Math.sqrt(dx * dx + dy * dy);
+    
+    // If drag distance is significant, it's not a click
+    if (dragDistance > 5) {
+        isTouchClick = false;
+    }
     
     // Calculate new position
     const x = e.touches[0].clientX - offsetX;
@@ -330,6 +393,7 @@ function dragTouch(e) {
     
     // Prevent default behavior
     e.preventDefault();
+    e.stopPropagation();
 }
 
 /**
@@ -360,15 +424,63 @@ function updatePosition(x, y) {
 }
 
 /**
- * Stop dragging
+ * Stop dragging (mouse event)
  */
 function stopDrag() {
     if (!isDragging) return;
     
+    // If drag distance is small, treat it as a click
+    if (dragDistance < 5) {
+        console.log('Treating as click, not drag');
+        // We'll let the click handler handle this
+    }
+    
+    // Reset dragging state
     isDragging = false;
     
     // Remove active class
     chatContainer.classList.remove('dragging');
+    
+    // Restore page scrolling
+    document.body.style.overflow = '';
+    
+    // Small delay before allowing clicks to prevent accidental clicks after drag
+    setTimeout(() => {
+        dragDistance = 0;
+    }, 100);
+}
+
+/**
+ * Stop dragging (touch event)
+ * @param {TouchEvent} e - The touch event
+ */
+function stopDragTouch(e) {
+    if (!isDragging) return;
+    
+    // Calculate touch duration
+    const touchDuration = Date.now() - touchStartTime;
+    
+    // If drag distance is small and touch duration is short, treat it as a tap
+    if (dragDistance < 5 && touchDuration < 300) {
+        console.log('Treating as tap, not drag');
+        isTouchClick = true;
+    } else {
+        isTouchClick = false;
+    }
+    
+    // Reset dragging state
+    isDragging = false;
+    
+    // Remove active class
+    chatContainer.classList.remove('dragging');
+    
+    // Restore page scrolling
+    document.body.style.overflow = '';
+    
+    // Small delay before allowing clicks to prevent accidental clicks after drag
+    setTimeout(() => {
+        dragDistance = 0;
+    }, 100);
 }
 
 /**
@@ -392,9 +504,23 @@ function setupSocketHandlers() {
 function joinChat() {
     if (!socket || chatState.isJoined) return;
     
-    socket.emit('join_chat');
+    // Check if user has already joined in this session (i.e., this is a refresh)
+    const hasJoined = sessionStorage.getItem(STORAGE_JOINED_KEY) === 'true';
+    
+    if (hasJoined) {
+        // This is a refresh - emit a special event that won't trigger a notification
+        socket.emit('rejoin_chat');  // Matches SE['REJOIN_CHAT'] in constants.py
+        console.log('Rejoined chat room after refresh (no notification sent)');
+    } else {
+        // This is a new join - emit the regular join event
+        socket.emit('join_chat');  // Matches SE['JOIN_CHAT'] in constants.py
+        console.log('Joined chat room for the first time (notification sent)');
+        
+        // Store join status in sessionStorage to track refreshes
+        sessionStorage.setItem(STORAGE_JOINED_KEY, 'true');
+    }
+    
     chatState.isJoined = true;
-    console.log('Joined chat room');
 }
 
 /**
