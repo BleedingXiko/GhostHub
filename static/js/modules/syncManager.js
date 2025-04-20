@@ -132,28 +132,29 @@ function initWebSocket() {
         socket.on('sync_enabled', (data) => {
             console.log('Received sync_enabled via WebSocket:', data);
             
-            // Only handle if we're not the host (the host already knows sync is enabled)
-            const session_id = getCookieValue('session_id');
-            if (data.host_session_id !== session_id) {
-                console.log('Host has enabled sync mode. Joining as guest...');
-                
-                // Update local state
-                app.state.syncModeEnabled = true;
-                app.state.isHost = false;
-                
-                // Update UI
-                updateSyncToggleButton();
-                // updateSyncStatusIndicator(); // updateSyncToggleButton handles this now
-                disableNavigationControls();
+        // Only handle if we're not the host (the host already knows sync is enabled)
+        const session_id = getCookieValue('session_id');
+        if (data.host_session_id !== session_id) {
+            console.log('Host has enabled sync mode. Joining as guest...');
+            
+            // Update local state
+            app.state.syncModeEnabled = true;
+            app.state.isHost = false;
+            
+            // Update UI
+            updateSyncToggleButton();
+            disableNavigationControls();
 
-                // Join the sync room
-                socket.emit('join_sync');
-                
-                // If media state is provided, handle it
-                if (data.media && data.media.category_id) {
-                    handleSyncUpdate(data.media);
-                }
+            // Join the sync room
+            socket.emit('join_sync');
+            
+            // If media state is provided, handle it
+            if (data.media && data.media.category_id) {
+                // Force handling of sync update regardless of current state
+                console.log('Forcing sync update with host media state:', data.media);
+                handleSyncUpdate(data.media, true); // Added force parameter
             }
+        }
         });
         
         socket.on('sync_state', (data) => {
@@ -496,22 +497,18 @@ async function sendSyncUpdate(mediaInfo) {
 /**
  * Process sync update data received from the server (via WebSocket).
  * @param {Object} data - The sync data { category_id, file_url, index }
+ * @param {boolean} force - Whether to force the update regardless of current state
  */
-async function handleSyncUpdate(data) {
+async function handleSyncUpdate(data, force = false) {
     // Skip if sync mode is disabled or we're the host
     if (!app.state.syncModeEnabled || app.state.isHost) {
         console.log('Ignoring sync update (sync disabled or is host)');
         return;
     }
 
-    // const syncStatus = document.getElementById('sync-status-indicator') || createSyncStatusIndicator(); // Don't need the old indicator
-
     // Only process if we have valid data
     if (!data || data.error || typeof data.category_id === 'undefined' || typeof data.index === 'undefined') {
         console.error('Invalid sync data received via WebSocket:', data);
-        // syncStatus.textContent = 'Sync: Invalid Data'; // Update the new display if needed, or rely on uiController
-        // syncStatus.style.color = '#FF9800'; // Orange
-        // setTimeout(() => updateSyncStatusIndicator(), 3000);
         updateSyncToggleButton(); // Update the header display
         return;
     }
@@ -522,9 +519,9 @@ async function handleSyncUpdate(data) {
     const receivedIndex = parseInt(data.index, 10);
     const needsIndexUpdate = !isNaN(receivedIndex) && receivedIndex !== app.state.currentMediaIndex;
 
-    if (!needsCategorySwitch && !needsIndexUpdate) {
+    // If force is true, we'll proceed with the update regardless
+    if (!force && !needsCategorySwitch && !needsIndexUpdate) {
         console.log('No sync update needed (data is the same or irrelevant)');
-        // updateSyncStatusIndicator(); // Ensure indicator is normal - No longer needed
         updateSyncToggleButton(); // Ensure header display is correct
         return;
     }
@@ -544,7 +541,7 @@ async function handleSyncUpdate(data) {
 
             // After category loads, render the specific index
             console.log(`Rendering index ${receivedIndex} after category switch`);
-            await ensureMediaLoadedForIndex(receivedIndex, syncStatus); // Ensure media page is loaded
+            await ensureMediaLoadedForIndex(receivedIndex); // Ensure media page is loaded
             renderMediaWindow(receivedIndex); // Render the specific item
 
             // syncStatus.textContent = 'Sync: Updated ✓'; // Update the new display if needed
