@@ -9,8 +9,8 @@ block_cipher = None
 # Define the base directory - use current working directory instead of __file__
 base_dir = os.getcwd()
 
-# Collect data/binaries/hiddenimports for moviepy BEFORE Analysis
-moviepy_datas, moviepy_binaries, moviepy_hiddenimports = collect_all('moviepy')
+# Collect data/binaries/hiddenimports for opencv BEFORE Analysis
+opencv_datas, opencv_binaries, opencv_hiddenimports = collect_all('cv2')
 
 # Define paths for resources
 static_dir = path.join(base_dir, 'static')
@@ -21,7 +21,7 @@ instance_dir = path.join(base_dir, 'instance')
 a = Analysis(
     ['media_server.py'],
     pathex=[base_dir],
-    binaries=moviepy_binaries, # Add moviepy binaries here
+    binaries=opencv_binaries, # Add opencv binaries here
     datas=[
         # Include static files
         (static_dir, 'static'),
@@ -31,20 +31,11 @@ a = Analysis(
         # (instance_dir, 'instance') if path.exists(instance_dir) else ([], 'instance'),
         # Include cloudflared.exe if it exists
         (path.join(base_dir, 'cloudflared.exe'), '.') if path.exists(path.join(base_dir, 'cloudflared.exe')) else ([],'.'),
-        # Include ffmpeg binaries if they exist in the root
-        (path.join(base_dir, 'ffmpeg.exe'), '.') if path.exists(path.join(base_dir, 'ffmpeg.exe')) else ([],'.'),
-        (path.join(base_dir, 'ffprobe.exe'), '.') if path.exists(path.join(base_dir, 'ffprobe.exe')) else ([],'.'),
-    ] + moviepy_datas, # Add moviepy datas here
+    ] + opencv_datas, # Add opencv datas here
     hiddenimports=[
-        # MoviePy and dependencies (keep these as they might still help)
-        'moviepy',
-        'moviepy.editor',
-        'moviepy.video.io.ffmpeg_reader', # Specific reader
-        'moviepy.config', # Configuration module
-        'moviepy.tools', # Utility tools
-        'moviepy.decorators', # Decorators used internally
-        'imageio',
-        'imageio_ffmpeg', # Often needed by moviepy/imageio
+        # OpenCV and dependencies
+        'cv2',
+        'numpy',
         'PIL', # Pillow dependency
 
         # Socket.IO and Gevent dependencies
@@ -83,7 +74,7 @@ a = Analysis(
         'pyperclip', # Added pyperclip for clipboard support
         'PIL._imagingtk', # Sometimes needed for Tkinter + Pillow
         'PIL._tkinter_finder', # Sometimes needed for Tkinter + Pillow
-    ] + moviepy_hiddenimports, # Add moviepy hiddenimports here
+    ] + opencv_hiddenimports, # Add opencv hiddenimports here
     hookspath=['hooks'], # Add the hooks directory
     hooksconfig={},
     runtime_hooks=[],

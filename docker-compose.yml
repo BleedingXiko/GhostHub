@@ -1,0 +1,36 @@
+version: '3'
+
+services:
+  ghosthub:
+    build: .
+    image: ghosthub
+    container_name: ghosthub
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount the instance directory for persistent configuration
+      - ./instance:/app/instance
+      
+      # MEDIA DIRECTORIES: Add your media directories here
+      # The container will automatically create media categories for all
+      # directories mounted under /media
+      
+      # Create the media directory if it doesn't exist
+      - ./media:/media
+      
+      # Mount your media directories here
+      # Format: - /host/path:/media/category_name
+      
+      # Windows paths must use the correct format for Docker:
+      # - /c/Users/username/path:/media/category_name
+      # OR
+      # - C:/Users/username/path:/media/category_name (on Docker Desktop)
+
+      # Examples:
+      # - C:/Users/username/Pictures:/media/pictures
+      # - C:/Users/username/Videos:/media/videos
+      
+    environment:
+      - PORT=5000
+      - FLASK_CONFIG=production
+      - USE_CLOUDFLARE_TUNNEL=n  # Set to 'y' to enable Cloudflare Tunnel

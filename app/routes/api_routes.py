@@ -116,7 +116,20 @@ def browse_folders():
     """
     API endpoint to open a folder selection dialog on the server.
     Requires Tkinter.
+    
+    In Docker environment, this will return a message instructing the user
+    to mount volumes in docker-compose.yml instead.
     """
+    # Check if running in Docker environment
+    import os
+    if os.path.exists('/.dockerenv'):
+        logger.info("Running in Docker environment, folder browser not available")
+        return jsonify({
+            'error': 'Folder browser not available in Docker environment',
+            'message': 'To add media directories in Docker, mount volumes in docker-compose.yml',
+            'docker': True
+        }), 501  # 501 Not Implemented
+    
     # Check if running in a headless environment or if Tkinter is available
     try:
         # Attempt to import tkinter and create a root window
