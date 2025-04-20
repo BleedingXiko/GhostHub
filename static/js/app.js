@@ -282,9 +282,9 @@ document.addEventListener('DOMContentLoaded', () => {
         message.style.padding = '10px';
         message.style.zIndex = '1000';
         message.textContent = 'Navigation controlled by host';
-      */
         
         document.body.appendChild(message);
+        */
     }
     
     /**
