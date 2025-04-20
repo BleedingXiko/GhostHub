@@ -5,10 +5,18 @@ import traceback
 from flask import current_app
 from PIL import Image
 from urllib.parse import quote
-from moviepy.editor import VideoFileClip # Added for video thumbnails
 import threading # Use standard threading instead of eventlet
 
 logger = logging.getLogger(__name__)
+
+# Try to import moviepy, but provide a fallback if it's not available
+try:
+    from moviepy.editor import VideoFileClip
+    MOVIEPY_AVAILABLE = True
+    logger.info("MoviePy is available for video thumbnail generation")
+except ImportError:
+    MOVIEPY_AVAILABLE = False
+    logger.warning("MoviePy is not available. Video thumbnail generation will be disabled.")
 
 def is_media_file(filename):
     """
@@ -97,6 +105,11 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                 logger.info(f"Successfully generated IMAGE thumbnail: {thumbnail_save_path}")
                 return True
             elif media_type == 'video':
+                # Check if moviepy is available
+                if not MOVIEPY_AVAILABLE:
+                    logger.warning(f"MoviePy not available, skipping video thumbnail generation for {original_media_path}")
+                    return False
+                
                 clip = None # Initialize clip to None
                 try:
                     clip = VideoFileClip(original_media_path)

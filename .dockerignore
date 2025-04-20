@@ -1,3 +1,7 @@
+# Git
+.git
+.gitignore
+
 # Python
 __pycache__/
 *.py[cod]
@@ -36,13 +40,7 @@ env/
 Thumbs.db
 
 # Application specific
-instance/*
-!instance/.gitkeep
-media/*
-!media/README.md
+instance/
+media/
 *.exe
-cloudflared.exe
-ffmpeg.exe
-ffprobe.exe
-
-# Keep the media directory but ignore its contents
+*.spec

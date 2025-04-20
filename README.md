@@ -2,7 +2,7 @@
 
 **GhostHub** is a lightweight, modular media server that lets you swipe through your local videos and images in a sleek, mobile-friendly interface — with real-time chat, optional host sync, and easy Cloudflare Tunnel sharing.
 
-Runs as a **Python script** or **one-click Windows `.exe`** — no install, no accounts, no cloud.
+Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
 ---
 
@@ -15,6 +15,7 @@ Runs as a **Python script** or **one-click Windows `.exe`** — no install, no a
 - 📱 Fully mobile and desktop optimized
 - 🌐 Optional public sharing via Cloudflare Tunnel
 - 🖥️ Portable `.exe` with no dependencies or setup
+- 🐳 Docker support for cross-platform compatibility
 - 💾 External config (`media_categories.json`) so you keep your folders
 
 ---
@@ -29,7 +30,7 @@ The `.exe` contains everything — no setup needed.
 2. You'll be prompted:
    - Whether to enable Cloudflare Tunnel
    - The public link (if enabled) will auto-copy to clipboard
-3. Open your browser and go to: [http://localhost:5000](http://localhost:5000) (manually — it doesn’t auto-launch)
+3. Open your browser and go to: [http://localhost:5000](http://localhost:5000) (manually — it doesn't auto-launch)
 
 > 📌 `media_categories.json` is saved in the same folder — you can edit this to manage your categories.
 >
@@ -60,6 +61,67 @@ start_server.bat
 	5.	Open your browser manually to: http://localhost:5000
 
 💡 Tunnel will prompt automatically if cloudflared.exe is present
+
+---
+
+### 🐳 Option 3: Docker (Cross-Platform)
+
+Run GhostHub in a Docker container for easy deployment on any platform.
+
+1. Install [Docker](https://www.docker.com/products/docker-desktop)
+2. Add your media directories to `docker-compose.yml`:
+   ```yaml
+   volumes:
+     - ./instance:/app/instance
+     - ./media:/media
+     # Windows paths (Docker Desktop):
+     - C:/Users/username/Pictures:/media/pictures
+     - C:/Users/username/Videos:/media/videos
+     # Linux/macOS paths:
+     # - /home/user/Pictures:/media/pictures
+     # - /home/user/Videos:/media/videos
+   ```
+3. Build and start the container:
+   ```bash
+   docker-compose up -d
+   ```
+4. Open your browser to: [http://localhost:5000](http://localhost:5000)
+
+> 📌 **Automatic Media Categories**: The Docker container automatically creates media categories for all directories mounted under `/media`. No need to manually add them in the UI!
+>
+> 📂 **Media Organization**: Mount your media directories as subdirectories of `/media` (e.g., `/media/pictures`, `/media/videos`) for better organization.
+>
+> 🌐 **Cloudflare Tunnel** is fully supported in the Docker container.
+>
+> ⚠️ **Windows Path Format**: When using Docker on Windows, make sure to use the correct path format:
+>   - Docker Desktop: `C:/Users/username/path:/media/category`
+>   - WSL2/Git Bash: `/c/Users/username/path:/media/category`
+
+Docker commands:
+```bash
+# Start the container
+docker-compose up -d
+
+# Stop the container
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# Rebuild the container (after changes)
+docker-compose build
+
+# Enable Cloudflare Tunnel
+# Edit docker-compose.yml and set USE_CLOUDFLARE_TUNNEL=y
+```
+
+### Docker Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| PORT | Port to run the server on | 5000 |
+| FLASK_CONFIG | Flask configuration (development/production) | development |
+| USE_CLOUDFLARE_TUNNEL | Enable Cloudflare Tunnel (y/n) | n |
 
 ⸻
 
