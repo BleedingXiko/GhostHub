@@ -182,6 +182,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 
 ## ⚠️ Known Issues
 
+- **Mobile Chat Limitation**: On mobile devices, you may need to view new media in a category before the chat becomes active again after viewing in fullscreen.
 - **iOS Fullscreen**: Some iOS devices may require tapping the video twice to enter fullscreen mode.
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
 
