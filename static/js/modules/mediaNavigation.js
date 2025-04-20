@@ -38,6 +38,9 @@ function navigateMedia(direction, event) {
         return;
     }
     
+    // Track the last navigation time to prevent fullscreen issues during rapid navigation
+    app.state.lastNavigationTime = Date.now();
+    
     let nextIndex = app.state.currentMediaIndex;
     const listLength = app.state.fullMediaList.length;
     const currentMediaElement = tiktokContainer.querySelector('.tiktok-media.active');
@@ -140,6 +143,9 @@ function renderMediaWindow(index) {
         // Remove all media elements and fullscreen buttons
         tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
         tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
+        
+        // Track the render time to prevent fullscreen issues during rapid rendering
+        app.state.lastRenderTime = Date.now();
         
         // Re-add the spinner if it was removed
         if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
@@ -258,6 +264,14 @@ function renderMediaWindow(index) {
         
         setupControls(); // Setup controls (now just the back button wrapper)
         updateSwipeIndicators(index, app.state.fullMediaList.length);
+        
+        // Ensure fullscreen buttons are added to all active videos
+        // Use a small delay to ensure videos are fully rendered
+        setTimeout(() => {
+            if (window.appModules && window.appModules.fullscreenManager) {
+                window.appModules.fullscreenManager.ensureFullscreenButtons();
+            }
+        }, 100);
 
         // Spinner is hidden by loadMoreMedia's finally block
     } catch (renderError) {

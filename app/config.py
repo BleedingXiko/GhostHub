@@ -27,6 +27,18 @@ class Config:
     DEFAULT_PAGE_SIZE = int(os.environ.get('DEFAULT_PAGE_SIZE', 10))
     SESSION_EXPIRY = int(os.environ.get('SESSION_EXPIRY', 3600))  # 1 hour
     
+    # Cookie security settings
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true'  # 'auto', 'true', or 'false'
+    
+    # WebSocket connection settings
+    WS_RECONNECT_ATTEMPTS = int(os.environ.get('WS_RECONNECT_ATTEMPTS', 10))
+    WS_RECONNECT_DELAY = int(os.environ.get('WS_RECONNECT_DELAY', 1000))  # Base delay in ms
+    WS_RECONNECT_FACTOR = float(os.environ.get('WS_RECONNECT_FACTOR', 1.5))  # Exponential factor
+    
+    # Memory management settings
+    MEMORY_CLEANUP_INTERVAL = int(os.environ.get('MEMORY_CLEANUP_INTERVAL', 60000))  # 1 minute in ms
+    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50))  # Maximum number of items in cache
+    
     # Determine paths based on whether we're running as an executable or script
     APP_ROOT = get_application_root()
     

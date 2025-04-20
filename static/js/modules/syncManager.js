@@ -11,6 +11,62 @@ import { viewCategory } from './mediaLoader.js';
 // Socket.IO instance (initialized later)
 let socket = null;
 let isWebSocketConnected = false;
+let heartbeatInterval = null; // Module scope for proper cleanup
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 10;
+let reconnectDelay = 1000; // Base delay in ms
+let reconnectFactor = 1.5; // Exponential factor
+
+// Add page unload handler to clean up socket connections
+window.addEventListener('beforeunload', () => {
+    disconnectWebSocket();
+});
+
+// --- Status Display Management ---
+
+/**
+ * Update the sync status display with a specific state
+ * @param {string} state - The state to display ('connecting', 'error', 'success', etc.)
+ * @param {string} message - The message to display
+ * @param {number} [timeout] - Optional timeout to reset to default state
+ */
+function updateSyncStatusDisplay(state, message, timeout = 0) {
+    const syncHeaderDisplay = document.getElementById('sync-status-display');
+    if (!syncHeaderDisplay) return;
+    
+    let color = '#FFFFFF'; // Default white
+    
+    switch (state) {
+        case 'connecting':
+        case 'sending':
+        case 'loading':
+        case 'toggling':
+            color = '#FFC107'; // Yellow
+            break;
+        case 'error':
+        case 'failed':
+            color = '#F44336'; // Red
+            break;
+        case 'success':
+            color = '#4CAF50'; // Green
+            break;
+        case 'warning':
+            color = '#FF9800'; // Orange
+            break;
+        case 'default':
+            // Use the default color based on sync state
+            updateSyncToggleButton();
+            return;
+    }
+    
+    syncHeaderDisplay.textContent = message;
+    syncHeaderDisplay.style.color = color;
+    
+    // Reset to default state after timeout if specified
+    if (timeout > 0) {
+        setTimeout(() => updateSyncToggleButton(), timeout);
+    }
+}
 
 // --- WebSocket Management ---
 
@@ -27,22 +83,26 @@ function initWebSocket() {
         console.log('Initializing WebSocket connection...');
         // The 'io' function is globally available from the script tag in index.html
         socket = io({
-            reconnectionAttempts: 10,        // Increased from 5 to 10
-            reconnectionDelay: 1000,         // Decreased from 2000 to 1000
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
             timeout: 20000,                  // Increased connection timeout
             pingTimeout: 120000,             // Increased ping timeout to match server
             pingInterval: 10000,             // Increased ping interval to match server
             transports: ['websocket', 'polling'] // Try WebSocket first, fallback to polling
         });
         
-        // Set up heartbeat interval to keep connection alive
-        let heartbeatInterval = null;
+        // Socket connected successfully
 
         // --- Connection Events ---
         socket.on('connect', () => {
             console.log('WebSocket connected successfully:', socket.id);
             isWebSocketConnected = true;
             updateSyncToggleButton(); // Update header display
+
+            // Reset reconnection attempts on successful connection
+            reconnectAttempts = 0;
+            reconnectDelay = 1000; // Reset to base delay
 
             // If we are a guest in sync mode, join the sync room
             if (app.state.syncModeEnabled && !app.state.isHost) {
@@ -104,8 +164,61 @@ function initWebSocket() {
                 heartbeatInterval = null;
             }
             
-            // Consider fallback or user notification if connection fails persistently
-            // Maybe show a more permanent error in the indicator after several failed attempts
+            // Add timeout to prevent indefinite hanging on mobile
+            if (reconnectAttempts > 3) {
+                setTimeout(() => {
+                    if (!isWebSocketConnected) {
+                        console.log('Forcing application to continue despite WebSocket issues');
+                        // Force UI update and enable controls
+                        enableNavigationControls();
+                        updateSyncToggleButton();
+                        
+                        // If we're in sync mode as a guest, reset the state to prevent UI lockup
+                        if (app.state.syncModeEnabled && !app.state.isHost) {
+                            console.log('Resetting sync state due to connection timeout');
+                            app.state.syncModeEnabled = false;
+                            updateSyncToggleButton();
+                            updateSyncStatusDisplay('error', 'Sync: Connection Timed Out', 5000);
+                        }
+                    }
+                }, 5000); // 5 second timeout
+            }
+            
+            // Implement exponential backoff for reconnection
+            reconnectAttempts++;
+            if (reconnectAttempts <= maxReconnectAttempts) {
+                // Calculate exponential backoff delay with jitter
+                const jitter = Math.random() * 0.3 + 0.85; // Random between 0.85 and 1.15
+                // Reduce max delay on mobile to prevent long hangs
+                const maxDelay = window.innerWidth <= 768 ? 10000 : 30000;
+                const delay = Math.min(reconnectDelay * Math.pow(reconnectFactor, reconnectAttempts - 1) * jitter, maxDelay);
+                
+                console.log(`Connection attempt ${reconnectAttempts}/${maxReconnectAttempts} failed. Retrying in ${Math.round(delay)}ms...`);
+                
+                // Show reconnection status in the UI
+                updateSyncStatusDisplay('connecting', `Sync: Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})`);
+                
+                // Try to reconnect after the calculated delay
+                setTimeout(() => {
+                    if (socket && !socket.connected) {
+                        console.log(`Attempting reconnection #${reconnectAttempts}...`);
+                        socket.connect();
+                    }
+                }, delay);
+            } else {
+                console.error(`Maximum reconnection attempts (${maxReconnectAttempts}) reached. Giving up.`);
+                
+                // Show connection failure in the UI
+                updateSyncStatusDisplay('error', 'Sync: Connection Failed');
+                
+                // If we're in sync mode as a guest, we need to reset the state
+                if (app.state.syncModeEnabled && !app.state.isHost) {
+                    console.log('Resetting sync state due to connection failure');
+                    app.state.syncModeEnabled = false;
+                    updateSyncToggleButton();
+                    enableNavigationControls();
+                }
+            }
         });
         
         // Handle heartbeat responses
@@ -144,6 +257,9 @@ function initWebSocket() {
             // Update UI
             updateSyncToggleButton();
             disableNavigationControls();
+            
+            // Show notification that sync mode was enabled
+            updateSyncStatusDisplay('success', 'Sync: Joined as Guest', 3000);
 
             // Join the sync room
             socket.emit('join_sync');
@@ -182,16 +298,8 @@ function initWebSocket() {
                 // updateSyncStatusIndicator(); // updateSyncToggleButton handles this now
                 enableNavigationControls();
 
-                // Show notification to user (This part still uses the old indicator ID - remove or adapt)
-                /* // Old notification logic using removed indicator:
-                // const syncStatus = document.getElementById('sync-status-indicator') // || createSyncStatusIndicator();
-                // if (syncStatus) {
-                //     syncStatus.textContent = 'Sync: Disabled by Host';
-                //     syncStatus.style.color = '#FF9800'; // Orange
-                //     setTimeout(() => updateSyncToggleButton(), 3000); // Use new function
-                // }
-                */
-                 // We can rely on the header display updated by updateSyncToggleButton
+                // Show notification to user that sync was disabled by host
+                updateSyncStatusDisplay('warning', 'Sync: Disabled by Host', 3000);
             }
         });
 
@@ -199,15 +307,7 @@ function initWebSocket() {
             console.error('Received sync_error via WebSocket:', error.message);
             alert(`Sync Error: ${error.message}`);
             // Potentially disable sync mode locally or take other action
-            updateSyncToggleButton(); // Update header display to reflect potential state change
-            /* // Old notification logic using removed indicator:
-            // const syncStatus = document.getElementById('sync-status-indicator');
-            // if (syncStatus) {
-            //     syncStatus.textContent = `Sync Error: ${error.message}`;
-            //     syncStatus.style.color = '#F44336'; // Red
-            //     setTimeout(() => updateSyncToggleButton(), 5000); // Use new function
-            // }
-            */
+            updateSyncStatusDisplay('error', `Sync Error: ${error.message}`, 5000);
         });
 
         // Helper function to get cookie value
@@ -219,12 +319,7 @@ function initWebSocket() {
     } catch (error) {
             console.error('Fatal error initializing WebSocket:', error);
             // Fallback or notification needed if io() itself fails
-            // Update the header display instead
-            const syncHeaderDisplay = document.getElementById('sync-status-display');
-            if (syncHeaderDisplay) {
-                 syncHeaderDisplay.textContent = 'Sync: WS Init Failed!';
-                 syncHeaderDisplay.style.color = '#F44336'; // Red
-            }
+            updateSyncStatusDisplay('error', 'Sync: WS Init Failed!');
        }
 }
 
@@ -240,6 +335,18 @@ function disconnectWebSocket() {
             clearInterval(heartbeatInterval);
             heartbeatInterval = null;
         }
+        
+        // Remove all event listeners to prevent memory leaks
+        socket.off('connect');
+        socket.off('disconnect');
+        socket.off('connect_error');
+        socket.off('heartbeat_response');
+        socket.off('connection_status');
+        socket.off('connection_error');
+        socket.off('sync_enabled');
+        socket.off('sync_state');
+        socket.off('sync_disabled');
+        socket.off('sync_error');
         
         socket.disconnect();
         socket = null; // Ensure socket instance is cleared
@@ -315,12 +422,8 @@ async function checkSyncMode() {
         app.state.isHost = false;
         updateSyncToggleButton();
 
-        // Update sync status indicator to show error (update header display instead)
-        const syncHeaderDisplay = document.getElementById('sync-status-display');
-         if (syncHeaderDisplay) {
-             syncHeaderDisplay.textContent = 'Sync: Status Error';
-             syncHeaderDisplay.style.color = '#F44336'; // Red
-        }
+        // Update sync status indicator to show error
+        updateSyncStatusDisplay('error', 'Sync: Status Error');
 
         // Ensure controls are enabled and WS disconnected on error
         enableNavigationControls();
@@ -335,12 +438,7 @@ async function checkSyncMode() {
  */
 async function toggleSyncMode() {
     // Update header display immediately to show toggling state
-    const syncHeaderDisplay = document.getElementById('sync-status-display');
-    if (syncHeaderDisplay) {
-        syncHeaderDisplay.textContent = 'Sync: Toggling...';
-        syncHeaderDisplay.style.color = '#FFC107'; // Yellow
-    }
-    // const syncStatus = document.getElementById('sync-status-indicator') // || createSyncStatusIndicator(); // Remove old indicator logic
+    updateSyncStatusDisplay('toggling', 'Sync: Toggling...');
 
     try {
         console.log('Toggling sync mode via HTTP...');
@@ -386,15 +484,18 @@ async function toggleSyncMode() {
                 console.log('Guest mode enabled by toggle. Initializing WebSocket...');
                 initWebSocket(); // Connect and join room
                 disableNavigationControls();
+                updateSyncStatusDisplay('success', 'Sync: Joined as Guest', 3000);
             } else {
                 console.log('Host mode enabled by toggle. Disconnecting WebSocket.');
                 disconnectWebSocket();
                 enableNavigationControls();
+                updateSyncStatusDisplay('success', 'Sync: Started as Host', 3000);
             }
         } else {
             console.log('Sync mode disabled by toggle. Disconnecting WebSocket.');
             disconnectWebSocket();
             enableNavigationControls();
+            updateSyncStatusDisplay('warning', 'Sync: Disabled', 3000);
         }
 
         return data;
@@ -406,12 +507,9 @@ async function toggleSyncMode() {
         // Attempt to revert state based on a fresh check
         await checkSyncMode(); // Re-check the actual status from server (this will call updateSyncToggleButton)
 
-        // Update indicator to show error after re-check (update header display)
-        if (syncHeaderDisplay) {
-             syncHeaderDisplay.textContent = 'Sync: Toggle Failed';
-             syncHeaderDisplay.style.color = '#F44336'; // Red
-             // Let checkSyncMode handle resetting the text after re-check
-        }
+        // Update indicator to show error after re-check
+        updateSyncStatusDisplay('error', 'Sync: Toggle Failed');
+        // Let checkSyncMode handle resetting the text after re-check
 
        return { error: error.message };
     }
@@ -437,12 +535,7 @@ async function sendSyncUpdate(mediaInfo) {
     }
 
     // Update header display to show sending state
-    const syncHeaderDisplay = document.getElementById('sync-status-display');
-     if (syncHeaderDisplay) {
-        syncHeaderDisplay.textContent = 'Sync: Sending...';
-        syncHeaderDisplay.style.color = '#FFC107'; // Yellow
-    }
-    // const syncStatus = document.getElementById('sync-status-indicator') // || createSyncStatusIndicator(); // Remove old indicator logic
+    updateSyncStatusDisplay('sending', 'Sync: Sending...');
 
     try {
         console.log('Sending sync update via HTTP:', mediaInfo);
@@ -461,11 +554,7 @@ async function sendSyncUpdate(mediaInfo) {
         console.log('Sync update HTTP response:', data); // Should just be {success: true}
 
         // Update header display to show success, then reset via updateSyncToggleButton
-        if (syncHeaderDisplay) {
-            syncHeaderDisplay.textContent = 'Sync: Sent ✓';
-            syncHeaderDisplay.style.color = '#4CAF50'; // Green
-        }
-        setTimeout(() => updateSyncToggleButton(), 2000); // Reset header display
+        updateSyncStatusDisplay('success', 'Sync: Sent ✓', 2000);
 
         return true; // Indicate HTTP request was successful
 
@@ -473,10 +562,7 @@ async function sendSyncUpdate(mediaInfo) {
         console.error('Error sending sync update via HTTP:', error);
 
         // Update header display to show error
-         if (syncHeaderDisplay) {
-            syncHeaderDisplay.textContent = 'Sync: Send Failed ✗';
-            syncHeaderDisplay.style.color = '#F44336'; // Red
-        }
+        updateSyncStatusDisplay('error', 'Sync: Send Failed ✗');
         // Let checkSyncMode handle resetting if needed below
 
         // Check if the error indicates we are no longer the host
@@ -532,9 +618,7 @@ async function handleSyncUpdate(data, force = false) {
         if (needsCategorySwitch) {
             // --- Different category ---
             console.log(`Switching to category ${data.category_id}...`);
-            // syncStatus.textContent = 'Sync: Changing Category...'; // Update the new display if needed
-            // syncStatus.style.color = '#FFC107'; // Yellow
-            updateSyncToggleButton(); // Update the header display
+            updateSyncStatusDisplay('loading', 'Sync: Changing Category...');
 
             window.appModules.mediaLoader.clearResources(false); // Non-aggressive clear
             await viewCategory(data.category_id); // Load the new category
@@ -544,41 +628,27 @@ async function handleSyncUpdate(data, force = false) {
             await ensureMediaLoadedForIndex(receivedIndex); // Ensure media page is loaded
             renderMediaWindow(receivedIndex); // Render the specific item
 
-            // syncStatus.textContent = 'Sync: Updated ✓'; // Update the new display if needed
-            // syncStatus.style.color = '#4CAF50'; // Green
-            // setTimeout(() => updateSyncStatusIndicator(), 2000);
-            updateSyncToggleButton(); // Update the header display
+            updateSyncStatusDisplay('success', 'Sync: Updated ✓', 2000);
 
         } else if (needsIndexUpdate) {
             // --- Same category, different index ---
             console.log(`Updating to index ${receivedIndex}...`);
-            // syncStatus.textContent = 'Sync: Navigating...'; // Update the new display if needed
-            // syncStatus.style.color = '#FFC107'; // Yellow
-            updateSyncToggleButton(); // Update the header display
+            updateSyncStatusDisplay('loading', 'Sync: Navigating...');
 
             await ensureMediaLoadedForIndex(receivedIndex); // Pass only index, syncStatus removed
 
             // Only render if the index is valid within the *now potentially updated* list
             if (receivedIndex < app.state.fullMediaList.length) {
                 renderMediaWindow(receivedIndex);
-                // syncStatus.textContent = 'Sync: Updated ✓'; // Update the new display if needed
-                // syncStatus.style.color = '#4CAF50'; // Green
-                // setTimeout(() => updateSyncStatusIndicator(), 2000);
-                updateSyncToggleButton(); // Update the header display
+                updateSyncStatusDisplay('success', 'Sync: Updated ✓', 2000);
             } else {
                 console.warn(`Cannot render index ${receivedIndex}, only have ${app.state.fullMediaList.length} items loaded after attempting load.`);
-                // syncStatus.textContent = 'Sync: Media Not Available'; // Update the new display if needed
-                // syncStatus.style.color = '#FF9800'; // Orange
-                // setTimeout(() => updateSyncStatusIndicator(), 3000);
-                updateSyncToggleButton(); // Update the header display
+                updateSyncStatusDisplay('warning', 'Sync: Media Not Available', 3000);
             }
         }
     } catch (error) {
         console.error('Error processing sync update:', error);
-        // syncStatus.textContent = 'Sync: Update Error'; // Update the new display if needed
-        // syncStatus.style.color = '#F44336'; // Red
-        // setTimeout(() => updateSyncStatusIndicator(), 3000);
-        updateSyncToggleButton(); // Update the header display
+        updateSyncStatusDisplay('error', 'Sync: Update Error', 3000);
     }
 }
 
@@ -600,18 +670,13 @@ async function ensureMediaLoadedForIndex(index /*, syncStatus */) { // syncStatu
         if (targetPage > currentPage) {
             console.log(`Target index ${index} is on page ${targetPage}. Loading page...`);
             try {
-                // syncStatus.textContent = 'Sync: Loading Media...'; // Update the new display if needed
-                // syncStatus.style.color = '#FFC107'; // Yellow
-                updateSyncToggleButton(); // Update the header display
+                updateSyncStatusDisplay('loading', 'Sync: Loading Media...');
                 // Load the specific page containing the target index
                 await window.appModules.mediaLoader.loadMoreMedia(null, null, false, targetPage);
                 console.log(`Finished loading media up to page ${targetPage}. Total items: ${app.state.fullMediaList.length}`);
             } catch (loadError) {
                 console.error(`Error loading target page ${targetPage} during sync:`, loadError);
-                // syncStatus.textContent = 'Sync: Error Loading Media'; // Update the new display if needed
-                // syncStatus.style.color = '#F44336'; // Red
-                // setTimeout(() => updateSyncStatusIndicator(), 3000);
-                updateSyncToggleButton(); // Update the header display
+                updateSyncStatusDisplay('error', 'Sync: Error Loading Media', 3000);
                 throw loadError; // Re-throw to stop further processing in handleSyncUpdate
             }
         } else {

@@ -664,7 +664,8 @@ def serve_media(category_id, filename):
         # Catch-all for unexpected errors during file serving
         logger.error(f"Unexpected error serving media file Cat={category_id}, File='{decoded_filename}': {str(e)}")
         logger.debug(traceback.format_exc())
-        return jsonify({'error': f'Server error serving file: {str(e)}'}), 500
+        # Return a generic error message to avoid exposing sensitive information
+        return jsonify({'error': 'An unexpected error occurred while serving the media file'}), 500
 
 
 @media_bp.route('/thumbnails/<category_id>/<filename>')

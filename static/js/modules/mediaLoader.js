@@ -9,7 +9,9 @@ import {
     spinnerContainer, 
     categoryView, 
     mediaView,
-    MEDIA_PER_PAGE
+    MEDIA_PER_PAGE,
+    MOBILE_DEVICE,
+    MAX_CACHE_SIZE
 } from '../core/app.js';
 
 import { 
@@ -336,8 +338,8 @@ function clearResources(aggressive = false) {
             }
         });
         
-        // Hint to browser to garbage collect
-        if (window.gc) window.gc();
+        // Use the performCacheCleanup function from cacheManager.js
+        performCacheCleanup(true);
     } else {
         // Regular cleanup - limit cache size
         performCacheCleanup();
@@ -351,7 +353,7 @@ function preloadNextMedia() {
     if (app.state.isPreloading || app.state.preloadQueue.length === 0) return;
     
     // Skip preloading if cache is getting too large
-    if (app.mediaCache.size >= window.appModules.cacheManager.MAX_CACHE_SIZE) {
+    if (app.mediaCache.size >= MAX_CACHE_SIZE) {
         console.log("Cache size limit reached, skipping preload");
         app.state.isPreloading = false;
         return;
@@ -375,12 +377,13 @@ function preloadNextMedia() {
     
     console.log(`Preloading ${file.type}: ${file.name}`);
     let mediaElement;
-    
+        
     if (file.type === 'video') {
         mediaElement = document.createElement('video');
         
         // Set video attributes for faster loading
-        mediaElement.preload = 'auto'; // Changed from 'metadata' to 'auto' for faster loading
+        // On mobile, use 'metadata' instead of 'auto' to reduce initial data usage
+        mediaElement.preload = MOBILE_DEVICE ? 'metadata' : 'auto';
         mediaElement.playsInline = true;
         mediaElement.setAttribute('playsinline', 'true');
         mediaElement.setAttribute('webkit-playsinline', 'true');

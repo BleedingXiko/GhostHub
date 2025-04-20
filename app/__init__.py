@@ -79,8 +79,23 @@ def create_app(config_name='default'):
         if 'session_id' not in request.cookies and response.status_code < 400:
             session_id = str(uuid.uuid4())
             max_age = app.config.get('SESSION_EXPIRY', 3600)
+            
+            # Get secure flag from config or determine based on request
+            secure_setting = app.config.get('SESSION_COOKIE_SECURE', 'auto')
+            if secure_setting == 'auto':
+                secure = request.is_secure
+            else:
+                secure = secure_setting == 'true'
+            
             logger.info(f"Setting new session_id cookie via global after_request: {session_id}")
-            response.set_cookie('session_id', session_id, max_age=max_age, httponly=True, samesite='Lax')
+            response.set_cookie(
+                'session_id', 
+                session_id, 
+                max_age=max_age, 
+                httponly=True, 
+                samesite='Lax',
+                secure=secure
+            )
         return response
     
     # Add a global after_request handler to optimize media file responses

@@ -124,6 +124,36 @@ function addFullscreenButton(mediaElement) {
         return;
     }
     
+    // If the video is not in the DOM yet, wait for it to be added
+    if (!mediaElement.parentElement) {
+        console.log('Video element has no parent yet, waiting for it to be added to DOM');
+        // Use a MutationObserver to detect when the video is added to the DOM
+        const observer = new MutationObserver((mutations, obs) => {
+            if (document.body.contains(mediaElement)) {
+                console.log('Video element now in DOM, adding fullscreen button');
+                obs.disconnect(); // Stop observing once found
+                // Add the button now that the element is in the DOM
+                addFullscreenButtonToElement(mediaElement);
+            }
+        });
+        
+        // Start observing the document body for changes
+        observer.observe(document.body, { childList: true, subtree: true });
+        
+        // Set a timeout to stop the observer after a reasonable time
+        setTimeout(() => {
+            observer.disconnect();
+        }, 5000);
+        
+        return;
+    }
+    
+    // If the video is already in the DOM, add the button immediately
+    addFullscreenButtonToElement(mediaElement);
+}
+
+// Helper function to actually add the fullscreen button to a video element
+function addFullscreenButtonToElement(mediaElement) {
     // Remove any existing fullscreen buttons in the container
     if (mediaElement.parentElement) {
         const existingButtons = mediaElement.parentElement.querySelectorAll('.fullscreen-btn');
@@ -139,10 +169,25 @@ function addFullscreenButton(mediaElement) {
         </svg>
     `;
     
-    // Add click event listener
+    // Add click event listener with debounce to prevent rapid clicks
+    let lastClickTime = 0;
     fullscreenBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        
+        // Debounce to prevent rapid clicks
+        const now = Date.now();
+        if (now - lastClickTime < 500) { // 500ms debounce
+            console.log('Ignoring rapid fullscreen click');
+            return;
+        }
+        lastClickTime = now;
+        
+        // Check if it's safe to toggle fullscreen
+        if (!isSafeToToggleFullscreen()) {
+            console.log('Not safe to toggle fullscreen right now');
+            return;
+        }
         
         // For iOS, we need to ensure the video is ready to play
         if (isIOS && mediaElement.paused) {
@@ -218,12 +263,48 @@ function isSafeToToggleFullscreen() {
         return false;
     }
     
+    // Check if we're currently in the middle of a rapid navigation
+    if (window.appInstance && window.appInstance.state) {
+        const now = Date.now();
+        const lastNavTime = window.appInstance.state.lastNavigationTime || 0;
+        
+        // If we've navigated within the last 300ms, consider it unsafe
+        if (now - lastNavTime < 300) {
+            console.log('Preventing fullscreen during rapid navigation');
+            return false;
+        }
+    }
+    
+    // Check if the document is in a state where fullscreen is allowed
+    const fullscreenAPI = getFullscreenAPI(document.documentElement);
+    if (!document[fullscreenAPI.fullscreenEnabled]) {
+        console.log('Fullscreen not enabled in document');
+        return false;
+    }
+    
     return true;
+}
+
+// Function to ensure fullscreen buttons are added to all active videos
+// This can be called periodically to ensure buttons are present
+function ensureFullscreenButtons() {
+    const activeVideos = document.querySelectorAll('video.active');
+    activeVideos.forEach(video => {
+        // Check if this video already has a fullscreen button
+        const hasButton = video.parentElement && 
+                          video.parentElement.querySelector('.fullscreen-btn');
+        
+        if (!hasButton) {
+            console.log('Adding missing fullscreen button to active video');
+            addFullscreenButton(video);
+        }
+    });
 }
 
 export {
     toggleFullscreen,
     addFullscreenButton,
     setupFullscreenChangeListener,
-    isSafeToToggleFullscreen
+    isSafeToToggleFullscreen,
+    ensureFullscreenButtons
 };
