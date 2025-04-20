@@ -90,7 +90,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 3. Build and start the container:
    ```bash
-   docker-compose up -d
+   docker-compose up
    ```
 
 4. Open your browser to: [http://localhost:5000](http://localhost:5000)
@@ -109,7 +109,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 ```bash
 # Start the container
-docker-compose up -d
+docker-compose up
 
 # Stop the container
 docker-compose down
