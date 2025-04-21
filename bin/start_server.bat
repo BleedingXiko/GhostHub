@@ -18,7 +18,7 @@ REM Check if required packages are installed
 python -c "import flask, flask_socketio, eventlet" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [!] Required packages not found. Installing...
-    pip install -r ../requirements.txt
+    pip install -r requirements.txt
     if %errorlevel% neq 0 (
         echo [!] Failed to install packages.
         pause
@@ -34,7 +34,7 @@ echo [+] Server will run on http://localhost:%PORT%
 
 REM Start the server directly in this window
 echo [+] Running python media_server.py...
-python ../media_server.py
+python media_server.py
 
 REM The script will now pause here until the server is stopped (e.g., with Ctrl+C)
 REM The lines below might not be reached unless the server exits cleanly.
