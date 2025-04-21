@@ -56,7 +56,7 @@ The `.exe` contains everything — no setup needed.
 1. Install **Python 3.7+**
 
 2. **Required:** Download and place this executable in the project root:
-   - [`cloudflared.exe`](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation)
+   - [`cloudflared.exe`](https://github.com/cloudflare/cloudflared)
 
 3. Install dependencies:
    ```bash
