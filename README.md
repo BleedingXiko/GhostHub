@@ -2,8 +2,6 @@
 
 **GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it’s TikTok.
 
-![GitHub stars](https://img.shields.io/github/stars/BleedingXiko/GhostHub?style=social)
-
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
