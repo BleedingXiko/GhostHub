@@ -4,7 +4,7 @@ echo     GHOSTHUB BUILDER
 echo ===============================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM Check if Python is installed
 python --version >nul 2>&1
@@ -31,7 +31,7 @@ REM Check if required packages are installed
 python -c "import flask, flask_socketio, eventlet, dns" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [!] Required packages not found. Installing...
-    pip install -r requirements.txt
+    pip install -r ../requirements.txt
     if %errorlevel% neq 0 (
         echo [!] Failed to install packages.
         pause
@@ -66,7 +66,7 @@ echo [i] Using python -m PyInstaller to ensure we use the installed module...
 
 REM Use python -m PyInstaller instead of direct command to avoid PATH issues
 REM The --debug flag is not allowed when using a spec file
-python -m PyInstaller --clean ghosthub.spec
+python -m PyInstaller --clean ../ghosthub.spec
 
 echo.
 if %errorlevel% neq 0 (

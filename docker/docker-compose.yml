@@ -2,21 +2,21 @@ version: '3'
 
 services:
   ghosthub:
-    build: .
+    build: ./
     image: ghosthub
     container_name: ghosthub
     ports:
       - "5000:5000"
     volumes:
       # Mount the instance directory for persistent configuration
-      - ./instance:/app/instance
+      - ../instance:/app/instance
       
       # MEDIA DIRECTORIES: Add your media directories here
       # The container will automatically create media categories for all
       # directories mounted under /media
       
       # Create the media directory if it doesn't exist
-      - ./media:/media
+      - ../media:/media
       
       # Mount your media directories here
       # Format: - /host/path:/media/category_name
