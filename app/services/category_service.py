@@ -1,3 +1,8 @@
+"""
+Category Service
+--------------
+Manages media categories, including CRUD operations and metadata retrieval.
+"""
 # app/services/category_service.py
 import os
 import uuid
@@ -10,16 +15,14 @@ from app.utils.media_utils import find_thumbnail
 logger = logging.getLogger(__name__)
 
 class CategoryService:
-    """Service layer for managing categories."""
+    """Service for managing media categories and their metadata."""
 
     @staticmethod
     def get_all_categories_with_details():
         """
-        Retrieves all categories and enriches them with media count and thumbnail URL.
-
-        Returns:
-            list: A list of category dictionaries, each including 'mediaCount' and 'thumbnailUrl'.
-                  Returns an empty list if categories cannot be loaded.
+        Get all categories with media count, thumbnail URL, and video flag.
+        
+        Returns list of enriched category dictionaries.
         """
         categories = load_categories()
         categories_with_details = []
@@ -55,13 +58,9 @@ class CategoryService:
     @staticmethod
     def get_category_by_id(category_id):
         """
-        Finds a category by its ID.
-
-        Args:
-            category_id (str): The ID of the category to find.
-
-        Returns:
-            dict or None: The category dictionary if found, otherwise None.
+        Find a category by ID.
+        
+        Returns category dict or None if not found.
         """
         categories = load_categories()
         return next((c for c in categories if c.get('id') == category_id), None)
@@ -69,16 +68,9 @@ class CategoryService:
     @staticmethod
     def add_category(name, path):
         """
-        Adds a new category.
-
-        Args:
-            name (str): The name of the new category.
-            path (str): The filesystem path for the new category.
-
-        Returns:
-            tuple: (new_category_dict, error_message)
-                   - If successful, (new_category, None)
-                   - If error, (None, error_message)
+        Add a new category with validation.
+        
+        Returns (new_category, error_message) tuple.
         """
         if not name or not path:
             return None, "Category name and path are required."
@@ -121,16 +113,9 @@ class CategoryService:
     @staticmethod
     def delete_category(category_id):
         """
-        Deletes a category by its ID.
-
-        Args:
-            category_id (str): The ID of the category to delete.
-
-        Returns:
-            tuple: (success_bool, error_message)
-                   - If successful, (True, None)
-                   - If category not found, (False, "Category not found")
-                   - If save fails, (False, "Failed to save categories after deletion")
+        Delete a category by ID.
+        
+        Returns (success, error_message) tuple.
         """
         logger.info(f"Attempting to delete category with ID: {category_id}")
         categories = load_categories()

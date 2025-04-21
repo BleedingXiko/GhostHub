@@ -1,3 +1,9 @@
+"""
+Sync Service
+-----------
+Manages synchronized media viewing between multiple users.
+Handles host/client relationships and real-time state updates.
+"""
 # app/services/sync_service.py
 import time
 import logging
@@ -7,7 +13,7 @@ from ..constants import SYNC_ROOM # Import from constants
 
 logger = logging.getLogger(__name__)
 
-# Global state for sync mode (consider alternatives for scalability)
+# Global sync state (in-memory, non-persistent)
 SYNC_MODE_ENABLED = False
 HOST_SESSION_ID = None
 current_media_state = {
@@ -18,15 +24,14 @@ current_media_state = {
 }
 
 class SyncService:
-    """Service layer for managing sync mode."""
+    """Service for managing synchronized media viewing."""
 
     @staticmethod
     def get_status():
         """
-        Gets the current status of sync mode.
-
-        Returns:
-            dict: A dictionary containing 'active' (bool) and 'is_host' (bool).
+        Get current sync mode status.
+        
+        Returns dict with 'active' and 'is_host' flags.
         """
         global SYNC_MODE_ENABLED, HOST_SESSION_ID
         session_id = request.cookies.get('session_id')
@@ -39,15 +44,9 @@ class SyncService:
     @staticmethod
     def toggle_sync_mode(enable, initial_media=None):
         """
-        Toggles sync mode on or off.
-
-        Args:
-            enable (bool): True to enable sync mode, False to disable.
-            initial_media (dict, optional): Initial media state if enabling.
-                                            Expected keys: 'category_id', 'file_url', 'index'.
-
-        Returns:
-            dict: The updated sync status (same format as get_status).
+        Enable or disable synchronized viewing mode.
+        
+        Returns updated sync status dictionary.
         """
         global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state
 
@@ -119,11 +118,9 @@ class SyncService:
     @staticmethod
     def get_current_media():
         """
-        Gets the current media state shared in sync mode.
-
-        Returns:
-            dict: The current media state dictionary.
-                  Returns an error dict if sync mode is not enabled.
+        Get the current shared media state.
+        
+        Returns media state dict or error if sync disabled.
         """
         global SYNC_MODE_ENABLED, current_media_state
         if not SYNC_MODE_ENABLED:
@@ -133,15 +130,9 @@ class SyncService:
     @staticmethod
     def update_current_media(category_id, file_url, index):
         """
-        Updates the shared media state. Only the host can perform this action.
-
-        Args:
-            category_id (str): The ID of the current category.
-            file_url (str): The URL of the current media file.
-            index (int): The index of the current media file in its list.
-
-        Returns:
-            tuple: (success_bool, error_message_or_None)
+        Update shared media state (host only).
+        
+        Returns (success, error_message) tuple.
         """
         global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state
 
@@ -178,12 +169,12 @@ class SyncService:
 
     @staticmethod
     def is_sync_enabled():
-        """Simple check if sync mode is globally enabled."""
+        """Check if sync mode is currently active."""
         global SYNC_MODE_ENABLED
         return SYNC_MODE_ENABLED
 
     @staticmethod
     def get_host_session_id():
-        """Gets the current host session ID, if any."""
+        """Get the session ID of the current host."""
         global HOST_SESSION_ID
         return HOST_SESSION_ID

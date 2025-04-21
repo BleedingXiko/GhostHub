@@ -1,3 +1,8 @@
+"""
+Main Routes
+----------
+Primary web page routes for the application.
+"""
 # app/routes/main_routes.py
 import uuid
 import logging
@@ -8,22 +13,22 @@ main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/')
 def index():
-    """Serve the main category listing page."""
+    """Render main category listing page."""
     logger.info("Serving index page.")
     # Session cookie is set by the global after_request handler in app/__init__.py
     return render_template('index.html')
 
 @main_bp.route('/add_category')
 def add_category_page():
-    """Serve the page for adding a new category."""
+    """Render category creation page."""
     logger.info("Serving add category page.")
     # Session cookie is set by the global after_request handler in app/__init__.py
     return render_template('add_category.html')
 
-# A global @after_request has been added in app/__init__.py for setting the cookie
+# Session cookie handling moved to app/__init__.py
 # @main_bp.after_request
 # def set_session_cookie(response):
-#     """Set a session cookie if it doesn't exist."""
+#     """Set session cookie for user tracking."""
 #     if 'session_id' not in request.cookies and response.status_code < 400:
 #         session_id = str(uuid.uuid4())
 #         max_age = current_app.config.get('SESSION_EXPIRY', 3600)
@@ -31,15 +36,15 @@ def add_category_page():
 #         response.set_cookie('session_id', session_id, max_age=max_age, httponly=True, samesite='Lax')
 #     return response
 
-# Add error handlers if they are specific to this blueprint
+# Blueprint-specific error handlers (currently disabled)
 # @main_bp.app_errorhandler(404)
 # def page_not_found(e):
+#     """Render custom 404 page."""
 #     logger.warning(f"404 Not Found: {request.path}")
-#     # Render a custom 404 page or return JSON
 #     return render_template('404.html'), 404
 
 # @main_bp.app_errorhandler(500)
 # def internal_server_error(e):
+#     """Render custom 500 page."""
 #     logger.error(f"500 Internal Server Error: {e}", exc_info=True)
-#     # Render a custom 500 page or return JSON
 #     return render_template('500.html'), 500

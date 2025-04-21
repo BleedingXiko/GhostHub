@@ -1,3 +1,8 @@
+"""
+Sync Routes
+----------
+API endpoints for synchronized media viewing functionality.
+"""
 # app/routes/sync_routes.py
 import logging
 import traceback
@@ -9,7 +14,7 @@ sync_bp = Blueprint('sync', __name__)
 
 @sync_bp.route('/status', methods=['GET'])
 def sync_status():
-    """API endpoint to get the current sync mode status."""
+    """Get current sync mode status."""
     try:
         status = SyncService.get_status()
         return jsonify(status)
@@ -20,7 +25,7 @@ def sync_status():
 
 @sync_bp.route('/toggle', methods=['POST'])
 def toggle_sync_mode():
-    """API endpoint to toggle sync mode on/off."""
+    """Enable or disable synchronized viewing mode."""
     data = request.json
     if not data or 'enabled' not in data or not isinstance(data['enabled'], bool):
         return jsonify({"error": "Invalid request data: 'enabled' (boolean) is required"}), 400
@@ -44,7 +49,7 @@ def toggle_sync_mode():
 
 @sync_bp.route('/current', methods=['GET'])
 def get_current_media():
-    """API endpoint to get the current media being displayed in sync mode."""
+    """Get current media being displayed in sync mode."""
     try:
         media_state = SyncService.get_current_media()
         if "error" in media_state:
@@ -57,7 +62,7 @@ def get_current_media():
 
 @sync_bp.route('/update', methods=['POST'])
 def update_current_media():
-    """API endpoint for the host to update the current media in sync mode."""
+    """Update current media in sync mode (host only)."""
     data = request.json
     if not data or not all(k in data for k in ['category_id', 'file_url', 'index']):
         return jsonify({"error": "Invalid update data: 'category_id', 'file_url', and 'index' are required"}), 400

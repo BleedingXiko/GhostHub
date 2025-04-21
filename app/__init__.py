@@ -1,3 +1,8 @@
+"""
+Application Factory
+-----------------
+Flask application initialization and configuration.
+"""
 # app/__init__.py
 import os
 import uuid
@@ -6,7 +11,7 @@ from flask import Flask, request
 from flask_socketio import SocketIO
 from .config import config_by_name
 
-# Configure logging
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,8 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize SocketIO with optimized settings
-# Using gevent for WebSockets
+# SocketIO initialization with optimized settings
 socketio = SocketIO(
     async_mode='gevent',    # Use gevent for WebSockets
     ping_timeout=120,       # Increased ping timeout for better stability
@@ -32,7 +36,10 @@ socketio = SocketIO(
 )
 
 def create_app(config_name='default'):
-    """Application factory function."""
+    """
+    Create and configure Flask application instance.
+    Returns configured Flask app with registered blueprints.
+    """
     app = Flask(
         __name__,
         static_folder=config_by_name[config_name].STATIC_FOLDER,
@@ -42,13 +49,13 @@ def create_app(config_name='default'):
     )
     app.config.from_object(config_by_name[config_name])
     
-    # Set larger max content length for media uploads (if needed)
+    # Increase upload size limit for media files
     app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
     
-    # Configure for better performance
+    # Performance optimization
     app.config['PROPAGATE_EXCEPTIONS'] = True  # Ensure exceptions are properly logged
 
-    # Ensure the instance folder exists
+    # Create instance directory for persistent data
     try:
         os.makedirs(app.instance_path, exist_ok=True)
         logger.info(f"Instance folder ensured at: {app.instance_path}")
@@ -57,11 +64,11 @@ def create_app(config_name='default'):
         # Depending on the severity, you might want to raise the error or exit
         # For now, we log the error and continue
 
-    # Initialize SocketIO with the app
+    # Connect SocketIO to Flask app
     socketio.init_app(app)
     logger.info("Flask-SocketIO initialized with eventlet for WebSockets.")
 
-    # Register Blueprints
+    # Register route blueprints
     from .routes.main_routes import main_bp
     from .routes.api_routes import api_bp
     from .routes.media_routes import media_bp
@@ -72,10 +79,10 @@ def create_app(config_name='default'):
     app.register_blueprint(media_bp)
     app.register_blueprint(sync_bp, url_prefix='/api/sync')
 
-    # Add a global after_request handler to ensure all responses have a session cookie
+    # Global middleware for session management
     @app.after_request
     def ensure_session_cookie(response):
-        """Ensure that all responses have a session cookie."""
+        """Add session cookie to all successful responses."""
         if 'session_id' not in request.cookies and response.status_code < 400:
             session_id = str(uuid.uuid4())
             max_age = app.config.get('SESSION_EXPIRY', 3600)
@@ -98,10 +105,10 @@ def create_app(config_name='default'):
             )
         return response
     
-    # Add a global after_request handler to optimize media file responses
+    # Response optimization middleware
     @app.after_request
     def optimize_response(response):
-        """Optimize responses for better performance."""
+        """Add caching headers to static and media responses."""
         # Add cache headers for static files
         if request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=86400'  # Cache for 1 day
@@ -117,7 +124,7 @@ def create_app(config_name='default'):
     logger.info(f"Template folder: {app.template_folder}")
     logger.info(f"Instance path: {app.instance_path}")
 
-    # Register socket events after app creation to avoid circular imports
+    # Register WebSocket event handlers
     from .socket_events import register_socket_events
     register_socket_events(socketio)
 

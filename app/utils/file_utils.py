@@ -1,3 +1,8 @@
+"""
+File Utilities
+-------------
+Utilities for managing category configuration files.
+"""
 # app/utils/file_utils.py
 import os
 import json
@@ -9,12 +14,12 @@ from flask import current_app
 logger = logging.getLogger(__name__)
 
 def get_categories_filepath():
-    """Constructs the absolute path to the categories JSON file."""
+    """Get absolute path to the categories JSON file."""
     # Use instance_path which is correctly set by the app factory
     return os.path.join(current_app.instance_path, os.path.basename(current_app.config['CATEGORIES_FILE']))
 
 def init_categories_file():
-    """Initialize the categories file if it doesn't exist."""
+    """Create empty categories file if it doesn't exist."""
     filepath = get_categories_filepath()
     if not os.path.exists(filepath):
         try:
@@ -30,10 +35,9 @@ def init_categories_file():
 
 def load_categories():
     """
-    Load categories from the JSON file.
-
-    Returns:
-        list: List of category dictionaries, or an empty list on error.
+    Load categories from JSON file with error handling.
+    
+    Returns list of categories or empty list on error.
     """
     filepath = get_categories_filepath()
     try:
@@ -57,13 +61,9 @@ def load_categories():
 
 def save_categories(categories):
     """
-    Save categories to the JSON file.
-
-    Args:
-        categories (list): List of category dictionaries
-
-    Returns:
-        bool: True if successful, False otherwise
+    Save categories to JSON file.
+    
+    Returns True if successful, False otherwise.
     """
     filepath = get_categories_filepath()
     try:
@@ -79,7 +79,7 @@ def save_categories(categories):
         return False
 
 def backup_corrupted_file(filepath):
-    """Backs up a potentially corrupted file."""
+    """Create timestamped backup of corrupted file."""
     if os.path.exists(filepath):
         backup_file = f"{filepath}.bak.{int(time.time())}"
         try:
@@ -88,4 +88,4 @@ def backup_corrupted_file(filepath):
         except Exception as e:
             logger.error(f"Failed to backup corrupted file {filepath}: {str(e)}")
 
-# Add other file-related utilities here if needed
+# Additional file utilities can be added here

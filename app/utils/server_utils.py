@@ -2,8 +2,7 @@
 """
 GhostHub Server Utilities
 -------------------------
-Common utilities and functions for server initialization and management.
-Used by both the standard and Docker server entry points.
+Server initialization and management utilities for standard and Docker modes.
 """
 
 import os
@@ -20,14 +19,9 @@ from app.utils.file_utils import init_categories_file
 
 def initialize_app(config_name='development', port=5000):
     """
-    Initialize the Flask application.
+    Initialize Flask application with configuration.
     
-    Args:
-        config_name (str): Configuration name ('development' or 'production')
-        port (int): Port number to run the server on
-        
-    Returns:
-        app: The initialized Flask application
+    Returns initialized Flask app.
     """
     # Create the Flask app instance using the factory
     app = create_app(config_name)
@@ -40,13 +34,7 @@ def initialize_app(config_name='development', port=5000):
     return app
 
 def display_server_info(config_name, port):
-    """
-    Display server information in the console.
-    
-    Args:
-        config_name (str): Configuration name
-        port (int): Port number
-    """
+    """Display server information and access URLs in console."""
     # Get local IP address for display
     local_ip = get_local_ip()
 
@@ -61,10 +49,9 @@ def display_server_info(config_name, port):
 
 def find_cloudflared_path():
     """
-    Find the path to the cloudflared executable.
+    Find cloudflared executable in various locations.
     
-    Returns:
-        str or None: Path to cloudflared executable, or None if not found
+    Returns path to executable or None if not found.
     """
     cloudflared_path = None
     
@@ -98,12 +85,7 @@ def find_cloudflared_path():
     return cloudflared_path
 
 def capture_tunnel_url(process):
-    """
-    Read stdout/stderr and find the Cloudflare Tunnel URL.
-    
-    Args:
-        process: The subprocess.Popen object for the tunnel process
-    """
+    """Extract and copy Cloudflare Tunnel URL from process output."""
     url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
     try:
         # Read stderr first as cloudflared often prints the URL there
@@ -137,15 +119,9 @@ def capture_tunnel_url(process):
 
 def start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='n'):
     """
-    Start a Cloudflare Tunnel if requested.
+    Start Cloudflare Tunnel if requested.
     
-    Args:
-        cloudflared_path (str): Path to the cloudflared executable
-        port (int): Port number to tunnel to
-        use_tunnel (str): 'y' to start tunnel, 'n' to skip
-        
-    Returns:
-        subprocess.Popen or None: The tunnel process if started, None otherwise
+    Returns tunnel process or None if not started.
     """
     tunnel_process = None
     
@@ -180,12 +156,7 @@ def start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='n'):
     return tunnel_process
 
 def configure_socket_options():
-    """
-    Configure socket options for better stability.
-    
-    Returns:
-        list: List of socket options to apply
-    """
+    """Configure socket options for connection stability."""
     # Configure socket options for better stability
     # This helps prevent the "connection reset by peer" errors on Windows
     socket_options = [
@@ -209,12 +180,7 @@ def configure_socket_options():
     return socket_options
 
 def apply_socket_options(socket_options):
-    """
-    Apply socket options to improve connection stability.
-    
-    Args:
-        socket_options (list): List of socket options to apply
-    """
+    """Apply socket options to improve connection stability."""
     # Apply socket options to the default socket
     if hasattr(socket, 'SOL_SOCKET') and hasattr(socket, 'SO_KEEPALIVE'):
         # Set up a dummy socket to test if options are supported
@@ -244,14 +210,7 @@ def apply_socket_options(socket_options):
             test_socket.close()
 
 def run_server(app, port, debug=False):
-    """
-    Run the Flask application with SocketIO.
-    
-    Args:
-        app: The Flask application
-        port (int): Port number to run on
-        debug (bool): Whether to run in debug mode
-    """
+    """Run Flask application with SocketIO using gevent."""
     try:
         # Configure and apply socket options
         socket_options = configure_socket_options()
@@ -288,12 +247,7 @@ def run_server(app, port, debug=False):
          print(f"[!] Failed to start server: {server_err}")
 
 def cleanup_tunnel(tunnel_process):
-    """
-    Clean up the Cloudflare Tunnel process.
-    
-    Args:
-        tunnel_process: The subprocess.Popen object for the tunnel process
-    """
+    """Terminate Cloudflare Tunnel process gracefully."""
     if tunnel_process:
         print("Terminating Cloudflare Tunnel process...")
         tunnel_process.terminate()

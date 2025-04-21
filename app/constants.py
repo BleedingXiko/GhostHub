@@ -1,15 +1,16 @@
-# app/constants.py
 """
 GhostHub Application Constants
 -----------------------------
-Centralized constants used throughout the application.
+Centralized constants for WebSocket events, API endpoints, and default settings.
+Provides a single source of truth for string literals used throughout the app.
 """
+# app/constants.py
 
 # WebSocket Room Names
-SYNC_ROOM = 'sync_room'  # Room name for WebSocket sync communication
-CHAT_ROOM = 'chat_room'  # Room name for WebSocket chat communication
+SYNC_ROOM = 'sync_room'  # Room for synchronized media viewing between users
+CHAT_ROOM = 'chat_room'  # Room for real-time chat messages between users
 
-# Socket Events
+# Socket Events - Used by both server and client
 SOCKET_EVENTS = {
     # Connection events
     'CONNECT': 'connect',

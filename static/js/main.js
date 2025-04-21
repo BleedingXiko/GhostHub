@@ -1,15 +1,15 @@
 /**
  * Main Entry Point
- * Imports all modules and initializes the application
+ * Application initialization and module orchestration.
  */
 
-// Import core app module
+// Core app module
 import { app, syncToggleBtn } from './core/app.js';
 
-// Import utility modules
+// Utility modules
 import * as cacheManager from './utils/cacheManager.js';
 
-// Import feature modules
+// Feature modules
 import * as categoryManager from './modules/categoryManager.js';
 import * as mediaLoader from './modules/mediaLoader.js';
 import * as mediaNavigation from './modules/mediaNavigation.js';
@@ -19,7 +19,7 @@ import * as eventHandlers from './modules/eventHandlers.js';
 import * as chatManager from './modules/chatManager.js';
 import * as fullscreenManager from './modules/fullscreenManager.js';
 
-// Create a global namespace for modules to avoid circular dependencies
+// Global module namespace to prevent circular dependencies
 window.appModules = {
     cacheManager,
     categoryManager,
@@ -32,51 +32,49 @@ window.appModules = {
     fullscreenManager
 };
 
-// Initialize the application when the DOM is loaded
+// Application initialization on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Initializing application...');
     
-    // Connect modules that have circular dependencies
+    // Connect interdependent modules
     categoryManager.setViewCategoryFunction(mediaLoader.viewCategory);
     
-    // Initialize sync toggle button - critical UI element
+    // Sync toggle initialization
     if (syncToggleBtn) {
         syncToggleBtn.addEventListener('click', syncManager.toggleSyncMode);
     }
     
-    // PHASE 1: Critical initialization - UI and categories
-    // Load categories immediately - this is essential for the app to function
+    // PHASE 1: Critical initialization
     categoryManager.loadCategories();
     
-    // PHASE 2: Secondary initialization - after a short delay
+    // PHASE 2: Secondary initialization (delayed)
     setTimeout(() => {
         console.log('Phase 2 initialization...');
         
-        // Check sync mode status with a slight delay to avoid blocking initial render
+        // Check sync mode status
         syncManager.checkSyncMode();
         
-        // Initialize fullscreen change listener - not critical for initial load
+        // Setup fullscreen support
         fullscreenManager.setupFullscreenChangeListener();
         
-        // PHASE 3: Non-critical features - after a longer delay
+        // PHASE 3: Non-critical features (further delayed)
         setTimeout(() => {
             console.log('Phase 3 initialization (non-critical features)...');
             
-            // Initialize chat module - completely non-critical
-            // The socket.io client creates a global io object
+            // Chat initialization (optional)
             if (typeof io !== 'undefined') {
                 try {
-                    // Create a socket connection if not already connected
+                    // Create socket connection
                     const socket = io({
                         reconnectionAttempts: 5,
                         reconnectionDelay: 2000
                     });
                     
-                    // Initialize chat with the socket
+                    // Initialize chat
                     chatManager.initChat(socket);
                 } catch (e) {
                     console.error('Error initializing chat:', e);
-                    // Non-critical error, don't block the app
+                    // Non-blocking error
                 }
             } else {
                 console.warn('Socket.io not available for chat initialization');

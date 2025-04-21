@@ -3,12 +3,16 @@
 GhostHub Server Entry Point
 ---------------------------
 Initializes and runs the Flask application with SocketIO using gevent for WebSockets.
+Supports optional Cloudflare Tunnel for public sharing.
+
+Environment Variables:
+- FLASK_CONFIG: 'development' (default) or 'production'
+- PORT: Server port number (default: 5000)
 """
 
 import os
 import sys
-# Import and apply gevent monkey patching *very early*
-# This is crucial to ensure gevent handles I/O correctly
+# Apply gevent monkey patching early to ensure proper async I/O
 from gevent import monkey
 monkey.patch_all()
 
@@ -22,7 +26,7 @@ from app.utils.server_utils import (
     cleanup_tunnel
 )
 
-# Determine the configuration name and port from environment variables
+# Get configuration from environment variables
 config_name = os.getenv('FLASK_CONFIG', 'development')
 port = int(os.getenv('PORT', 5000))
 
@@ -33,10 +37,10 @@ if __name__ == '__main__':
     # Display server information
     display_server_info(config_name, port)
     
-    # Find cloudflared executable and start tunnel if requested
+    # Find cloudflared executable
     cloudflared_path = find_cloudflared_path()
     
-    # For standard server, prompt for tunnel usage
+    # Prompt for tunnel usage
     tunnel_process = None
     if cloudflared_path:
         try:
@@ -46,7 +50,7 @@ if __name__ == '__main__':
             print(f"[!] Error handling Cloudflare Tunnel: {e}")
     
     try:
-        # Run the server
+        # Run the server (blocking call)
         run_server(app, port, debug=app.config.get('DEBUG', False))
     finally:
         # Clean up tunnel process if it exists

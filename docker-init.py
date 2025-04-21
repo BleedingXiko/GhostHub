@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-Docker initialization script for GhostHub
-This script automatically creates the media_categories.json file with
-entries for all mounted media directories in the /media folder.
+Docker Initialization Script for GhostHub
+----------------------------------------
+Automatically configures GhostHub in Docker by detecting mounted media volumes
+and creating category entries in media_categories.json.
+
+Features:
+- Auto-detects directories in /media
+- Preserves existing configuration on container restarts
+- Creates unique IDs for each media directory
+
+Usage: Add media by mounting volumes to /media in docker-compose.yml
 """
 
 import os
@@ -10,19 +18,24 @@ import json
 import sys
 import uuid
 
-# Path to the instance directory
+# Configuration paths
 INSTANCE_DIR = '/app/instance'
 CATEGORIES_FILE = os.path.join(INSTANCE_DIR, 'media_categories.json')
 MEDIA_DIR = '/media'
 
 def ensure_instance_dir():
-    """Ensure the instance directory exists."""
+    """Ensure the instance directory exists for persistent configuration."""
     if not os.path.exists(INSTANCE_DIR):
         print(f"Creating instance directory: {INSTANCE_DIR}")
         os.makedirs(INSTANCE_DIR, exist_ok=True)
 
 def get_media_directories():
-    """Get all directories in the /media folder."""
+    """
+    Scan /media for subdirectories and create category entries.
+    
+    Returns:
+        list: Category entries with id, name, and path
+    """
     media_dirs = []
     
     # Check if the media directory exists
@@ -44,7 +57,15 @@ def get_media_directories():
     return media_dirs
 
 def create_categories_file(media_dirs):
-    """Create or update the media_categories.json file."""
+    """
+    Create or update the media_categories.json file, preserving existing entries.
+    
+    Args:
+        media_dirs: List of category dictionaries
+    
+    Returns:
+        bool: Success or failure
+    """
     # Check if the file already exists
     if os.path.exists(CATEGORIES_FILE):
         try:
@@ -81,7 +102,11 @@ def create_categories_file(media_dirs):
     return True
 
 def main():
-    """Main function."""
+    """
+    Main initialization function that sets up the Docker environment.
+    
+    Exit codes: 0=Success, 1=Failed to create categories file
+    """
     print("Starting GhostHub Docker initialization...")
     
     # Ensure the instance directory exists

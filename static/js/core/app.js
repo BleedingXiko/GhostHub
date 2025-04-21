@@ -1,9 +1,9 @@
 /**
  * Core App Module
- * Contains the main application instance, global variables, and DOM element references
+ * Main application state, DOM references, and configuration constants.
  */
 
-// DOM Elements
+// DOM element references
 const categoryView = document.getElementById('categoryView');
 const mediaView = document.getElementById('mediaView');
 const categoryList = document.getElementById('categoryList');
@@ -11,17 +11,17 @@ const tiktokContainer = document.getElementById('tiktok-container');
 const spinnerContainer = document.querySelector('#tiktok-container .spinner-container');
 const syncToggleBtn = document.getElementById('sync-toggle-btn');
 
-// Global constants
+// Configuration constants
 const MOBILE_DEVICE = window.innerWidth <= 768; // Detect if we're on a mobile device
 const MEDIA_PER_PAGE = MOBILE_DEVICE ? 3 : 5; // Load fewer items per page on mobile
 const LOAD_MORE_THRESHOLD = MOBILE_DEVICE ? 2 : 3; // Load more sooner on mobile
 const renderWindowSize = 0; // Only render the current item to save memory
 
-// Mobile-specific memory management constants
+// Mobile optimization settings
 const MOBILE_CLEANUP_INTERVAL = 60000; // 1 minute in ms
 const MOBILE_FETCH_TIMEOUT = 15000; // 15 seconds in ms
 
-// Get MAX_CACHE_SIZE from server config if available, otherwise use default
+// Cache size configuration
 const MAX_CACHE_SIZE = (function() {
     // Try to get the value from a global config object that might be set by the server
     if (window.serverConfig && typeof window.serverConfig.MAX_CACHE_SIZE === 'number') {
@@ -32,9 +32,9 @@ const MAX_CACHE_SIZE = (function() {
 })();
 
 
-// Create app instance to expose to window for back button handler
+// Main application object
 const app = {
-    // Global state variables
+    // Application state
     state: {
         currentCategoryId: null,
         currentPage: 1,
@@ -57,10 +57,10 @@ const app = {
         fetchTimeouts: {}
     },
     
-    // Media cache
-    mediaCache: new Map(), // Cache for loaded media (with size limit)
+    // Media element cache
+    mediaCache: new Map(), // Size-limited cache for loaded media
     
-    // Function to reset state when going back to category view
+    // State reset function
     resetState: function() {
         console.log("Resetting app state");
         // Reset all state variables
@@ -92,14 +92,14 @@ const app = {
     }
 };
 
-// Expose app instance to window
+// Global app reference
 window.appInstance = app;
 
-// Set up periodic cleanup for mobile devices
+// Mobile-specific memory management
 if (MOBILE_DEVICE) {
     console.log('Mobile device detected: Setting up aggressive memory management');
     
-    // Set up periodic cleanup interval
+    // Periodic memory cleanup
     app.state.cleanupInterval = setInterval(() => {
         console.log('Mobile device: performing periodic cleanup');
         
@@ -141,15 +141,14 @@ if (MOBILE_DEVICE) {
         }
     }, MOBILE_CLEANUP_INTERVAL);
     
-    // Set up a more frequent check for fullscreen buttons
-    // This helps ensure buttons are always available during rapid navigation
+    // Ensure fullscreen controls remain available
     app.state.fullscreenCheckInterval = setInterval(() => {
         if (window.appModules && window.appModules.fullscreenManager) {
             window.appModules.fullscreenManager.ensureFullscreenButtons();
         }
     }, 2000); // Check every 2 seconds
     
-    // Add unload handler to clean up intervals
+    // Cleanup on page unload
     window.addEventListener('beforeunload', () => {
         if (app.state.cleanupInterval) {
             clearInterval(app.state.cleanupInterval);
@@ -160,7 +159,7 @@ if (MOBILE_DEVICE) {
     });
 }
 
-// Export DOM elements, constants, and app instance
+// Module exports
 export {
     categoryView,
     mediaView,

@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
 GhostHub Server Entry Point (Docker Version)
----------------------------
-Initializes and runs the Flask application with SocketIO using gevent for WebSockets.
-Modified for Docker to use environment variables instead of prompting for input.
+-------------------------------------------
+Docker-specific version that uses environment variables instead of prompts.
+Supports automatic media detection from mounted volumes.
+
+Environment Variables:
+- FLASK_CONFIG: 'development' (default) or 'production'
+- PORT: Server port number (default: 5000)
+- USE_CLOUDFLARE_TUNNEL: 'y' or 'n' (default: 'n')
 """
 
 import os
 import sys
-# Import and apply gevent monkey patching *very early*
-# This is crucial to ensure gevent handles I/O correctly
+# Apply gevent monkey patching early to ensure proper async I/O
 from gevent import monkey
 monkey.patch_all()
 
@@ -23,7 +27,7 @@ from app.utils.server_utils import (
     cleanup_tunnel
 )
 
-# Determine the configuration name and port from environment variables
+# Get configuration from environment variables
 config_name = os.getenv('FLASK_CONFIG', 'development')
 port = int(os.getenv('PORT', 5000))
 
@@ -37,10 +41,10 @@ if __name__ == '__main__':
     # Find cloudflared executable
     cloudflared_path = find_cloudflared_path()
     
-    # For Docker, use environment variable instead of prompting
+    # Use environment variable instead of prompting
     use_tunnel = os.getenv('USE_CLOUDFLARE_TUNNEL', 'n').lower()
     
-    # Log the decision
+    # Log the tunnel configuration
     if use_tunnel == 'y':
         print("Cloudflare Tunnel enabled via environment variable.")
     else:
@@ -55,7 +59,7 @@ if __name__ == '__main__':
             print(f"[!] Error handling Cloudflare Tunnel: {e}")
     
     try:
-        # Run the server
+        # Run the server (blocking call)
         run_server(app, port, debug=app.config.get('DEBUG', False))
     finally:
         # Clean up tunnel process if it exists

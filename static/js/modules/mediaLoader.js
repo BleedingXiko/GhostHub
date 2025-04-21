@@ -1,6 +1,6 @@
 /**
  * Media Loader Module
- * Handles media loading, resource management, and cleanup
+ * Manages media loading, caching, and resource cleanup
  */
 
 import { 
@@ -26,10 +26,9 @@ import { setupMediaNavigation } from './eventHandlers.js';
 import { setupControls } from './uiController.js';
 
 /**
- * View a category and its media - optimized version
- * Returns a Promise that resolves when the category is loaded and initial media is rendered.
- * @param {string} categoryId - The ID of the category to view
- * @returns {Promise} - A promise that resolves when the category is loaded
+ * Load and display a media category
+ * @param {string} categoryId - Category ID to view
+ * @returns {Promise} Resolves when loaded
  */
 function viewCategory(categoryId) {
     return new Promise(async (resolve, reject) => {
@@ -177,11 +176,11 @@ function viewCategory(categoryId) {
 }
 
 /**
- * Load more media items when scrolling near the end - optimized version
- * @param {number|null} customLimit - Optional limit for the number of items to load.
- * @param {AbortSignal|null} signal - Optional AbortSignal to use for the fetch.
- * @param {boolean} forceRefresh - Whether to force a refresh from the server.
- * @param {number|null} targetPage - Optional specific page number to load.
+ * Load additional media items
+ * @param {number|null} customLimit - Items per page
+ * @param {AbortSignal|null} signal - For cancellation
+ * @param {boolean} forceRefresh - Force server refresh
+ * @param {number|null} targetPage - Specific page to load
  */
 async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = false, targetPage = null) {
     const effectiveSignal = signal || (app.state.currentFetchController ? app.state.currentFetchController.signal : null);
@@ -285,8 +284,8 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
 }
 
 /**
- * Clear resources to prevent memory leaks - optimized version
- * @param {boolean} aggressive - Whether to perform aggressive cleanup
+ * Clean up media resources
+ * @param {boolean} aggressive - Deep cleanup if true
  */
 function clearResources(aggressive = false) {
     console.log(`Clearing resources (aggressive: ${aggressive})`);
@@ -347,7 +346,7 @@ function clearResources(aggressive = false) {
 }
 
 /**
- * Preload media in the background with optimized performance
+ * Preload next media items in background
  */
 function preloadNextMedia() {
     if (app.state.isPreloading || app.state.preloadQueue.length === 0) return;
@@ -547,8 +546,8 @@ function preloadNextMedia() {
 }
 
 /**
- * Optimize video element for faster loading
- * @param {HTMLVideoElement} videoElement - The video element to optimize
+ * Apply performance optimizations to video element
+ * @param {HTMLVideoElement} videoElement - Video to optimize
  */
 function optimizeVideoElement(videoElement) {
     // Set video attributes for faster loading
@@ -600,9 +599,9 @@ function optimizeVideoElement(videoElement) {
 }
 
 /**
- * Update swipe indicators
- * @param {number} currentIndex - The current media index
- * @param {number} totalItems - The total number of media items
+ * Update navigation indicators
+ * @param {number} currentIndex - Current position
+ * @param {number} totalItems - Total available items
  */
 function updateSwipeIndicators(currentIndex, totalItems) {
     // Create indicators if they don't exist

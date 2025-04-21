@@ -1,3 +1,8 @@
+"""
+Media Utility Functions
+----------------------
+Utilities for media file handling, type detection, and thumbnail generation.
+"""
 # app/utils/media_utils.py
 import os
 import logging
@@ -20,28 +25,12 @@ except ImportError:
     logger.warning("OpenCV is not available. Video thumbnail generation will be disabled.")
 
 def is_media_file(filename):
-    """
-    Check if a file is a supported media file based on its extension.
-
-    Args:
-        filename (str): Name of the file to check
-
-    Returns:
-        bool: True if the file is a supported media type, False otherwise
-    """
+    """Check if a file has a supported media extension."""
     _, ext = os.path.splitext(filename)
     return ext.lower() in current_app.config['MEDIA_EXTENSIONS']
 
 def get_media_type(filename):
-    """
-    Determine if a file is an image, video, or unknown type.
-
-    Args:
-        filename (str): Name of the file to check
-
-    Returns:
-        str: 'image', 'video', or 'unknown'
-    """
+    """Determine if a file is an image, video, or unknown type."""
     _, ext = os.path.splitext(filename)
     ext_lower = ext.lower()
 
@@ -53,15 +42,7 @@ def get_media_type(filename):
         return 'unknown'
 
 def get_mime_type(filename):
-    """
-    Get the MIME type for a file based on its extension.
-
-    Args:
-        filename (str): Name of the file to check
-
-    Returns:
-        str or None: MIME type string or None if not found
-    """
+    """Get the MIME type for a file based on its extension."""
     _, ext = os.path.splitext(filename)
     ext_lower = ext.lower()
 
@@ -73,7 +54,7 @@ def get_mime_type(filename):
     logger.warning(f"MIME type not found for extension: {ext_lower}")
     return None
 
-# --- Thumbnail Generation ---
+# Thumbnail Generation Constants
 
 THUMBNAIL_DIR_NAME = ".thumbnails"
 THUMBNAIL_SIZE = (256, 256)
@@ -81,21 +62,15 @@ THUMBNAIL_FORMAT = "JPEG" # Use JPEG for good compression/quality balance
 
 def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_SIZE):
     """
-    Generates a thumbnail for an image file.
-
-    Args:
-        original_media_path (str): Path to the original image file.
-        thumbnail_save_path (str): Path where the thumbnail should be saved.
-        size (tuple): Desired thumbnail size (width, height).
-
-    Returns:
-        bool: True if thumbnail was generated successfully, False otherwise.
+    Generate a thumbnail for an image or video file.
+    
+    Returns True if successful, False otherwise.
     """
     media_type = get_media_type(os.path.basename(original_media_path))
     logger.info(f"Attempting thumbnail generation for {media_type}: {original_media_path} -> {thumbnail_save_path}")
 
     def _generate():
-        """Inner function containing the blocking I/O and processing."""
+        """Process thumbnail generation (runs in thread)."""
         try:
             if media_type == 'image':
                 with Image.open(original_media_path) as img:
@@ -212,20 +187,13 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                 logger.error(f"Error removing corrupted thumbnail file {thumbnail_save_path}: {remove_e}")
         return False
 
-# --- Thumbnail Finding (Modified) ---
+# Thumbnail Finding
 
 def find_thumbnail(category_path, category_id, category_name):
     """
     Find a suitable thumbnail for a category from its media files.
-
-    Args:
-        category_path (str): Path to the category directory
-        category_id (str): ID of the category
-        category_name (str): Name of the category
-
-    Returns:
-        tuple: (media_count, thumbnail_url, contains_video)
-               contains_video is True if any video files are present, False otherwise.
+    
+    Returns (media_count, thumbnail_url, contains_video) tuple.
     """
     thumbnail_url = None
     media_count = 0

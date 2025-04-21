@@ -1,3 +1,8 @@
+"""
+System Utilities
+--------------
+Utilities for system-level operations and network functions.
+"""
 # app/utils/system_utils.py
 import socket
 import logging
@@ -6,10 +11,9 @@ logger = logging.getLogger(__name__)
 
 def get_local_ip():
     """
-    Get the local IP address of the machine.
-
-    Returns:
-        str: Local IP address or '127.0.0.1' if unable to determine.
+    Get machine's local IP address with fallback mechanisms.
+    
+    Returns local IP or '127.0.0.1' if detection fails.
     """
     try:
         # Create a socket that doesn't actually connect to anything

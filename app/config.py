@@ -1,10 +1,19 @@
+"""
+GhostHub Configuration Module
+----------------------------
+Defines application settings and handles different runtime environments.
+Supports both script and executable modes with environment variable overrides.
+"""
 # app/config.py
 import os
 import sys
 
 def get_application_root():
     """
-    Get the application root directory, handling both running as script and as frozen executable.
+    Get the application root directory for script or executable mode.
+    
+    Returns:
+        str: Path to application root
     """
     if getattr(sys, 'frozen', False):
         # Running as a PyInstaller executable
@@ -20,33 +29,37 @@ def get_application_root():
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Config:
-    """Base configuration."""
-    SECRET_KEY = os.environ.get('SECRET_KEY', os.urandom(24))
+    """
+    Base configuration with default settings and environment variable overrides.
+    Includes core settings, security, WebSocket, paths, and media type definitions.
+    """
+    # Core settings
+    SECRET_KEY = os.environ.get('SECRET_KEY', os.urandom(24))  # Session security
     CATEGORIES_FILE = os.environ.get('CATEGORIES_FILE', 'media_categories.json')
     CACHE_EXPIRY = int(os.environ.get('CACHE_EXPIRY', 300))  # 5 minutes
     DEFAULT_PAGE_SIZE = int(os.environ.get('DEFAULT_PAGE_SIZE', 10))
     SESSION_EXPIRY = int(os.environ.get('SESSION_EXPIRY', 3600))  # 1 hour
     
-    # Cookie security settings
-    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true'  # 'auto', 'true', or 'false'
+    # Security settings - 'auto', 'true', or 'false'
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true'
     
-    # WebSocket connection settings
+    # WebSocket settings
     WS_RECONNECT_ATTEMPTS = int(os.environ.get('WS_RECONNECT_ATTEMPTS', 10))
-    WS_RECONNECT_DELAY = int(os.environ.get('WS_RECONNECT_DELAY', 1000))  # Base delay in ms
-    WS_RECONNECT_FACTOR = float(os.environ.get('WS_RECONNECT_FACTOR', 1.5))  # Exponential factor
+    WS_RECONNECT_DELAY = int(os.environ.get('WS_RECONNECT_DELAY', 1000))  # ms
+    WS_RECONNECT_FACTOR = float(os.environ.get('WS_RECONNECT_FACTOR', 1.5))
     
-    # Memory management settings
-    MEMORY_CLEANUP_INTERVAL = int(os.environ.get('MEMORY_CLEANUP_INTERVAL', 60000))  # 1 minute in ms
-    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50))  # Maximum number of items in cache
+    # Memory management
+    MEMORY_CLEANUP_INTERVAL = int(os.environ.get('MEMORY_CLEANUP_INTERVAL', 60000))  # ms
+    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50))
     
-    # Determine paths based on whether we're running as an executable or script
+    # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
     
-    # Static and Template folders are relative to the temporary _MEIPASS dir when frozen
+    # Static and template directories
     STATIC_FOLDER = os.path.join(APP_ROOT, 'static')
     TEMPLATE_FOLDER = os.path.join(APP_ROOT, 'templates')
     
-    # Instance folder should be relative to the executable itself for persistence
+    # Instance folder for persistent data
     if getattr(sys, 'frozen', False):
         # Running as executable: Place 'instance' next to the .exe file
         INSTANCE_FOLDER_PATH = os.path.join(os.path.dirname(sys.executable), 'instance')
@@ -54,7 +67,7 @@ class Config:
         # Running as script: Place 'instance' in the project root
         INSTANCE_FOLDER_PATH = os.path.join(APP_ROOT, 'instance')
 
-    # Media Types Configuration
+    # Supported media formats and MIME types
     MEDIA_TYPES = {
         'image': {
             'extensions': [
@@ -103,21 +116,21 @@ class Config:
         }
     }
 
-    # Flattened lists for easier checking
+    # Flattened extension lists for faster checking
     IMAGE_EXTENSIONS = MEDIA_TYPES['image']['extensions']
     VIDEO_EXTENSIONS = MEDIA_TYPES['video']['extensions']
     MEDIA_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 
 class DevelopmentConfig(Config):
-    """Development configuration."""
+    """Development configuration with debug mode enabled."""
     DEBUG = True
 
 class ProductionConfig(Config):
-    """Production configuration."""
+    """Production configuration with debug mode disabled."""
     DEBUG = False
     # Add any production-specific settings here
 
-# Dictionary to easily access configurations
+# Configuration registry by name
 config_by_name = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,

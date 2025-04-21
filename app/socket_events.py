@@ -1,9 +1,10 @@
-# app/socket_events.py
 """
 GhostHub Socket Event Handlers
 -----------------------------
-Handles WebSocket events for real-time communication.
+Handles WebSocket events for real-time features including sync viewing and chat.
+Uses Flask-SocketIO with room-based broadcasting for targeted communication.
 """
+# app/socket_events.py
 
 import logging
 import time
@@ -20,7 +21,7 @@ from .constants import (
 
 logger = logging.getLogger(__name__)
 
-# Dictionary to track client connection attempts and errors
+# Track client connection stats for reliability monitoring
 client_connection_stats = {}
 
 def register_socket_events(socketio):

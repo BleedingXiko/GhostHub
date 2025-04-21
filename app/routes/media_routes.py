@@ -1,3 +1,8 @@
+"""
+Media Routes
+-----------
+API endpoints for media file serving with optimized streaming capabilities.
+"""
 # app/routes/media_routes.py
 import os
 import io
@@ -65,7 +70,7 @@ SOCKET_ERRORS = (ConnectionError, ConnectionResetError, ConnectionAbortedError,
                 BrokenPipeError, socket.timeout, socket.error)
 
 def clean_caches():
-    """Clean expired entries from caches to prevent memory leaks"""
+    """Remove expired entries from file caches to prevent memory leaks."""
     current_time = time.time()
     
     # Clean small file cache
@@ -98,9 +103,8 @@ def clean_caches():
 
 def serve_small_file(filepath, mime_type, etag, is_video=False):
     """
-    Optimized handler for small files that can be loaded into memory.
-    Uses in-memory caching for frequently accessed files.
-    Special handling for small video files.
+    Serve small files from memory cache with optimized headers.
+    Special handling for video files to improve playback.
     """
     current_time = time.time()
     
@@ -166,23 +170,15 @@ def serve_small_file(filepath, mime_type, etag, is_video=False):
     return response
 
 def is_video_file(filename):
-    """Check if a file is a video based on its extension"""
+    """Check if file has a video extension."""
     _, ext = os.path.splitext(filename.lower())
     return ext in VIDEO_EXTENSIONS
 
 def parse_range_header(range_header, file_size):
     """
-    Parse HTTP Range header and return start and end positions.
+    Parse HTTP Range header for partial content requests.
     
-    Args:
-        range_header (str): The HTTP Range header value
-        file_size (int): Size of the file in bytes
-        
-    Returns:
-        tuple: (start_byte, end_byte, is_valid)
-            - start_byte (int): Starting byte position
-            - end_byte (int): Ending byte position
-            - is_valid (bool): Whether the range is valid
+    Returns (start_byte, end_byte, is_valid) tuple.
     """
     if not range_header or not range_header.startswith('bytes='):
         return 0, file_size - 1, False
@@ -221,20 +217,8 @@ def parse_range_header(range_header, file_size):
 
 def stream_video_file(filepath, mime_type, file_size, etag=None):
     """
-    Stream a video file with proper HTTP Range support.
-    
-    This function efficiently handles HTTP Range requests for video streaming,
-    sending only the requested byte ranges to the client. It properly sets all
-    required headers for smooth video playback in browsers.
-    
-    Args:
-        filepath (str): Path to the video file
-        mime_type (str): MIME type of the video
-        file_size (int): Size of the file in bytes
-        etag (str, optional): ETag for the file
-        
-    Returns:
-        Response: Flask response object with the video stream
+    Stream video with HTTP Range support for efficient seeking.
+    Sets optimal headers for smooth browser playback.
     """
     # Default chunk size for streaming (256KB is a good balance)
     CHUNK_SIZE = 256 * 1024
@@ -329,10 +313,8 @@ def stream_video_file(filepath, mime_type, file_size, etag=None):
 
 def serve_large_file_non_blocking(filepath, mime_type, file_size, etag, is_video=False, range_start=None, range_end=None):
     """
-    Non-blocking file serving optimized for threading mode.
-    Uses progressive chunk sizes.
-    Special optimizations for video files.
-    Supports Range requests for better browser compatibility.
+    Stream large files with progressive chunk sizes and non-blocking I/O.
+    Optimized for video playback with prefetching and range support.
     """
     # Handle range request
     is_range_request = range_start is not None and range_end is not None
@@ -588,8 +570,8 @@ def serve_large_file_non_blocking(filepath, mime_type, file_size, etag, is_video
 @media_bp.route('/media/<category_id>/<path:filename>')
 def serve_media(category_id, filename):
     """
-    Serve a media file from a category with highly optimized non-blocking performance.
-    This implementation is specifically optimized for threading mode.
+    Serve media file with optimized streaming based on file type and size.
+    Uses different strategies for videos vs images and small vs large files.
     """
     try:
         # Decode the filename from the URL path
@@ -670,7 +652,7 @@ def serve_media(category_id, filename):
 
 @media_bp.route('/thumbnails/<category_id>/<filename>')
 def serve_thumbnail(category_id, filename):
-    """Serve a generated thumbnail file."""
+    """Serve generated thumbnail with caching headers."""
     logger.debug(f"Request received for thumbnail: Category ID={category_id}, Filename={filename}")
     try:
         # 1. Get category details (including path) using CategoryService

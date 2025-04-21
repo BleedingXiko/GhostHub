@@ -1,3 +1,8 @@
+"""
+API Routes
+---------
+REST API endpoints for category and media management.
+"""
 # app/routes/api_routes.py
 import logging
 import traceback
@@ -13,7 +18,7 @@ api_bp = Blueprint('api', __name__)
 
 @api_bp.route('/categories', methods=['GET'])
 def list_categories():
-    """API endpoint to list all categories with details."""
+    """Get all categories with media counts and thumbnails."""
     try:
         categories = CategoryService.get_all_categories_with_details()
         return jsonify(categories)
@@ -24,7 +29,7 @@ def list_categories():
 
 @api_bp.route('/categories', methods=['POST'])
 def add_category():
-    """API endpoint to add a new category."""
+    """Create new media category with name and path."""
     data = request.json
     if not data or 'name' not in data or 'path' not in data:
         return jsonify({'error': 'Name and path are required'}), 400
@@ -46,7 +51,7 @@ def add_category():
 
 @api_bp.route('/categories/<category_id>', methods=['DELETE'])
 def delete_category(category_id):
-    """API endpoint to delete a category."""
+    """Delete category and clear associated caches."""
     try:
         success, error = CategoryService.delete_category(category_id)
         if not success:
@@ -67,7 +72,7 @@ def delete_category(category_id):
 
 @api_bp.route('/categories/<category_id>/media', methods=['GET'])
 def list_media(category_id):
-    """API endpoint to list media files for a category with pagination."""
+    """Get paginated media files with optional shuffling."""
     try:
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', None, type=int) # Use None to default in service
@@ -114,11 +119,8 @@ def list_media(category_id):
 @api_bp.route('/browse-folders', methods=['GET'])
 def browse_folders():
     """
-    API endpoint to open a folder selection dialog on the server.
-    Requires Tkinter.
-    
-    In Docker environment, this will return a message instructing the user
-    to mount volumes in docker-compose.yml instead.
+    Open folder selection dialog on server.
+    Returns Docker-specific message if in container.
     """
     # Check if running in Docker environment
     import os
@@ -154,25 +156,28 @@ def browse_folders():
         logger.debug(traceback.format_exc())
         return jsonify({'error': f'Failed to open folder browser: {str(e)}'}), 500
 
-# Add common error handlers for the API blueprint
+# API error handlers
 @api_bp.app_errorhandler(404)
 def api_not_found(e):
+    """Handle 404 errors with JSON response."""
     logger.warning(f"API 404 Not Found: {request.path}")
     return jsonify(error="Resource not found"), 404
 
 @api_bp.app_errorhandler(500)
 def api_server_error(e):
-    # Log the original exception
+    """Handle 500 errors with JSON response."""
     original_exception = getattr(e, "original_exception", e)
     logger.error(f"API 500 Internal Server Error: {original_exception}", exc_info=True)
     return jsonify(error="Internal server error"), 500
 
 @api_bp.app_errorhandler(400)
 def api_bad_request(e):
+    """Handle 400 errors with JSON response."""
     logger.warning(f"API 400 Bad Request: {request.path} - {e.description}")
     return jsonify(error=e.description), 400
 
 @api_bp.app_errorhandler(403)
 def api_forbidden(e):
-     logger.warning(f"API 403 Forbidden: {request.path} - {e.description}")
-     return jsonify(error=e.description), 403
+    """Handle 403 errors with JSON response."""
+    logger.warning(f"API 403 Forbidden: {request.path} - {e.description}")
+    return jsonify(error=e.description), 403

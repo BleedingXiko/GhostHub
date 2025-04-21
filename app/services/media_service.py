@@ -1,3 +1,9 @@
+"""
+Media Service
+------------
+Manages media file listings, caching, and session-based file tracking.
+Supports both shuffled and synchronized viewing modes.
+"""
 # app/services/media_service.py
 import os
 import time
@@ -11,18 +17,15 @@ from app.services.category_service import CategoryService
 
 logger = logging.getLogger(__name__)
 
-# In-memory cache for directory listings
-# Structure: {category_id: (timestamp, list_of_media_files)}
+# In-memory cache for directory listings: {category_id: (timestamp, files_list)}
 media_file_cache = {}
 last_cache_cleanup = time.time()
 
-# Dictionary to track seen files for each category and session
-# Structure: {category_id: {session_id: {"seen": set(seen_files), "order": list(shuffled_files), "last_access": timestamp}}}
+# Session tracking: {category_id: {session_id: {"seen": set(), "order": [], "last_access": timestamp}}}
 seen_files_tracker = {}
 last_session_cleanup = time.time()
 
-# Global dictionary to store consistent sorted order for sync mode
-# Structure: {category_id: list(sorted_files)}
+# Sync mode file order: {category_id: sorted_files_list}
 sync_mode_order = {}
 
 # Constants for memory management
@@ -31,11 +34,11 @@ MAX_SESSIONS_PER_CATEGORY = 50  # Maximum number of sessions to track per catego
 SESSION_EXPIRY = 3600  # Session data expires after 1 hour of inactivity
 
 class MediaService:
-    """Service layer for managing media files within categories."""
+    """Service for managing media files, listings, and viewing sessions."""
 
     @staticmethod
     def clean_cache():
-        """Clean up expired entries in the media file cache and enforce size limits."""
+        """Remove expired cache entries and enforce size limits."""
         global last_cache_cleanup
         global media_file_cache
 
@@ -77,7 +80,7 @@ class MediaService:
 
     @staticmethod
     def clean_sessions():
-        """Clean up inactive sessions and enforce session limits."""
+        """Remove inactive sessions and enforce session limits."""
         global last_session_cleanup
         global seen_files_tracker
         
@@ -130,19 +133,9 @@ class MediaService:
     @staticmethod
     def list_media_files(category_id, page=1, limit=None, force_refresh=False, shuffle=True):
         """
-        Lists media files for a specific category with pagination, caching, and shuffling.
-
-        Args:
-            category_id (str): The ID of the category.
-            page (int): The page number for pagination (1-based).
-            limit (int, optional): Number of items per page. Defaults to config DEFAULT_PAGE_SIZE.
-            force_refresh (bool): If True, bypasses cache and rebuilds the file list.
-            shuffle (bool): If True, shuffles the media list for the session.
-
-        Returns:
-            tuple: (paginated_media_info, pagination_details, error_message)
-                   - If successful: (list_of_media_dicts, dict_with_pagination_info, None)
-                   - If error: (None, None, error_message)
+        Get paginated media files for a category with optional shuffling.
+        
+        Returns (media_list, pagination_info, error_message) tuple.
         """
         MediaService.clean_cache() # Perform cache cleanup
 
@@ -336,16 +329,9 @@ class MediaService:
     @staticmethod
     def get_media_filepath(category_id, filename):
         """
-        Gets the full, validated filesystem path for a media file.
-
-        Args:
-            category_id (str): The ID of the category.
-            filename (str): The raw (potentially URL-decoded) filename.
-
-        Returns:
-            tuple: (filepath, error_message)
-                   - If successful: (absolute_filepath, None)
-                   - If error: (None, error_message)
+        Get validated filesystem path for a media file with security checks.
+        
+        Returns (filepath, error_message) tuple.
         """
         category = CategoryService.get_category_by_id(category_id)
         if not category:
@@ -398,10 +384,9 @@ class MediaService:
         logger.info(f"Validated media file path: {target_file}")
         return target_file, None
 
-    # Add methods for clearing session tracker, etc. if needed
     @staticmethod
     def clear_session_tracker(category_id=None, session_id=None):
-        """Clears the seen files tracker for specific or all sessions/categories."""
+        """Clear session tracking data for specified or all sessions/categories."""
         global seen_files_tracker, sync_mode_order
         if category_id and session_id:
             if category_id in seen_files_tracker and session_id in seen_files_tracker[category_id]:
