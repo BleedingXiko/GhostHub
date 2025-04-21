@@ -6,7 +6,16 @@ Perfect for temporary sharing, personal libraries, or lightweight deployments wi
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
-![GhostHub Preview](preview.png)
+## 📱 Preview Gallery
+
+### Desktop View (Outdated 0.9)
+![GhostHub Desktop Preview](preview.png)
+
+<div style="text-align: center;">
+  <img src="preview-mobile-1.jpeg" alt="GhostHub Mobile Preview 1" width="300" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="preview-mobile-2.jpeg" alt="GhostHub Mobile Preview 2" width="300" />
+</div>
 
 ---
 

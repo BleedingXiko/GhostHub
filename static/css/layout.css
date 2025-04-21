@@ -68,6 +68,20 @@
     transform: scale(1.05);
 }
 
+.header-github {
+    margin-right: var(--space-lg);
+}
+
+.header-github a {
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+}
+
+.header-github a:hover {
+    color: var(--accent-color);
+}
+
 .sync-toggle-container {
     flex-basis: 120px;
     text-align: right;
