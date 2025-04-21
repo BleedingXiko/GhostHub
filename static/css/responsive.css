@@ -35,6 +35,16 @@
         font-size: 0.75rem;
     }
     
+    /* Increase GitHub icon spacing on mobile */
+    .header-github {
+        margin-right: var(--space-xl);
+    }
+    
+    .header-github svg {
+        height: 20px;
+        width: 20px;
+    }
+    
     /* Enhance TikTok-style interface for mobile */
     .category-list {
         grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); /* Smaller cards on mobile */
