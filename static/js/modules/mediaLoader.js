@@ -129,7 +129,7 @@ function viewCategory(categoryId) {
                     return; 
                 }
 
-                // --- REVISED LOGIC: Only proceed if media was successfully loaded ---
+                // Only proceed if media was successfully loaded
                 if (app.state.fullMediaList && app.state.fullMediaList.length > 0) {
                     // Unified TikTok View for Images and Videos
                     console.log("Showing unified TikTok view.");
@@ -158,7 +158,7 @@ function viewCategory(categoryId) {
                     if (spinnerContainer) spinnerContainer.style.display = 'none';
                     reject(new Error('No media files found')); // Reject the promise
                 }
-                // --- END REVISED LOGIC ---
+            
 
             } catch (error) {
                 // Handle errors specifically from loadMoreMedia or rendering
