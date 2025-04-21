@@ -66,7 +66,7 @@ def check_dependencies():
     print_separator()
 
 def check_executable():
-    exe_path = Path("dist") / "GhostHub.exe"
+    exe_path = Path("../dist") / "GhostHub.exe"
     if not exe_path.exists():
         print(f"Executable not found at {exe_path}")
         return False
@@ -114,7 +114,7 @@ def main():
     
     # Check if executable exists
     if not check_executable():
-        print("Please run build_exe.bat first to create the executable")
+        print("Please run bin/build_exe.bat first to create the executable")
         return
     
     # Check if port 5000 is available
@@ -131,7 +131,7 @@ def main():
     print("Starting GhostHub executable...")
     try:
         # Start the executable in a new process
-        process = subprocess.Popen(["dist/GhostHub.exe"], 
+        process = subprocess.Popen(["../dist/GhostHub.exe"], 
                                   stdout=subprocess.PIPE, 
                                   stderr=subprocess.PIPE,
                                   text=True)

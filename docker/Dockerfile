@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY ../requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Ensure we have the correct versions of critical packages
@@ -27,7 +27,7 @@ RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/c
     && chmod +x /usr/local/bin/cloudflared
 
 # Copy application files
-COPY . .
+COPY .. .
 
 # Create symbolic links to required executables in the app directory
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared
@@ -37,7 +37,7 @@ RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared.exe
 RUN mkdir -p /media
 
 # Make the initialization script executable
-RUN chmod +x /app/docker-init.py
+RUN chmod +x /app/scripts/docker-init.py
 
 # Expose the port
 EXPOSE 5000
@@ -51,4 +51,4 @@ ENV DOCKER_ENV=true
 ENV USE_CLOUDFLARE_TUNNEL=n
 
 # Run the initialization script and then start the application
-CMD python /app/docker-init.py && python /app/docker-media-server.py
+CMD python /app/scripts/docker-init.py && python /app/scripts/docker-media-server.py

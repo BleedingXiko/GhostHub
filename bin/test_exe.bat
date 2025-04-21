@@ -4,7 +4,7 @@ echo     GHOSTHUB TESTER
 echo ===============================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM Check if Python is installed
 python --version >nul 2>&1
@@ -28,6 +28,6 @@ if %errorlevel% neq 0 (
 
 REM Run the test script
 echo [+] Running GhostHub executable test...
-python test_ghosthub.py
+python tests/test_ghosthub.py
 
 pause

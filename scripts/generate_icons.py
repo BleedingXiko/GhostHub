@@ -11,7 +11,7 @@ def generate_icons():
     print("Generating PWA icons...")
     
     # Source icon path
-    source_icon = "static/icons/Ghosthub1024.png"
+    source_icon = "../static/icons/Ghosthub1024.png"
     
     # Check if source icon exists
     if not os.path.exists(source_icon):
@@ -26,7 +26,7 @@ def generate_icons():
         with Image.open(source_icon) as img:
             # Create each size
             for size in sizes:
-                output_path = f"static/icons/Ghosthub{size}.png"
+                output_path = f"../static/icons/Ghosthub{size}.png"
                 # Resize the image (using LANCZOS for high-quality downsampling)
                 resized_img = img.resize((size, size), Image.LANCZOS)
                 # Save the resized image

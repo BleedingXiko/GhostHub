@@ -60,7 +60,7 @@ The `.exe` contains everything — no setup needed.
    ```
    Or use the helper:
    ```bash
-   start_server.bat
+   bin/start_server.bat
    ```
 
 5. Open your browser manually to: [http://localhost:5000](http://localhost:5000)
@@ -75,11 +75,11 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 1. Install [Docker](https://www.docker.com/products/docker-desktop)
 
-2. Add your media directories to `docker-compose.yml`:
+2. Add your media directories to `docker/docker-compose.yml`:
    ```yaml
    volumes:
-     - ./instance:/app/instance
-     - ./media:/media
+     - ../instance:/app/instance
+     - ../media:/media
      # Windows paths (Docker Desktop):
      - C:/Users/username/Pictures:/media/pictures
      - C:/Users/username/Videos:/media/videos
@@ -90,7 +90,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 3. Build and start the container:
    ```bash
-   docker-compose up
+   cd docker && docker-compose up
    ```
 
 4. Open your browser to: [http://localhost:5000](http://localhost:5000)
@@ -109,19 +109,19 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 ```bash
 # Start the container
-docker-compose up
+cd docker && docker-compose up
 
 # Stop the container
-docker-compose down
+cd docker && docker-compose down
 
 # View logs
-docker-compose logs -f
+cd docker && docker-compose logs -f
 
 # Rebuild the container (after changes)
-docker-compose build
+cd docker && docker-compose build
 
 # Enable Cloudflare Tunnel
-# Edit docker-compose.yml and set USE_CLOUDFLARE_TUNNEL=y
+# Edit docker/docker-compose.yml and set USE_CLOUDFLARE_TUNNEL=y
 ```
 
 #### Docker Environment Variables
@@ -136,7 +136,7 @@ docker-compose build
 
 ## 🛠️ Building the Executable
 
-Use `build_exe.bat` to automate the process.
+Use `bin/build_exe.bat` to automate the process.
 
 📦 What it does:
 - Checks for Python and PyInstaller
@@ -146,7 +146,7 @@ Use `build_exe.bat` to automate the process.
 
 Build Instructions:
 ```bash
-build_exe.bat
+bin/build_exe.bat
 ```
 
 Output appears in the `/dist` folder as `GhostHub.exe`
