@@ -28,7 +28,28 @@ const MAX_CACHE_SIZE = (function() {
         return window.serverConfig.MAX_CACHE_SIZE;
     }
     // Otherwise use device-specific defaults
-    return MOBILE_DEVICE ? 10 : 50; // Much smaller cache on mobile
+    // Start with device-specific defaults
+    let defaultCacheSize = MOBILE_DEVICE ? 10 : 50;
+
+    // Try to use navigator.deviceMemory as a hint (if available and not overridden by server)
+    if (!window.serverConfig?.MAX_CACHE_SIZE && navigator.deviceMemory) {
+        console.log(`Device memory reported: ${navigator.deviceMemory} GB`);
+        // Adjust cache size based on memory (example thresholds)
+        if (navigator.deviceMemory >= 8) {
+            defaultCacheSize = MOBILE_DEVICE ? 20 : 100; // More memory, larger cache
+        } else if (navigator.deviceMemory >= 4) {
+            defaultCacheSize = MOBILE_DEVICE ? 15 : 75;
+        } else {
+            defaultCacheSize = MOBILE_DEVICE ? 10 : 50; // Default for lower memory
+        }
+        console.log(`Adjusted MAX_CACHE_SIZE based on device memory: ${defaultCacheSize}`);
+    } else if (window.serverConfig?.MAX_CACHE_SIZE) {
+         console.log(`Using MAX_CACHE_SIZE from server config: ${window.serverConfig.MAX_CACHE_SIZE}`);
+         return window.serverConfig.MAX_CACHE_SIZE;
+    } else {
+         console.log(`Using default MAX_CACHE_SIZE: ${defaultCacheSize}`);
+    }
+    return defaultCacheSize;
 })();
 
 

@@ -58,11 +58,10 @@ def delete_category(category_id):
             status_code = 404 if error == "Category not found" else 500
             return jsonify({'error': error}), status_code
 
-        # Also clear media cache and session tracker for the deleted category
-        if category_id in MediaService.media_file_cache:
-            del MediaService.media_file_cache[category_id]
-            logger.info(f"Cleared media cache for deleted category: {category_id}")
+        # Clear session tracker for the deleted category
+        # We don't need to clear the media_file_cache anymore as we're using the index file
         MediaService.clear_session_tracker(category_id=category_id)
+        logger.info(f"Cleared session tracker for deleted category: {category_id}")
 
         return '', 204
     except Exception as e:
@@ -72,7 +71,7 @@ def delete_category(category_id):
 
 @api_bp.route('/categories/<category_id>/media', methods=['GET'])
 def list_media(category_id):
-    """Get paginated media files with optional shuffling."""
+    """Get paginated media files with optional shuffling and async indexing for large directories."""
     try:
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', None, type=int) # Use None to default in service
@@ -85,11 +84,25 @@ def list_media(category_id):
 
         shuffle = request.args.get('shuffle', str(default_shuffle)).lower() == 'true'
 
-
-        media_files, pagination, error = MediaService.list_media_files(
+        # Use the async method for large directories
+        # This will create and use the index file for every category
+        logger.info(f"API route calling list_media_files_async for category {category_id}, page={page}, limit={limit}, force_refresh={force_refresh}")
+        
+        # Ensure page and limit are valid integers
+        if page < 1:
+            return jsonify({'error': 'Page number must be 1 or greater'}), 400
+        
+        if limit is not None and limit < 1:
+            return jsonify({'error': 'Limit must be greater than 0'}), 400
+        
+        # Log the actual query parameters for debugging
+        logger.info(f"Query parameters: {dict(request.args)}")
+        
+        # Use the async method which handles large directories more efficiently
+        media_files, pagination, error, is_async = MediaService.list_media_files_async(
             category_id,
             page=page,
-            limit=limit, # Pass None or the value
+            limit=limit,
             force_refresh=force_refresh,
             shuffle=shuffle
         )
@@ -106,10 +119,21 @@ def list_media(category_id):
                 status_code = 500
             return jsonify({'error': error}), status_code
 
-        return jsonify({
+        response_data = {
             'files': media_files,
             'pagination': pagination
-        })
+        }
+        
+        # Add async indexing info if applicable
+        if is_async:
+            response_data['async_indexing'] = True
+            # Include indexing progress if available
+            if 'indexing_progress' in pagination:
+                response_data['indexing_progress'] = pagination['indexing_progress']
+                # Remove from pagination object to maintain backward compatibility
+                del pagination['indexing_progress']
+
+        return jsonify(response_data)
     except Exception as e:
         logger.error(f"Error listing media for category {category_id}: {str(e)}")
         logger.debug(traceback.format_exc())
