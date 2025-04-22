@@ -21,7 +21,7 @@ Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container
 
 - 📁 Add custom folders and browse your media
 - 🎞️ TikTok-style swipe navigation for images & videos
-- 🔁 Optional host sync — like a private watch party
+- 🔁 Optional host sync — everyone sees the same media, watches at their own pace
 - 💬 Built-in real-time chat (ephemeral, anonymous)
 - 📱 Fully mobile and desktop optimized
 - 🌐 Optional public sharing via Cloudflare Tunnel
