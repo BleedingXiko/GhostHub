@@ -8,7 +8,7 @@ Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container
 
 ## 📱 Preview Gallery
 
-### Desktop View (Outdated 0.9)
+### Desktop View (Use arrow keys to navigate inside categories)
 ![GhostHub Desktop Preview](preview.png)
 
 <div style="text-align: center;">
