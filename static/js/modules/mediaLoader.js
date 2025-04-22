@@ -146,16 +146,43 @@ function viewCategory(categoryId) {
                     resolve(); // Resolve the promise when everything is loaded
 
                 } else {
-                    // Handle case where no media was found or loaded
-                    // Ensure spinner is hidden if no media is loaded
-                    if (spinnerContainer) spinnerContainer.style.display = 'none';
-                    console.log('No media files found in response or files array is empty after load.');
-                    alert('No media files found or error loading media.');
-                    // Go back to category view
-                    tiktokContainer.classList.add('hidden');
-                    categoryView.classList.remove('hidden');
-                    if (spinnerContainer) spinnerContainer.style.display = 'none';
-                    reject(new Error('No media files found')); // Reject the promise
+                    // Check if this is an async indexing response with no files yet
+                    try {
+                        const response = await fetch(`/api/categories/${categoryId}/media?page=1&limit=1&_=${Date.now()}`);
+                        const checkData = await response.json();
+                        
+                        if (checkData.async_indexing && checkData.indexing_progress < 100) {
+                            // This is an async indexing in progress - show a message and wait
+                            console.log('Async indexing in progress, waiting for files...');
+                            
+                            // Create or update progress indicator
+                            createOrUpdateIndexingUI(checkData.indexing_progress);
+                            
+                            // Poll for updates
+                            setTimeout(() => {
+                                if (app.state.currentCategoryId === categoryId) {
+                                    loadMoreMedia(pageSize, app.state.currentFetchController.signal, false);
+                                }
+                            }, 2000);
+                            
+                            // Resolve the promise since we're handling it
+                            resolve();
+                            return;
+                        }
+                    } catch (checkError) {
+                        console.error("Error checking async indexing status:", checkError);
+                        // Continue to error handling below
+                    } {
+                        // No media found and not async indexing - show error
+                        if (spinnerContainer) spinnerContainer.style.display = 'none';
+                        console.log('No media files found in response or files array is empty after load.');
+                        alert('No media files found or error loading media.');
+                        // Go back to category view
+                        tiktokContainer.classList.add('hidden');
+                        categoryView.classList.remove('hidden');
+                        if (spinnerContainer) spinnerContainer.style.display = 'none';
+                        reject(new Error('No media files found')); // Reject the promise
+                    }
                 }
             
 
@@ -236,6 +263,73 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             console.error("Server error fetching more media:", data.error);
             alert(`Error loading more media: ${data.error}`);
             app.state.hasMoreMedia = false; // Stop trying if server reports error
+        } else if (data.async_indexing) {
+            // Handle async indexing response
+            console.log(`Received async indexing response with progress: ${data.indexing_progress}%`);
+            
+            // Show indexing progress to the user
+            if (!app.state.indexingProgressElement) {
+                // Create progress indicator if it doesn't exist
+                const progressElement = document.createElement('div');
+                progressElement.className = 'indexing-progress';
+                progressElement.style.position = 'fixed';
+                progressElement.style.top = '10px';
+                progressElement.style.left = '50%';
+                progressElement.style.transform = 'translateX(-50%)';
+                progressElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                progressElement.style.color = 'white';
+                progressElement.style.padding = '10px 20px';
+                progressElement.style.borderRadius = '5px';
+                progressElement.style.zIndex = '1000';
+                document.body.appendChild(progressElement);
+                app.state.indexingProgressElement = progressElement;
+            }
+            
+            // Update progress text
+            app.state.indexingProgressElement.textContent = `Indexing media files: ${data.indexing_progress}%`;
+            
+            // Process any available files
+            if (data.files && data.files.length > 0) {
+                console.log(`Received ${data.files.length} media items during indexing.`);
+                // Add only new files to avoid duplicates
+                const existingUrls = new Set(app.state.fullMediaList.map(f => f.url));
+                const newFiles = data.files.filter(f => !existingUrls.has(f.url));
+                
+                if (newFiles.length > 0) {
+                    app.state.fullMediaList.push(...newFiles);
+                    console.log(`Added ${newFiles.length} new media items.`);
+                    
+                    // Update swipe indicators if the view is active
+                    if (!tiktokContainer.classList.contains('hidden')) {
+                        updateSwipeIndicators(app.state.currentMediaIndex, app.state.fullMediaList.length);
+                    }
+                }
+            }
+            
+            // Set hasMore based on indexing progress
+            app.state.hasMoreMedia = data.pagination.hasMore || data.indexing_progress < 100;
+            
+            // If indexing is still in progress, poll for updates
+            if (data.indexing_progress < 100) {
+                // Schedule another request after a delay
+                setTimeout(() => {
+                    if (app.state.currentCategoryId) { // Only if still viewing this category
+                        console.log("Polling for indexing progress updates...");
+                        loadMoreMedia(limit, effectiveSignal, false, pageToLoad);
+                    }
+                }, 2000); // Poll every 2 seconds
+            } else {
+                // Indexing complete, remove progress indicator
+                if (app.state.indexingProgressElement) {
+                    document.body.removeChild(app.state.indexingProgressElement);
+                    app.state.indexingProgressElement = null;
+                }
+                
+                // Only increment currentPage if we loaded the *next* sequential page
+                if (!targetPage) {
+                    app.state.currentPage++;
+                }
+            }
         } else if (data.files && data.files.length > 0) {
             console.log(`Received ${data.files.length} new media items.`);
             // Add only new files to avoid duplicates if a page was re-fetched
@@ -261,6 +355,12 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             // Update swipe indicators if the view is active
             if (!tiktokContainer.classList.contains('hidden')) {
                 updateSwipeIndicators(app.state.currentMediaIndex, app.state.fullMediaList.length);
+            }
+            
+            // Remove any indexing progress indicator if it exists
+            if (app.state.indexingProgressElement) {
+                document.body.removeChild(app.state.indexingProgressElement);
+                app.state.indexingProgressElement = null;
             }
         } else {
             console.log("No more media files received from server.");
@@ -351,17 +451,43 @@ function clearResources(aggressive = false) {
 function preloadNextMedia() {
     if (app.state.isPreloading || app.state.preloadQueue.length === 0) return;
     
+    // Get device memory if available, default to 4GB if not
+    const deviceMemory = navigator.deviceMemory || 4;
+    
+    // Adjust MAX_CACHE_SIZE based on device memory
+    // For low-memory devices (<=2GB), use a smaller cache
+    const adjustedMaxCacheSize = deviceMemory <= 2 ? Math.min(MAX_CACHE_SIZE, 10) : MAX_CACHE_SIZE;
+    
     // Skip preloading if cache is getting too large
-    if (app.mediaCache.size >= MAX_CACHE_SIZE) {
-        console.log("Cache size limit reached, skipping preload");
+    if (app.mediaCache.size >= adjustedMaxCacheSize) {
+        console.log(`Cache size (${app.mediaCache.size}) >= adjusted MAX_CACHE_SIZE (${adjustedMaxCacheSize}), skipping preload.`);
+        // Force cache cleanup when we're at the limit
+        performCacheCleanup(true);
         app.state.isPreloading = false;
+        return;
+    }
+    
+    // Check if browser is likely to be under memory pressure
+    const isLowMemory = deviceMemory <= 2 || 
+                        (typeof navigator.deviceMemory === 'undefined' && window.innerWidth <= 768);
+    
+    // Limit concurrent preloads based on device capabilities
+    const maxConcurrentPreloads = isLowMemory ? 1 : 2;
+    
+    // Count active preloads (elements with preload attribute)
+    const activePreloads = document.querySelectorAll('video[preload="auto"], img[fetchpriority="high"]').length;
+    
+    if (activePreloads >= maxConcurrentPreloads) {
+        console.log(`Too many active preloads (${activePreloads}), deferring preload.`);
+        // Try again later with a longer delay
+        setTimeout(preloadNextMedia, 1000); // Increased from 500ms to 1000ms
         return;
     }
     
     app.state.isPreloading = true;
     
-    // Prioritize next 2 items for immediate viewing
-    const nextItems = app.state.preloadQueue.slice(0, 2);
+    // Prioritize next item for immediate viewing
+    const nextItems = app.state.preloadQueue.slice(0, 1); // Only preload 1 at a time
     const currentIndex = app.state.currentMediaIndex;
     
     // Get the next file to preload
@@ -592,8 +718,7 @@ function optimizeVideoElement(videoElement) {
     // Add event listeners for better performance monitoring
     videoElement.addEventListener('loadstart', () => console.log('Video loadstart'));
     videoElement.addEventListener('loadedmetadata', () => console.log('Video loadedmetadata'));
-    videoElement.addEventListener('loadeddata', () => console.log('Video loadeddata'));
-    videoElement.addEventListener('canplay', () => console.log('Video canplay'));
+    videoElement.addEventListener('loadeddata', () => console.log('Video canplay'));
     
     return videoElement;
 }

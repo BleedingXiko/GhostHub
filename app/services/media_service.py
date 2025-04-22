@@ -11,15 +11,14 @@ import random
 import uuid
 import logging
 import traceback
+import threading
+from queue import Queue, Empty
 from flask import current_app, session, request
 from app.utils.media_utils import is_media_file, get_media_type
 from app.services.category_service import CategoryService
+from app.utils.file_utils import load_index, save_index, is_large_directory # Added index utils
 
 logger = logging.getLogger(__name__)
-
-# In-memory cache for directory listings: {category_id: (timestamp, files_list)}
-media_file_cache = {}
-last_cache_cleanup = time.time()
 
 # Session tracking: {category_id: {session_id: {"seen": set(), "order": [], "last_access": timestamp}}}
 seen_files_tracker = {}
@@ -28,55 +27,22 @@ last_session_cleanup = time.time()
 # Sync mode file order: {category_id: sorted_files_list}
 sync_mode_order = {}
 
+# Async indexing tracking: {category_id: {"status": "running|complete", "progress": 0-100, "files": [], "timestamp": time}}
+async_index_status = {}
+
+# Thread-safe queue for background indexing tasks
+index_task_queue = Queue()
+
+# Flag to track if the background indexing thread is running
+background_thread_running = False
+
 # Constants for memory management
-MAX_CACHE_ENTRIES = 100  # Maximum number of categories to cache
 MAX_SESSIONS_PER_CATEGORY = 50  # Maximum number of sessions to track per category
 SESSION_EXPIRY = 3600  # Session data expires after 1 hour of inactivity
+LARGE_DIRECTORY_THRESHOLD = 50  # Number of files that triggers async indexing (reduced from 500 for better performance)
 
 class MediaService:
     """Service for managing media files, listings, and viewing sessions."""
-
-    @staticmethod
-    def clean_cache():
-        """Remove expired cache entries and enforce size limits."""
-        global last_cache_cleanup
-        global media_file_cache
-
-        current_time = time.time()
-        # Clean up cache more frequently if it grows large, otherwise less often
-        cleanup_interval = 60 if len(media_file_cache) < 50 else 30
-        if current_time - last_cache_cleanup > cleanup_interval:
-            # 1. Remove expired entries
-            cache_expiry = current_app.config.get('CACHE_EXPIRY', 300)  # Default 5 minutes
-            cleanup_keys = [
-                key for key, (timestamp, _) in media_file_cache.items()
-                if current_time - timestamp > cache_expiry
-            ]
-
-            if cleanup_keys:
-                for key in cleanup_keys:
-                    del media_file_cache[key]
-                logger.info(f"Cache cleanup: removed {len(cleanup_keys)} expired entries.")
-            else:
-                logger.debug("Cache cleanup: No expired entries found.")
-
-            # 2. Enforce maximum cache size by removing oldest entries if needed
-            if len(media_file_cache) > MAX_CACHE_ENTRIES:
-                # Sort by timestamp (oldest first)
-                sorted_entries = sorted(
-                    media_file_cache.items(),
-                    key=lambda item: item[1][0]  # Sort by timestamp
-                )
-                # Remove oldest entries to get back to the limit
-                entries_to_remove = len(media_file_cache) - MAX_CACHE_ENTRIES
-                for key, _ in sorted_entries[:entries_to_remove]:
-                    del media_file_cache[key]
-                logger.info(f"Cache size limit enforced: removed {entries_to_remove} oldest entries.")
-
-            last_cache_cleanup = current_time
-            
-            # Also clean up sessions while we're at it
-            MediaService.clean_sessions()
 
     @staticmethod
     def clean_sessions():
@@ -137,7 +103,8 @@ class MediaService:
         
         Returns (media_list, pagination_info, error_message) tuple.
         """
-        MediaService.clean_cache() # Perform cache cleanup
+        # MediaService.clean_cache() # Removed old cache cleanup call
+        MediaService.clean_sessions() # Keep session cleanup
 
         limit = limit or current_app.config['DEFAULT_PAGE_SIZE']
         if page < 1:
@@ -151,26 +118,32 @@ class MediaService:
             return None, None, "Category not found."
 
         category_path = category['path']
-        cache_key = category_id
         current_time = time.time()
+        cache_expiry = current_app.config.get('CACHE_EXPIRY', 300) # Use same expiry for index
 
-        # --- File Listing & Caching ---
-        all_files = None
-        cache_valid = False
-        if not force_refresh and cache_key in media_file_cache:
-            cache_time, cached_files = media_file_cache[cache_key]
-            if current_time - cache_time <= current_app.config['CACHE_EXPIRY']:
-                all_files = cached_files
-                cache_valid = True
-                logger.info(f"Using cached file list for '{category['name']}' ({len(all_files)} files)")
+        # --- File Listing using Index Cache ---
+        all_files_metadata = None # Will store list of dicts: {'name': ..., 'size': ..., 'mtime': ...}
+
+        # 1. Try loading the index
+        index_data = load_index(category_path) if not force_refresh else None
+
+        # 2. Validate the loaded index
+        if index_data and 'timestamp' in index_data and 'files' in index_data:
+            if current_time - index_data['timestamp'] <= cache_expiry:
+                all_files_metadata = index_data['files']
+                logger.info(f"Using valid index file for '{category['name']}' ({len(all_files_metadata)} files)")
             else:
-                logger.info(f"Cache expired for '{category['name']}'")
+                logger.info(f"Index file expired for '{category['name']}'")
+                index_data = None # Treat expired index as invalid
 
-        if all_files is None:
+        # 3. If index is invalid, missing, or force_refresh is true, scan directory and rebuild index
+        if all_files_metadata is None:
             if force_refresh:
-                logger.info(f"Forcing cache refresh for '{category['name']}'")
+                logger.info(f"Forcing index refresh for '{category['name']}'")
+            elif index_data:
+                 logger.info(f"Rebuilding expired index for '{category['name']}'")
             else:
-                logger.info(f"Building file list for '{category['name']}'")
+                logger.info(f"Index not found or invalid, building index for '{category['name']}'")
 
             if not os.path.exists(category_path):
                 logger.error(f"Category path does not exist: {category_path}")
@@ -180,19 +153,66 @@ class MediaService:
                 return None, None, f"Category path is not a directory: {category_path}"
 
             try:
-                all_files = [f for f in os.listdir(category_path) if is_media_file(f)]
-                media_file_cache[cache_key] = (current_time, all_files)
-                logger.info(f"Cached {len(all_files)} files for '{category['name']}'")
-                cache_valid = True # Cache is now valid
+                # Always scan all files and create the index
+                logger.info(f"Scanning all files for '{category['name']}' to create index")
+                all_files_metadata = []
+                for filename in os.listdir(category_path):
+                    if is_media_file(filename):
+                        try:
+                            filepath = os.path.join(category_path, filename)
+                            stats = os.stat(filepath)
+                            all_files_metadata.append({
+                                'name': filename,
+                                'size': stats.st_size,
+                                'mtime': stats.st_mtime
+                            })
+                        except FileNotFoundError:
+                             logger.warning(f"File disappeared during indexing: {filepath}")
+                        except Exception as stat_error:
+                             logger.warning(f"Could not get stats for file {filepath}: {stat_error}")
+                
+                # Always save the index file - use a direct approach
+                new_index_data = {'timestamp': current_time, 'files': all_files_metadata}
+                
+                # Save the index using the utility function
+                try:
+                    index_saved = save_index(category_path, new_index_data)
+                    if index_saved:
+                        logger.info(f"Successfully saved index for '{category['name']}' with {len(all_files_metadata)} files")
+                    else:
+                        logger.error(f"Failed to save index for '{category['name']}'")
+                except Exception as save_error:
+                    logger.error(f"Error saving index for '{category['name']}': {save_error}")
+                
+                # Check if this is a large directory that should use async indexing
+                if is_large_directory(category_path, LARGE_DIRECTORY_THRESHOLD):
+                    logger.info(f"Large directory detected for '{category['name']}', starting async indexing")
+                    # Start async indexing in the background
+                    MediaService.start_async_indexing(
+                        category_id, 
+                        category_path, 
+                        category['name'],
+                        force_refresh
+                    )
+
             except PermissionError:
                 logger.error(f"Permission denied accessing directory: {category_path}")
                 return None, None, f"Permission denied accessing directory: {category_path}"
             except Exception as e:
-                logger.error(f"Error listing directory {category_path}: {str(e)}")
+                logger.error(f"Error scanning directory or building index for {category_path}: {str(e)}")
                 logger.debug(traceback.format_exc())
-                return None, None, f"Error listing directory: {str(e)}"
+                return None, None, f"Error scanning directory: {str(e)}"
 
+        # Extract just the filenames for subsequent logic (shuffling, pagination)
+        # Ensure metadata list is not None before proceeding
+        if all_files_metadata is None:
+             logger.error(f"Failed to load or build index for category '{category['name']}'. Cannot proceed.")
+             return None, None, "Failed to load or build media index."
+
+        all_files = [f_meta['name'] for f_meta in all_files_metadata]
         total_files_in_directory = len(all_files)
+        logger.info(f"Total files indexed for '{category['name']}': {total_files_in_directory}")
+
         if total_files_in_directory == 0:
              logger.info(f"No media files found in category '{category['name']}'")
              return [], {'page': page, 'limit': limit, 'total': 0, 'hasMore': False}, None
@@ -284,30 +304,29 @@ class MediaService:
         # --- Prepare Response Data ---
         paginated_media_info = []
         from urllib.parse import quote # Local import to avoid circular dependency if moved
+
+        # Create a lookup for metadata from the index for efficiency
+        metadata_lookup = {f_meta['name']: f_meta for f_meta in all_files_metadata}
+
         for filename in paginated_filenames:
             try:
-                file_path = os.path.join(category_path, filename)
-                file_size = 0
-                # Check existence and readability before getting size
-                if os.path.exists(file_path) and os.access(file_path, os.R_OK):
-                    try:
-                        file_size = os.path.getsize(file_path)
-                    except OSError as size_error:
-                        logger.warning(f"Could not get size for {file_path}: {size_error}")
-                else:
-                     logger.warning(f"File not found or not readable for size check: {file_path}")
-
+                # Get metadata from lookup
+                file_meta = metadata_lookup.get(filename)
+                if not file_meta:
+                     logger.warning(f"Metadata not found in index for file: {filename}. Skipping.")
+                     continue # Skip if metadata is missing for some reason
 
                 file_type = get_media_type(filename)
                 info = {
                     'name': filename,
                     'type': file_type,
-                    'size': file_size,
+                    'size': file_meta.get('size', 0), # Use size from index
                     'url': f'/media/{category_id}/{quote(filename)}' # URL encode filename
+                    # 'mtime': file_meta.get('mtime') # Optionally include mtime
                 }
                 paginated_media_info.append(info)
             except Exception as file_proc_error:
-                logger.error(f"Error processing file '{filename}' in category '{category['name']}': {file_proc_error}")
+                logger.error(f"Error preparing response data for file '{filename}' in category '{category['name']}': {file_proc_error}")
                 # Optionally add an error placeholder to the list
                 paginated_media_info.append({
                     'name': filename,
@@ -383,6 +402,353 @@ class MediaService:
 
         logger.info(f"Validated media file path: {target_file}")
         return target_file, None
+
+    @staticmethod
+    def start_async_indexing(category_id, category_path, category_name, force_refresh=False):
+        """
+        Start asynchronous indexing of a category directory.
+        
+        Args:
+            category_id (str): The category ID.
+            category_path (str): The path to the category directory.
+            category_name (str): The name of the category (for logging).
+            force_refresh (bool): Whether to force a refresh of the index.
+            
+        Returns:
+            dict: Initial status information.
+        """
+        global async_index_status, background_thread_running, index_task_queue
+        
+        # Check if indexing is already in progress for this category
+        if category_id in async_index_status and async_index_status[category_id]['status'] == 'running':
+            logger.info(f"Async indexing already in progress for category '{category_name}'")
+            return async_index_status[category_id]
+        
+        # Initialize status
+        current_time = time.time()
+        status_info = {
+            'status': 'running',
+            'progress': 0,
+            'files': [],  # Will be populated incrementally
+            'timestamp': current_time,
+            'total_files': 0,  # Will be updated as we discover files
+            'processed_files': 0
+        }
+        async_index_status[category_id] = status_info
+        
+        # Add task to queue
+        index_task_queue.put({
+            'category_id': category_id,
+            'category_path': category_path,
+            'category_name': category_name,
+            'force_refresh': force_refresh,
+            'timestamp': current_time
+        })
+        
+        # Start background thread if not already running
+        if not background_thread_running:
+            MediaService._start_background_indexer()
+        
+        logger.info(f"Queued async indexing task for category '{category_name}'")
+        return status_info
+    
+    @staticmethod
+    def get_async_index_status(category_id):
+        """
+        Get the current status of async indexing for a category.
+        
+        Args:
+            category_id (str): The category ID.
+            
+        Returns:
+            dict: Status information or None if no indexing has been started.
+        """
+        global async_index_status
+        return async_index_status.get(category_id)
+    
+    @staticmethod
+    def _background_indexer_worker():
+        """
+        Background worker that processes indexing tasks from the queue.
+        This method runs in a separate thread with its own Flask application context.
+        It processes tasks from the index_task_queue and updates the async_index_status.
+        """
+        global background_thread_running, index_task_queue, async_index_status
+        
+        background_thread_running = True
+        logger.info("Background indexer thread started")
+        
+        try:
+            while True:
+                try:
+                    # Get task with timeout to allow for graceful shutdown
+                    task = index_task_queue.get(timeout=5)
+                    
+                    category_id = task['category_id']
+                    category_path = task['category_path']
+                    category_name = task['category_name']
+                    force_refresh = task['force_refresh']
+                    
+                    logger.info(f"Processing async indexing task for '{category_name}'")
+                    
+                    try:
+                        # Check if directory exists and is accessible
+                        if not os.path.exists(category_path) or not os.path.isdir(category_path):
+                            logger.error(f"Category path does not exist or is not a directory: {category_path}")
+                            async_index_status[category_id]['status'] = 'error'
+                            async_index_status[category_id]['error'] = "Directory not found or not accessible"
+                            index_task_queue.task_done()  # Mark task as done
+                            continue
+                        
+                        # Try to load existing index if not forcing refresh
+                        all_files_metadata = []
+                        if not force_refresh:
+                            try:
+                                index_data = load_index(category_path)
+                                if index_data and 'timestamp' in index_data and 'files' in index_data:
+                                    cache_expiry = 300  # Default to 5 minutes if config not available
+                                    if time.time() - index_data['timestamp'] <= cache_expiry:
+                                        logger.info(f"Using existing index for async indexing of '{category_name}'")
+                                        async_index_status[category_id]['status'] = 'complete'
+                                        async_index_status[category_id]['files'] = index_data['files']
+                                        async_index_status[category_id]['progress'] = 100
+                                        async_index_status[category_id]['total_files'] = len(index_data['files'])
+                                        async_index_status[category_id]['processed_files'] = len(index_data['files'])
+                                        index_task_queue.task_done()  # Mark task as done
+                                        continue
+                            except Exception as load_error:
+                                logger.error(f"Error loading index in background worker: {load_error}")
+                                # Continue with rebuilding the index
+                        
+                        # Get total file count for progress tracking (approximate)
+                        total_files = 0
+                        try:
+                            total_files = sum(1 for f in os.listdir(category_path) if is_media_file(f))
+                            async_index_status[category_id]['total_files'] = total_files
+                            logger.info(f"Found {total_files} media files in '{category_name}' for indexing")
+                        except Exception as count_error:
+                            logger.error(f"Error counting files in {category_path}: {count_error}")
+                            # Continue with unknown total
+                        
+                        # Process files in chunks
+                        processed = 0
+                        chunk_size = 10  # Process files in smaller chunks for more frequent updates
+                        
+                        # Create a list to store metadata
+                        all_files_metadata = []
+                        
+                        # Process each file in the directory
+                        for filename in os.listdir(category_path):
+                            if is_media_file(filename):
+                                try:
+                                    filepath = os.path.join(category_path, filename)
+                                    stats = os.stat(filepath)
+                                    file_meta = {
+                                        'name': filename,
+                                        'size': stats.st_size,
+                                        'mtime': stats.st_mtime
+                                    }
+                                    all_files_metadata.append(file_meta)
+                                    
+                                    # Update status
+                                    processed += 1
+                                    async_index_status[category_id]['processed_files'] = processed
+                                    
+                                    # Update progress percentage
+                                    if total_files > 0:
+                                        progress = min(int((processed / total_files) * 100), 99)  # Cap at 99% until complete
+                                    else:
+                                        progress = 50  # Unknown total, show 50%
+                                    
+                                    async_index_status[category_id]['progress'] = progress
+                                    
+                                    # Update files list in chunks to avoid excessive memory usage
+                                    if processed % chunk_size == 0:
+                                        async_index_status[category_id]['files'] = all_files_metadata.copy()
+                                        logger.info(f"Processed {processed} files for '{category_name}' ({progress}%)")
+                                    
+                                except FileNotFoundError:
+                                    logger.warning(f"File disappeared during async indexing: {filename}")
+                                except Exception as file_error:
+                                    logger.warning(f"Error processing file {filename} during async indexing: {file_error}")
+                        
+                        # Always update the files list at the end
+                        async_index_status[category_id]['files'] = all_files_metadata
+                        logger.info(f"Finished processing all {processed} files for '{category_name}'")
+                        
+                        # Save the complete index
+                        current_time = time.time()
+                        new_index_data = {'timestamp': current_time, 'files': all_files_metadata}
+                        
+                        # Save the index using the utility function
+                        save_success = False
+                        try:
+                            save_success = save_index(category_path, new_index_data)
+                            if save_success:
+                                logger.info(f"Successfully saved index in background worker for '{category_name}'")
+                            else:
+                                logger.error(f"Failed to save index in background worker for '{category_name}'")
+                        except Exception as save_error:
+                            logger.error(f"Error saving index in background worker: {save_error}")
+                        
+                        # Update final status
+                        async_index_status[category_id]['status'] = 'complete'
+                        async_index_status[category_id]['progress'] = 100
+                        async_index_status[category_id]['timestamp'] = current_time
+                        
+                        logger.info(f"Completed async indexing for '{category_name}': {processed} files indexed, index saved: {save_success}")
+                        
+                    except Exception as task_error:
+                        logger.error(f"Error during async indexing of '{category_name}': {task_error}")
+                        logger.debug(traceback.format_exc())
+                        async_index_status[category_id]['status'] = 'error'
+                        async_index_status[category_id]['error'] = str(task_error)
+                    
+                    # Mark task as done
+                    index_task_queue.task_done()
+                    
+                except Empty:
+                    # No tasks in queue, check if we should exit
+                    if index_task_queue.empty():
+                        logger.debug("No indexing tasks in queue, background thread will exit")
+                        break
+                
+                except Exception as e:
+                    logger.error(f"Unexpected error in background indexer: {e}")
+                    logger.debug(traceback.format_exc())
+                    # Continue processing other tasks
+        
+        finally:
+            background_thread_running = False
+            logger.info("Background indexer thread stopped")
+    
+    @staticmethod
+    def _start_background_indexer():
+        """Start the background indexer thread."""
+        global background_thread_running
+        
+        if not background_thread_running:
+            try:
+                logger.info("Starting background indexer thread...")
+                
+                # Get the current Flask app instance
+                from flask import current_app
+                app = current_app._get_current_object()
+                
+                # Create a function that will run in the thread with the app context
+                def run_with_app_context():
+                    with app.app_context():
+                        logger.info("Background indexer thread started with app context")
+                        MediaService._background_indexer_worker()
+                
+                # Start the thread with the wrapper function
+                indexer_thread = threading.Thread(
+                    target=run_with_app_context,
+                    daemon=True  # Make thread a daemon so it exits when main thread exits
+                )
+                indexer_thread.start()
+                logger.info("Successfully started background indexer thread")
+                
+                # Verify the thread is running
+                if indexer_thread.is_alive():
+                    logger.info("Background indexer thread is alive")
+                else:
+                    logger.error("Background indexer thread failed to start")
+            except Exception as e:
+                logger.error(f"Error starting background indexer thread: {e}")
+                logger.debug(traceback.format_exc())
+                background_thread_running = False
+    
+    @staticmethod
+    def list_media_files_async(category_id, page=1, limit=None, force_refresh=False, shuffle=True):
+        """
+        Get paginated media files for a category with async indexing for large directories.
+        This is a wrapper around list_media_files that uses async indexing for large directories.
+        
+        Returns (media_list, pagination_info, error_message, is_async) tuple.
+        """
+        # Get category info
+        category = CategoryService.get_category_by_id(category_id)
+        if not category:
+            return None, None, "Category not found.", False
+        
+        category_path = category['path']
+        
+        # Check if this is a large directory that should use async indexing
+        if is_large_directory(category_path, LARGE_DIRECTORY_THRESHOLD):
+            logger.info(f"Large directory detected for '{category['name']}', using async indexing")
+            
+            # Check if async indexing is already in progress or complete
+            status = MediaService.get_async_index_status(category_id)
+            
+            if not status or status['status'] == 'error' or force_refresh:
+                # Start or restart async indexing
+                status = MediaService.start_async_indexing(
+                    category_id, 
+                    category_path, 
+                    category['name'],
+                    force_refresh
+                )
+            
+            # If indexing is complete, use the cached results
+            if status['status'] == 'complete':
+                logger.info(f"Using completed async index for '{category['name']}'")
+                # Use regular method with the cached index
+                return MediaService.list_media_files(category_id, page, limit, False, shuffle) + (False,)
+            
+            # If indexing is still running, return partial results if available
+            if status['files']:
+                # Create a partial response with available files
+                available_files = status['files']
+                total_files = status['total_files'] or len(available_files)
+                
+                # Apply pagination to available files
+                limit = limit or current_app.config['DEFAULT_PAGE_SIZE']
+                start_index = (page - 1) * limit
+                end_index = min(start_index + limit, len(available_files))
+                
+                paginated_files = available_files[start_index:end_index] if start_index < len(available_files) else []
+                
+                # Convert to media info format
+                paginated_media_info = []
+                from urllib.parse import quote
+                
+                for file_meta in paginated_files:
+                    filename = file_meta['name']
+                    file_type = get_media_type(filename)
+                    info = {
+                        'name': filename,
+                        'type': file_type,
+                        'size': file_meta.get('size', 0),
+                        'url': f'/media/{category_id}/{quote(filename)}'
+                    }
+                    paginated_media_info.append(info)
+                
+                # Create pagination details
+                pagination_details = {
+                    'page': page,
+                    'limit': limit,
+                    'total': total_files,
+                    'hasMore': (page * limit) < len(available_files) or status['progress'] < 100,
+                    'indexing_progress': status['progress']  # Add progress info
+                }
+                
+                return paginated_media_info, pagination_details, None, True
+            
+            # No files available yet, return empty list with indexing status
+            # Set hasMore to True since indexing is still in progress
+            pagination_details = {
+                'page': page,
+                'limit': limit or current_app.config['DEFAULT_PAGE_SIZE'],
+                'total': status['total_files'] or 0,
+                'hasMore': True,  # Always true while indexing is in progress
+                'indexing_progress': status['progress']
+            }
+            
+            return [], pagination_details, None, True
+        
+        # Not a large directory, use regular method
+        return MediaService.list_media_files(category_id, page, limit, force_refresh, shuffle) + (False,)
 
     @staticmethod
     def clear_session_tracker(category_id=None, session_id=None):
