@@ -105,24 +105,39 @@ function setupMediaNavigation() {
                 e.preventDefault();
             }
         } else {
-        // Vertical Swipe - Navigate Media
-        if (diffY > swipeThreshold) {
+        // Vertical Swipe - Navigate Media (only if navigation is not disabled)
+        if (app.state.navigationDisabled) {
+            console.log('Swipe navigation ignored: user is a guest in sync mode');
+            // Still allow tapping to play/pause
+            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+            if (activeElement && activeElement.tagName === 'VIDEO') {
+                // Ensure loop is set before playing
+                activeElement.loop = true;
+                activeElement.setAttribute('loop', 'true');
+                
+                if (activeElement.paused) {
+                    activeElement.play().catch(e => console.error("Resume play failed:", e));
+                } else {
+                    activeElement.pause();
+                }
+            }
+        } else if (diffY > swipeThreshold) {
             console.log('Swipe Up detected');
             navigateMedia('next', e);
         } else if (diffY < -swipeThreshold) {
             console.log('Swipe Down detected');
             navigateMedia('prev', e);
         } else {
-                console.log('Swipe threshold not met, resuming video');
-                // No vertical threshold met, resume video
-                const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
-                if (activeElement && activeElement.tagName === 'VIDEO') {
-                    // Ensure loop is set before playing
-                    activeElement.loop = true;
-                    activeElement.setAttribute('loop', 'true');
-                    activeElement.play().catch(e => console.error("Resume play failed:", e));
-                }
+            console.log('Swipe threshold not met, resuming video');
+            // No vertical threshold met, resume video
+            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+            if (activeElement && activeElement.tagName === 'VIDEO') {
+                // Ensure loop is set before playing
+                activeElement.loop = true;
+                activeElement.setAttribute('loop', 'true');
+                activeElement.play().catch(e => console.error("Resume play failed:", e));
             }
+        }
         }
         
         lastTap = currentTime;
@@ -131,6 +146,13 @@ function setupMediaNavigation() {
     // Define key down handler
     handleKeyDown = function(e) {
         if (tiktokContainer.classList.contains('hidden')) {
+            return;
+        }
+
+        // Check if navigation is disabled (for guests in sync mode)
+        if (app.state.navigationDisabled && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+            console.log('Keyboard navigation ignored: user is a guest in sync mode');
+            e.preventDefault();
             return;
         }
 

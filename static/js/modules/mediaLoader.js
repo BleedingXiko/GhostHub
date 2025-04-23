@@ -115,11 +115,12 @@ function viewCategory(categoryId) {
                 // Show spinner before fetching
                 if (spinnerContainer) spinnerContainer.style.display = 'flex';
 
-                // STEP 8: Always force refresh when loading a new category
-                console.log("Forcing refresh for new category load");
+                // STEP 8: Only force refresh when explicitly needed
+                const shouldForceRefresh = false; // Changed from true to false
+                console.log(`Loading category with forceRefresh: ${shouldForceRefresh}`);
                 
                 // Fetch the first page of media, passing the specific signal for this view
-                await loadMoreMedia(pageSize, app.state.currentFetchController.signal, true); // Added true for forceRefresh
+                await loadMoreMedia(pageSize, app.state.currentFetchController.signal, shouldForceRefresh);
 
                 // Check if the fetch was aborted (e.g., user switched category again quickly)
                 if (app.state.currentFetchController.signal.aborted) {
@@ -146,43 +147,8 @@ function viewCategory(categoryId) {
                     resolve(); // Resolve the promise when everything is loaded
 
                 } else {
-                    // Check if this is an async indexing response with no files yet
-                    try {
-                        const response = await fetch(`/api/categories/${categoryId}/media?page=1&limit=1&_=${Date.now()}`);
-                        const checkData = await response.json();
-                        
-                        if (checkData.async_indexing && checkData.indexing_progress < 100) {
-                            // This is an async indexing in progress - show a message and wait
-                            console.log('Async indexing in progress, waiting for files...');
-                            
-                            // Create or update progress indicator
-                            createOrUpdateIndexingUI(checkData.indexing_progress);
-                            
-                            // Poll for updates
-                            setTimeout(() => {
-                                if (app.state.currentCategoryId === categoryId) {
-                                    loadMoreMedia(pageSize, app.state.currentFetchController.signal, false);
-                                }
-                            }, 2000);
-                            
-                            // Resolve the promise since we're handling it
-                            resolve();
-                            return;
-                        }
-                    } catch (checkError) {
-                        console.error("Error checking async indexing status:", checkError);
-                        // Continue to error handling below
-                    } {
-                        // No media found and not async indexing - show error
-                        if (spinnerContainer) spinnerContainer.style.display = 'none';
-                        console.log('No media files found in response or files array is empty after load.');
-                        alert('No media files found or error loading media.');
-                        // Go back to category view
-                        tiktokContainer.classList.add('hidden');
-                        categoryView.classList.remove('hidden');
-                        if (spinnerContainer) spinnerContainer.style.display = 'none';
-                        reject(new Error('No media files found')); // Reject the promise
-                    }
+                    // Handle the case when no media files are found
+                    handleNoMediaFiles(categoryId, pageSize, resolve, reject);
                 }
             
 
@@ -236,8 +202,8 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
     try {
         // Add cache-busting parameter, force_refresh parameter, and the effective AbortSignal
         const cacheBuster = Date.now();
-        // Use the forceRefresh parameter or default to first page
-        const forceRefreshParam = forceRefresh || app.state.currentPage === 1 ? '&force_refresh=true' : '';
+        // Only use forceRefresh parameter as provided, don't default to true for first page
+        const forceRefreshParam = forceRefresh ? '&force_refresh=true' : '';
         const fetchOptions = {
             signal: effectiveSignal // Use the determined signal
         };
@@ -724,6 +690,32 @@ function optimizeVideoElement(videoElement) {
 }
 
 /**
+ * Create or update the indexing progress UI
+ * @param {number} progress - The indexing progress (0-100)
+ */
+function createOrUpdateIndexingUI(progress) {
+    // Create progress indicator if it doesn't exist
+    if (!app.state.indexingProgressElement) {
+        const progressElement = document.createElement('div');
+        progressElement.className = 'indexing-progress';
+        progressElement.style.position = 'fixed';
+        progressElement.style.top = '10px';
+        progressElement.style.left = '50%';
+        progressElement.style.transform = 'translateX(-50%)';
+        progressElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        progressElement.style.color = 'white';
+        progressElement.style.padding = '10px 20px';
+        progressElement.style.borderRadius = '5px';
+        progressElement.style.zIndex = '1000';
+        document.body.appendChild(progressElement);
+        app.state.indexingProgressElement = progressElement;
+    }
+    
+    // Update progress text
+    app.state.indexingProgressElement.textContent = `Indexing media files: ${progress}%`;
+}
+
+/**
  * Update navigation indicators
  * @param {number} currentIndex - Current position
  * @param {number} totalItems - Total available items
@@ -751,11 +743,92 @@ function updateSwipeIndicators(currentIndex, totalItems) {
     downIndicator.classList.toggle('visible', currentIndex < totalItems - 1 || app.state.hasMoreMedia);
 }
 
+/**
+ * Handle the case when no media files are found
+ * @param {string} categoryId - The category ID
+ * @param {number} pageSize - The page size for loading more media
+ * @param {Function} resolve - The promise resolve function
+ * @param {Function} reject - The promise reject function
+ */
+async function handleNoMediaFiles(categoryId, pageSize, resolve, reject) {
+    try {
+        // Check if this is an async indexing response with no files yet
+        const response = await fetch(`/api/categories/${categoryId}/media?page=1&limit=1&_=${Date.now()}`);
+        const checkData = await response.json();
+        
+        if (checkData.async_indexing && checkData.indexing_progress < 100) {
+            // This is an async indexing in progress - show a message and wait
+            console.log('Async indexing in progress, waiting for files...');
+            createOrUpdateIndexingUI(checkData.indexing_progress);
+        }
+    } catch (checkError) {
+        console.error("Error checking async indexing status:", checkError);
+    }
+    
+    // Set up the view for waiting
+    categoryView.classList.add('hidden');
+    mediaView.classList.add('hidden');
+    tiktokContainer.classList.remove('hidden');
+    
+    // Hide spinner
+    if (spinnerContainer) spinnerContainer.style.display = 'none';
+    
+    // Special handling for sync mode as guest
+    if (app.state.syncModeEnabled && !app.state.isHost) {
+        console.log('In sync mode as guest with no media yet - waiting for sync updates');
+        setupMediaNavigation();
+        resolve();
+        return;
+    }
+    
+    // Create a simple loading message
+    console.log('No media files found in response or files array is empty after load.');
+    const loadingMessage = document.createElement('div');
+    loadingMessage.className = 'loading-message';
+    loadingMessage.style.position = 'absolute';
+    loadingMessage.style.top = '50%';
+    loadingMessage.style.left = '50%';
+    loadingMessage.style.transform = 'translate(-50%, -50%)';
+    loadingMessage.style.color = 'white';
+    loadingMessage.style.textAlign = 'center';
+    loadingMessage.style.padding = '20px';
+    loadingMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    loadingMessage.style.borderRadius = '10px';
+    loadingMessage.style.zIndex = '1000';
+    loadingMessage.innerHTML = `
+        <div style="font-size: 24px; margin-bottom: 10px;">Loading Media</div>
+        <div>Please wait while files are being loaded...</div>
+    `;
+    tiktokContainer.appendChild(loadingMessage);
+    
+    // Store the element for later removal
+    app.state.loadingMessage = loadingMessage;
+    
+    // Poll for updates
+    setTimeout(() => {
+        if (app.state.currentCategoryId === categoryId) {
+            loadMoreMedia(pageSize, app.state.currentFetchController.signal, false);
+            
+            // Remove the loading message after a delay
+            setTimeout(() => {
+                if (app.state.loadingMessage && document.body.contains(app.state.loadingMessage)) {
+                    app.state.loadingMessage.remove();
+                    app.state.loadingMessage = null;
+                }
+            }, 5000);
+        }
+    }, 2000);
+    
+    // Resolve the promise - we'll wait for updates
+    resolve();
+}
+
 export {
     viewCategory,
     loadMoreMedia,
     clearResources,
     preloadNextMedia,
     updateSwipeIndicators,
-    optimizeVideoElement
+    optimizeVideoElement,
+    createOrUpdateIndexingUI
 };

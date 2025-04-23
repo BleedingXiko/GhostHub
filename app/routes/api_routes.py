@@ -76,13 +76,14 @@ def list_media(category_id):
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', None, type=int) # Use None to default in service
         force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
-        # Default shuffle to true, but override if sync mode is active
-        default_shuffle = True
+        # Default shuffle to config value, but override if sync mode is active
+        default_shuffle = current_app.config.get('SHUFFLE_MEDIA', True)
         if SyncService.is_sync_enabled():
              default_shuffle = False # Don't shuffle in sync mode
              logger.info(f"Sync mode enabled, overriding shuffle to False for category {category_id}")
 
         shuffle = request.args.get('shuffle', str(default_shuffle)).lower() == 'true'
+        
 
         # Use the async method for large directories
         # This will create and use the index file for every category
@@ -97,6 +98,7 @@ def list_media(category_id):
         
         # Log the actual query parameters for debugging
         logger.info(f"Query parameters: {dict(request.args)}")
+        
         
         # Use the async method which handles large directories more efficiently
         media_files, pagination, error, is_async = MediaService.list_media_files_async(
