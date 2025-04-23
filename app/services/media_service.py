@@ -674,6 +674,21 @@ class MediaService:
         
         category_path = category['path']
         
+        # First check if a valid index file already exists
+        index_data = load_index(category_path)
+        cache_expiry = current_app.config.get('CACHE_EXPIRY', 300)
+        current_time = time.time()
+        
+        # Check if the index file is valid
+        has_valid_index = (index_data and 'timestamp' in index_data and 'files' in index_data and 
+                          current_time - index_data['timestamp'] <= cache_expiry)
+        
+        # If we have a valid index file, use it directly without async indexing
+        # Even if force_refresh is True, we can still use the index file and avoid async indexing
+        if has_valid_index:
+            logger.info(f"Using existing valid index file for '{category['name']}' without async indexing (force_refresh: {force_refresh})")
+            return MediaService.list_media_files(category_id, page, limit, force_refresh, shuffle) + (False,)
+        
         # Check if this is a large directory that should use async indexing
         if is_large_directory(category_path, LARGE_DIRECTORY_THRESHOLD):
             logger.info(f"Large directory detected for '{category['name']}', using async indexing")
@@ -749,6 +764,7 @@ class MediaService:
         
         # Not a large directory, use regular method
         return MediaService.list_media_files(category_id, page, limit, force_refresh, shuffle) + (False,)
+
 
     @staticmethod
     def clear_session_tracker(category_id=None, session_id=None):

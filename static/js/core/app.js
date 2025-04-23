@@ -66,6 +66,7 @@ const app = {
         // Sync mode variables
         syncModeEnabled: false,
         isHost: false,
+        navigationDisabled: false, // Flag to disable navigation for guests in sync mode
         syncPollingInterval: null,
         // Media loading optimization variables
         preloadQueue: [],
@@ -93,6 +94,7 @@ const app = {
         this.state.preloadQueue = [];
         this.state.isPreloading = false;
         this.state.currentMediaIndex = 0;
+        this.state.navigationDisabled = false;
         
         // Clear media cache
         this.mediaCache.clear();

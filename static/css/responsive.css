@@ -103,13 +103,27 @@
         height: 64px;
     }
     
-    /* Improve back button for mobile */
+    /* Improve back button for mobile and small windows */
     .back-button {
         top: calc(40px + var(--space-md)); /* Position below mobile header */
         left: var(--space-md);
         width: 48px;
         height: 48px;
         font-size: 1.5rem;
+        z-index: 1001; /* Ensure above other elements */
+        pointer-events: auto !important; /* Force clickability */
+    }
+    
+    /* Ensure no elements cover the back button in small windows */
+    @media (max-width: 1024px) {
+        .back-button {
+            position: fixed;
+            z-index: 1001;
+            pointer-events: auto;
+        }
+        .controls-wrapper {
+            pointer-events: none;
+        }
     }
     
     /* Mobile-specific chat styles */

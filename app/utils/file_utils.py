@@ -170,26 +170,24 @@ def is_large_directory(category_path, threshold=50):
         bool: True if the directory contains more than threshold media files, False otherwise.
     """
     try:
+        # First check if a valid index file exists
+        index_data = load_index(category_path)
+        if index_data and 'files' in index_data:
+            file_count = len(index_data['files'])
+            logger.debug(f"Using index file to determine directory size: {file_count} files in {category_path}")
+            return file_count > threshold
+        
+        # If no valid index, count files directly
         # Import here to avoid circular import
         from app.utils.media_utils import is_media_file
-        
-        # Count only media files
-        file_count = 0
-        logger.info(f"Checking if {category_path} is a large directory (threshold: {threshold})")
         
         try:
             # First try a simple directory listing
             files = os.listdir(category_path)
             media_files = [f for f in files if is_media_file(f)]
             file_count = len(media_files)
-            logger.info(f"Found {file_count} media files in {category_path}")
-            
-            if file_count > threshold:
-                logger.info(f"Directory {category_path} is large ({file_count} > {threshold})")
-                return True
-            else:
-                logger.info(f"Directory {category_path} is not large ({file_count} <= {threshold})")
-                return False
+            logger.debug(f"Found {file_count} media files in {category_path}")
+            return file_count > threshold
         except Exception as list_error:
             logger.error(f"Error listing directory {category_path}: {list_error}")
             return False

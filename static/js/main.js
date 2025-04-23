@@ -81,9 +81,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             console.log('Application fully initialized');
-        }, 2000); // Wait 2 seconds for non-critical features
+        }, 500); // Wait 500ms for non-critical features
         
-    }, 500); // Wait 500ms for secondary initialization
+    }, 250); // Wait 250ms for secondary initialization
     
     console.log('Critical application components initialized');
 });

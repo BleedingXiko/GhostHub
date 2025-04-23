@@ -102,13 +102,16 @@ function toggleSpinner(show) {
 
 /**
  * Disable navigation controls for guests in sync mode
- * Modified to allow chat interaction while preventing media navigation
+ * Modified to allow chat interaction and video tapping while preventing swipe navigation
  */
 function disableNavigationControls() {
     // Instead of removing all touch events, we'll use a more targeted approach
-    // that allows chat interaction but prevents media navigation
+    // that allows chat interaction and video tapping but prevents swipe navigation
     
-    // Create an overlay that covers only the media area to prevent swipes
+    // Set a flag in app state to indicate that navigation should be disabled
+    app.state.navigationDisabled = true;
+    
+    // Create an overlay that covers only the media area to prevent direct swipes
     const mediaOverlay = document.createElement('div');
     mediaOverlay.id = 'media-navigation-overlay';
     mediaOverlay.style.position = 'absolute';
@@ -118,7 +121,7 @@ function disableNavigationControls() {
     mediaOverlay.style.height = '100%';
     mediaOverlay.style.zIndex = '999';
     mediaOverlay.style.backgroundColor = 'transparent';
-    mediaOverlay.style.pointerEvents = 'auto';
+    mediaOverlay.style.pointerEvents = 'none'; // Allow touches to pass through for tapping
     
     // Add the overlay to the tiktok container only (not covering chat)
     const tiktokContainer = document.getElementById('tiktok-container');
@@ -126,17 +129,24 @@ function disableNavigationControls() {
         tiktokContainer.appendChild(mediaOverlay);
     }
     
-    // Still disable keyboard navigation
+    // Only remove keyboard navigation
     document.removeEventListener('keydown', window.appModules.eventHandlers.handleKeyDown);
     
+    console.log('Navigation controls disabled for guest in sync mode - swipe navigation prevented, tapping allowed');
 }
 
 /**
  * Re-enable navigation controls when sync mode is disabled
  */
 function enableNavigationControls() {
+    // Clear the navigation disabled flag
+    app.state.navigationDisabled = false;
+    
     // Re-add event listeners
     window.appModules.eventHandlers.setupMediaNavigation();
+    
+    // Re-setup the controls (including the back button)
+    setupControls();
     
     // Remove the media overlay
     const mediaOverlay = document.getElementById('media-navigation-overlay');
@@ -149,6 +159,8 @@ function enableNavigationControls() {
     if (message) {
         message.remove();
     }
+    
+    console.log('Navigation controls re-enabled - swipe navigation allowed');
 }
 
 /**

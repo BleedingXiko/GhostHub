@@ -654,10 +654,10 @@ async function handleSyncUpdate(data, force = false) {
 
 /**
  * Helper function to ensure media for a specific index is loaded, loading more if necessary.
+ * Enhanced to handle async loading scenarios during sync mode.
  * @param {number} index - The target media index.
- * // @param {HTMLElement} syncStatus - The status indicator element. (Removed)
  */
-async function ensureMediaLoadedForIndex(index /*, syncStatus */) { // syncStatus parameter removed
+async function ensureMediaLoadedForIndex(index) {
     // Check if index is out of bounds and if more media *can* be loaded
     if (index >= app.state.fullMediaList.length && app.state.hasMoreMedia) {
         console.log(`Index ${index} is beyond current loaded media (${app.state.fullMediaList.length}), calculating target page...`);
@@ -671,9 +671,62 @@ async function ensureMediaLoadedForIndex(index /*, syncStatus */) { // syncStatu
             console.log(`Target index ${index} is on page ${targetPage}. Loading page...`);
             try {
                 updateSyncStatusDisplay('loading', 'Sync: Loading Media...');
-                // Load the specific page containing the target index
+                
+                // First try to load the specific page containing the target index
                 await window.appModules.mediaLoader.loadMoreMedia(null, null, false, targetPage);
                 console.log(`Finished loading media up to page ${targetPage}. Total items: ${app.state.fullMediaList.length}`);
+                
+                // If we still don't have the index after loading the page, try a direct index request
+                // This is especially important for async loading scenarios
+                if (index >= app.state.fullMediaList.length && app.state.hasMoreMedia) {
+                    console.log(`Index ${index} still not loaded after page load, trying direct index request...`);
+                    updateSyncStatusDisplay('loading', 'Sync: Requesting Specific Media...');
+                    
+                    // Use a special parameter to request a specific index directly
+                    // This will be handled by the server to prioritize loading this specific index
+                    const cacheBuster = Date.now();
+                    const syncParam = '&sync=true';
+                    const indexParam = `&target_index=${index}`;
+                    
+                    try {
+                        const response = await fetch(`/api/categories/${app.state.currentCategoryId}/media?page=1&limit=1${syncParam}${indexParam}&_=${cacheBuster}`);
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        // If we got a specific file for the requested index
+                        if (data.target_file && data.target_index === index) {
+                            console.log(`Received specific file for index ${index}:`, data.target_file);
+                            
+                            // Add the file to our list at the correct index
+                            // We might need to pad the array with placeholders
+                            while (app.state.fullMediaList.length <= index) {
+                                app.state.fullMediaList.push(null); // Add placeholders
+                            }
+                            
+                            // Replace the placeholder with the actual file
+                            app.state.fullMediaList[index] = data.target_file;
+                            console.log(`Added specific file at index ${index}, list length now: ${app.state.fullMediaList.length}`);
+                        } else if (data.files && data.files.length > 0) {
+                            // If we just got regular files, append them
+                            console.log(`Received ${data.files.length} regular files in direct index request`);
+                            const existingUrls = new Set(app.state.fullMediaList.map(f => f && f.url));
+                            const newFiles = data.files.filter(f => !existingUrls.has(f.url));
+                            
+                            if (newFiles.length > 0) {
+                                app.state.fullMediaList.push(...newFiles);
+                                console.log(`Added ${newFiles.length} new files, list length now: ${app.state.fullMediaList.length}`);
+                            }
+                        }
+                    } catch (directIndexError) {
+                        console.error(`Error in direct index request:`, directIndexError);
+                        // Continue with what we have - don't throw here
+                    }
+                }
+                
             } catch (loadError) {
                 console.error(`Error loading target page ${targetPage} during sync:`, loadError);
                 updateSyncStatusDisplay('error', 'Sync: Error Loading Media', 3000);

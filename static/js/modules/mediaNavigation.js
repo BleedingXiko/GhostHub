@@ -8,7 +8,8 @@ import {
     tiktokContainer, 
     spinnerContainer, 
     LOAD_MORE_THRESHOLD, 
-    renderWindowSize 
+    renderWindowSize,
+    MOBILE_DEVICE
 } from '../core/app.js';
 
 import { 
@@ -36,6 +37,12 @@ function navigateMedia(direction, event) {
     // Check if we've recently exited fullscreen mode
     if (window.fullscreenExited) {
         console.log('Navigation ignored: recently exited fullscreen');
+        return;
+    }
+    
+    // Check if navigation is disabled (for guests in sync mode)
+    if (app.state.navigationDisabled && (direction === 'next' || direction === 'prev')) {
+        console.log('Navigation ignored: user is a guest in sync mode');
         return;
     }
     
@@ -121,24 +128,26 @@ function navigateMedia(direction, event) {
     if (nextIndex !== app.state.currentMediaIndex) {
         renderMediaWindow(nextIndex);
         
-        // Update media info overlay
-        updateMediaInfoOverlay(app.state.fullMediaList[nextIndex]);
-        
-        // If sync mode is enabled and we're the host, send update to server
-        if (app.state.syncModeEnabled && app.state.isHost) {
-            const currentFile = app.state.fullMediaList[nextIndex];
-            console.log('Host sending sync update for index:', nextIndex);
+        // Update media info overlay if file exists
+        if (app.state.fullMediaList && app.state.fullMediaList.length > nextIndex && app.state.fullMediaList[nextIndex]) {
+            updateMediaInfoOverlay(app.state.fullMediaList[nextIndex]);
             
-            // Use the improved sendSyncUpdate function
-            window.appModules.syncManager.sendSyncUpdate({
-                category_id: app.state.currentCategoryId,
-                file_url: currentFile.url,
-                index: nextIndex
-            }).then(success => {
-                if (!success) {
-                    console.warn('Sync update was not successful');
-                }
-            });
+            // If sync mode is enabled and we're the host, send update to server
+            if (app.state.syncModeEnabled && app.state.isHost) {
+                const currentFile = app.state.fullMediaList[nextIndex];
+                console.log('Host sending sync update for index:', nextIndex);
+                
+                // Use the improved sendSyncUpdate function
+                window.appModules.syncManager.sendSyncUpdate({
+                    category_id: app.state.currentCategoryId,
+                    file_url: currentFile.url,
+                    index: nextIndex
+                }).then(success => {
+                    if (!success) {
+                        console.warn('Sync update was not successful');
+                    }
+                });
+            }
         }
     }
 }
@@ -156,8 +165,15 @@ function renderMediaWindow(index) {
         tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
         tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
         
+        
         // Track the render time to prevent fullscreen issues during rapid rendering
         app.state.lastRenderTime = Date.now();
+        
+        // Remove any loading message if it exists
+        if (app.state.loadingMessage && document.body.contains(app.state.loadingMessage)) {
+            app.state.loadingMessage.remove();
+            app.state.loadingMessage = null;
+        }
         
         // Re-add the spinner if it was removed
         if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
@@ -168,8 +184,10 @@ function renderMediaWindow(index) {
         const previousIndex = app.state.currentMediaIndex;
         app.state.currentMediaIndex = index;
         
-        // Update media info overlay with current file information
-        updateMediaInfoOverlay(app.state.fullMediaList[index]);
+        // Update media info overlay with current file information if available
+        if (app.state.fullMediaList && app.state.fullMediaList.length > index && app.state.fullMediaList[index]) {
+            updateMediaInfoOverlay(app.state.fullMediaList[index]);
+        }
 
         const startIndex = Math.max(0, index - renderWindowSize);
         const endIndex = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
@@ -318,8 +336,8 @@ function createVideoElement(file, isActive) {
         mediaElement.setAttribute('autoplay', 'true');
     }
     
-    // Add controls attribute for native video controls
-    mediaElement.controls = true;
+    // Show controls on desktop, hide on mobile
+    mediaElement.controls = !MOBILE_DEVICE; // Show controls on desktop only
     mediaElement.setAttribute('controlsList', 'nodownload'); // Remove download button
     
     // Set playsinline for all platforms
