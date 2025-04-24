@@ -97,13 +97,24 @@ class MediaService:
         last_session_cleanup = current_time
 
     @staticmethod
+    def get_session_order(category_id, session_id):
+        """
+        Get the current media order for a specific session in a category.
+        Returns the order list if found, None otherwise.
+        """
+        global seen_files_tracker
+        if category_id in seen_files_tracker and session_id in seen_files_tracker[category_id]:
+            return seen_files_tracker[category_id][session_id].get('order')
+        return None
+
+    @staticmethod
     def list_media_files(category_id, page=1, limit=None, force_refresh=False, shuffle=True):
         """
         Get paginated media files for a category with optional shuffling.
         
         Returns (media_list, pagination_info, error_message) tuple.
         """
-        # MediaService.clean_cache() # Removed old cache cleanup call
+        from .sync_service import SyncService
         MediaService.clean_sessions() # Keep session cleanup
 
         limit = limit or current_app.config['DEFAULT_PAGE_SIZE']
@@ -243,11 +254,20 @@ class MediaService:
         seen_files = session_data["seen"]
         ordered_files = session_data["order"]
 
-        # Determine file order (shuffled or sorted)
-        # Sync mode check should happen in the route handler before calling this service
-        should_shuffle = shuffle # Assume shuffle unless overridden by sync mode in route
+        # Determine file order (shuffled, sorted, or sync order)
+        should_shuffle = shuffle # Default to shuffle unless overridden
+        
+        # Check if we should use the sync session order
+        sync_order = None
+        if SyncService.is_sync_enabled():
+            sync_order = SyncService.get_sync_order(category_id)
+            if sync_order:
+                logger.info(f"Using sync session order for category {category_id} with {len(sync_order)} items")
+                should_shuffle = False # Override shuffle when using sync order
 
-        if should_shuffle:
+        if sync_order:
+            files_to_paginate = sync_order
+        elif should_shuffle:
             # Regenerate order if it's empty, forced, or all files seen
             if not ordered_files or force_refresh or len(seen_files) >= total_files_in_directory:
                 if len(seen_files) >= total_files_in_directory:

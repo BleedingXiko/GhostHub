@@ -23,6 +23,9 @@ current_media_state = {
     "timestamp": time.time()
 }
 
+# Stores the definitive media order for each category during sync
+_sync_session_order = {}
+
 class SyncService:
     """Service for managing synchronized media viewing."""
 
@@ -48,13 +51,11 @@ class SyncService:
         
         Returns updated sync status dictionary.
         """
-        global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state
+        global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state, _sync_session_order
 
         session_id = request.cookies.get('session_id')
         if not session_id:
             logger.error("Cannot toggle sync mode: Session ID cookie is missing.")
-            # In a real app, you might return an error or raise an exception
-            # For now, return current state which will likely be inactive
             return SyncService.get_status()
 
         if enable and not SYNC_MODE_ENABLED:
@@ -62,6 +63,7 @@ class SyncService:
             SYNC_MODE_ENABLED = True
             HOST_SESSION_ID = session_id # The user enabling becomes the host
             logger.info(f"Sync mode enabled by session {HOST_SESSION_ID}.")
+            
             # Reset or set initial media state
             if initial_media and all(k in initial_media for k in ['category_id', 'file_url', 'index']):
                 current_media_state = {
@@ -71,6 +73,18 @@ class SyncService:
                     "timestamp": time.time()
                 }
                 logger.info(f"Sync mode initialized with media: {current_media_state}")
+                
+                # Store the host's current media list order for this category
+                from .media_service import MediaService
+                category_id = initial_media.get('category_id')
+                if category_id:
+                    # Get host's current order from media service
+                    host_order = MediaService.get_session_order(category_id, HOST_SESSION_ID)
+                    if host_order:
+                        _sync_session_order[category_id] = host_order
+                        logger.info(f"Stored host's media order for category {category_id} with {len(host_order)} items")
+                    else:
+                        logger.warning(f"No existing order found for host session {HOST_SESSION_ID} in category {category_id}")
             else:
                 # Reset if no valid initial media provided
                 current_media_state = {
@@ -80,7 +94,6 @@ class SyncService:
             
             # Notify all clients that sync mode has been enabled
             try:
-                # Emit to all connected clients (not just those in the sync room)
                 socketio.emit('sync_enabled', {
                     'active': True,
                     'host_session_id': HOST_SESSION_ID,
@@ -99,10 +112,11 @@ class SyncService:
             current_media_state = {
                 "category_id": None, "file_url": None, "index": 0, "timestamp": time.time()
             }
+            # Clear sync order
+            _sync_session_order.clear()
             
             # Notify all clients that sync mode has been disabled
             try:
-                # Emit to all connected clients
                 socketio.emit('sync_disabled', {
                     'active': False
                 })
@@ -110,7 +124,7 @@ class SyncService:
             except Exception as e:
                 logger.error(f"Error emitting sync_disabled event: {e}")
         else:
-            # No change in state (e.g., already enabled and trying to enable again)
+            # No change in state
             logger.debug(f"Sync mode toggle requested but state remains {'enabled' if SYNC_MODE_ENABLED else 'disabled'}.")
 
         return SyncService.get_status()
@@ -134,7 +148,7 @@ class SyncService:
         
         Returns (success, error_message) tuple.
         """
-        global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state
+        global SYNC_MODE_ENABLED, HOST_SESSION_ID, current_media_state, _sync_session_order
 
         if not SYNC_MODE_ENABLED:
             return False, "Sync mode not enabled"
@@ -149,6 +163,14 @@ class SyncService:
              logger.error(f"Invalid data types received for sync update: cat={type(category_id)}, url={type(file_url)}, idx={type(index)}")
              return False, "Invalid update data types"
 
+        # If category changed, ensure we have the order for the new category
+        if current_media_state.get('category_id') != category_id:
+            from .media_service import MediaService
+            host_order = MediaService.get_session_order(category_id, HOST_SESSION_ID)
+            if host_order:
+                _sync_session_order[category_id] = host_order
+                logger.info(f"Updated sync order for new category {category_id} with {len(host_order)} items")
+
         current_media_state = {
             "category_id": category_id,
             "file_url": file_url,
@@ -162,7 +184,6 @@ class SyncService:
             socketio.emit('sync_state', current_media_state, room=SYNC_ROOM)
             logger.info(f"Emitted sync_state update to room '{SYNC_ROOM}': {current_media_state}")
         except Exception as e:
-            # Log error but don't fail the HTTP request if emit fails
             logger.error(f"Error emitting sync_state update via WebSocket: {e}")
 
         return True, None
@@ -178,3 +199,12 @@ class SyncService:
         """Get the session ID of the current host."""
         global HOST_SESSION_ID
         return HOST_SESSION_ID
+
+    @staticmethod
+    def get_sync_order(category_id):
+        """
+        Get the definitive media order for a category during sync.
+        Returns the list if found, None otherwise.
+        """
+        global _sync_session_order
+        return _sync_session_order.get(category_id)

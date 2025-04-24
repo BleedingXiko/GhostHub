@@ -39,7 +39,7 @@ class Config:
     CACHE_EXPIRY = int(os.environ.get('CACHE_EXPIRY', 300))  # 5 minutes
     DEFAULT_PAGE_SIZE = int(os.environ.get('DEFAULT_PAGE_SIZE', 10))
     SESSION_EXPIRY = int(os.environ.get('SESSION_EXPIRY', 3600))  # 1 hour
-    SHUFFLE_MEDIA = os.environ.get('SHUFFLE_MEDIA', 'true').lower() == 'false'  # BUG issue with using shuffle and sync while inside a folder
+    SHUFFLE_MEDIA = os.environ.get('SHUFFLE_MEDIA', 'true').lower() == 'true'  # BUG issue with using shuffle and sync while inside a folder (might be fixed needs testing)
     
     # Security settings - 'auto', 'true', or 'false'
     SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true'
