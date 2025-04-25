@@ -26,6 +26,9 @@ current_media_state = {
 # Stores the definitive media order for each category during sync
 _sync_session_order = {}
 
+# Stores the last known state for each active session ID
+_session_states = {}
+
 class SyncService:
     """Service for managing synchronized media viewing."""
 
@@ -208,3 +211,43 @@ class SyncService:
         """
         global _sync_session_order
         return _sync_session_order.get(category_id)
+
+    @staticmethod
+    def update_session_state(session_id, category_id, index, media_order=None):
+        """Update the last known state for a specific session, including media order."""
+        global _session_states
+        if not session_id:
+            logger.warning("update_session_state called without a session ID")
+            return False  # Indicate failure
+        
+        # Basic validation for media_order
+        if media_order is not None and not isinstance(media_order, list):
+            logger.warning(f"Invalid media_order type provided for session {session_id}: {type(media_order)}")
+            media_order = None # Ignore invalid order
+            
+        logger.info(f"Updating session state for session {session_id}: Cat={category_id}, Idx={index}, Order URLs: {len(media_order) if media_order else 'N/A'}")
+        
+        _session_states[session_id] = {
+            "category_id": category_id,
+            "index": index,
+            "media_order": media_order, # Store the order
+            "timestamp": time.time()
+        }
+        # TODO: Limit the size of _session_states to prevent memory issues
+        # if len(_session_states) > MAX_SESSIONS: ... cleanup logic ...
+        logger.debug(f"Updated state for session {session_id}: Cat={category_id}, Idx={index}, Order URLs: {len(media_order) if media_order else 'N/A'} - Total sessions: {len(_session_states)}")
+        return True  # Indicate success
+
+    @staticmethod
+    def get_session_state(session_id):
+        """Get the last known state for a specific session."""
+        global _session_states
+        return _session_states.get(session_id)
+
+    @staticmethod
+    def remove_session_state(session_id):
+        """Remove state for a disconnected session."""
+        global _session_states
+        if session_id in _session_states:
+            del _session_states[session_id]
+            logger.debug(f"Removed state for session {session_id}")

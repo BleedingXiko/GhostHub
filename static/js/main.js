@@ -18,6 +18,8 @@ import * as syncManager from './modules/syncManager.js';
 import * as eventHandlers from './modules/eventHandlers.js';
 import * as chatManager from './modules/chatManager.js';
 import * as fullscreenManager from './modules/fullscreenManager.js';
+// Import the init function specifically
+import { initMediaNavigation } from './modules/mediaNavigation.js'; 
 
 // Global module namespace to prevent circular dependencies
 window.appModules = {
@@ -72,8 +74,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Initialize chat
                     chatManager.initChat(socket);
+                    
+                    // Initialize media navigation with socket
+                    initMediaNavigation(socket); 
+                    
                 } catch (e) {
-                    console.error('Error initializing chat:', e);
+                    console.error('Error initializing chat or media navigation:', e);
                     // Non-blocking error
                 }
             } else {

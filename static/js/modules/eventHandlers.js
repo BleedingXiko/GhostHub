@@ -162,14 +162,14 @@ function setupMediaNavigation() {
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             navigateMedia('prev', e);
-        } else if (e.key === 'f') {
-            // 'f' key toggles fullscreen
-            e.preventDefault();
-            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
-            if (activeElement && activeElement.tagName === 'VIDEO') {
-                window.appModules.fullscreenManager.toggleFullscreen(activeElement);
-            }
-        }
+         } //else if (e.key === 'f') {
+        //     // 'f' key toggles fullscreen
+        //     e.preventDefault();
+        //     const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+        //     if (activeElement && activeElement.tagName === 'VIDEO') {
+        //         window.appModules.fullscreenManager.toggleFullscreen(activeElement);
+        //     }
+        // }
     };
 
     // Add new event listeners

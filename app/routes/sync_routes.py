@@ -83,6 +83,12 @@ def update_current_media():
         if not success:
             status_code = 403 if "Only the host" in error else 400 # 403 Forbidden for non-host
             return jsonify({"error": error}), status_code
+            
+        # Also update the session state for the host
+        session_id = request.cookies.get('session_id')
+        if session_id:
+            SyncService.update_session_state(session_id, category_id, index)
+            
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Error updating sync media: {str(e)}")

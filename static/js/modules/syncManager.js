@@ -309,6 +309,84 @@ function initWebSocket() {
             // Potentially disable sync mode locally or take other action
             updateSyncStatusDisplay('error', `Sync Error: ${error.message}`, 5000);
         });
+        
+        // Handle view state received from request_view (for /view command)
+        socket.on('receive_view_state', (data) => {
+            console.log('Received view state via WebSocket:', data);
+            
+            // Check if we received valid data
+            if (!data || data.error) {
+                console.error('Received invalid view state:', data);
+                // Display error message to user via chat system
+                if (window.appModules && window.appModules.chatManager) {
+                    window.appModules.chatManager.displayLocalSystemMessage(
+                        `Error: Could not find the requested view. The user may not be online or hasn't viewed any media.`
+                    );
+                }
+                return;
+            }
+            
+            // Check if we have the required fields
+            if (!data.category_id || data.index === undefined) {
+                console.error('Received view state missing required fields:', data);
+                // Display error message to user via chat system
+                if (window.appModules && window.appModules.chatManager) {
+                    window.appModules.chatManager.displayLocalSystemMessage(
+                        `Error: Received incomplete view data from server.`
+                    );
+                }
+                return;
+            }
+            
+            // Store the current sync state to restore it later
+            const wasSyncEnabled = app.state.syncModeEnabled;
+            const wasHost = app.state.isHost;
+            
+            try {
+                // Pretend we're a guest in sync mode to use handleSyncUpdate
+                app.state.syncModeEnabled = true;
+                app.state.isHost = false;
+                
+                // Process the update using the navigation function
+                navigateToState(data.category_id, data.index, 'View')
+                    .then(() => {
+                        console.log('Successfully navigated to requested view');
+                        // Display success message to user via chat system
+                        if (window.appModules && window.appModules.chatManager) {
+                            window.appModules.chatManager.displayLocalSystemMessage(
+                                `Successfully navigated to the requested view.`
+                            );
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Error navigating to requested view:', err);
+                        // Display error message to user via chat system
+                        if (window.appModules && window.appModules.chatManager) {
+                            window.appModules.chatManager.displayLocalSystemMessage(
+                                `Error: Could not navigate to the requested view.`
+                            );
+                        }
+                    })
+                    .finally(() => {
+                        // Restore the original sync state
+                        app.state.syncModeEnabled = wasSyncEnabled;
+                        app.state.isHost = wasHost;
+                        console.log('Restored original sync state:', { syncEnabled: wasSyncEnabled, isHost: wasHost });
+                    });
+            } catch (error) {
+                console.error('Error processing view state:', error);
+                // Restore the original sync state
+                app.state.syncModeEnabled = wasSyncEnabled;
+                app.state.isHost = wasHost;
+                
+                // Display error message to user via chat system
+                if (window.appModules && window.appModules.chatManager) {
+                    window.appModules.chatManager.displayLocalSystemMessage(
+                        `Error: Failed to process the requested view.`
+                    );
+                }
+            }
+        });
 
         // Helper function to get cookie value
         function getCookieValue(name) {
@@ -347,6 +425,7 @@ function disconnectWebSocket() {
         socket.off('sync_state');
         socket.off('sync_disabled');
         socket.off('sync_error');
+        socket.off('receive_view_state');
         
         socket.disconnect();
         socket = null; // Ensure socket instance is cleared
@@ -613,42 +692,57 @@ async function handleSyncUpdate(data, force = false) {
     }
 
     console.log(`Processing sync update: Category ${data.category_id}, Index ${receivedIndex}`);
+    
+    // Use the refactored navigation function
+    await navigateToState(data.category_id, receivedIndex, 'Sync');
+}
 
+/**
+ * Navigates the UI to a specific category and index.
+ * @param {string} categoryId - The target category ID.
+ * @param {number} index - The target media index.
+ * @param {string} context - Context for status messages (e.g., 'Sync', 'View').
+ * @returns {Promise<void>} - A promise that resolves when navigation is complete
+ */
+async function navigateToState(categoryId, index, context = 'Navigation') {
     try {
+        const needsCategorySwitch = categoryId !== app.state.currentCategoryId;
+        const receivedIndex = parseInt(index, 10); // Ensure index is a number
+
         if (needsCategorySwitch) {
             // --- Different category ---
-            console.log(`Switching to category ${data.category_id}...`);
-            updateSyncStatusDisplay('loading', 'Sync: Changing Category...');
+            console.log(`[${context}] Switching to category ${categoryId}...`);
+            updateSyncStatusDisplay('loading', `${context}: Changing Category...`);
 
             window.appModules.mediaLoader.clearResources(false); // Non-aggressive clear
-            await viewCategory(data.category_id); // Load the new category
+            await viewCategory(categoryId); // Load the new category
 
             // After category loads, render the specific index
-            console.log(`Rendering index ${receivedIndex} after category switch`);
+            console.log(`[${context}] Rendering index ${receivedIndex} after category switch`);
             await ensureMediaLoadedForIndex(receivedIndex); // Ensure media page is loaded
             renderMediaWindow(receivedIndex); // Render the specific item
 
-            updateSyncStatusDisplay('success', 'Sync: Updated ✓', 2000);
+            updateSyncStatusDisplay('success', `${context}: Updated ✓`, 2000);
 
-        } else if (needsIndexUpdate) {
+        } else {
             // --- Same category, different index ---
-            console.log(`Updating to index ${receivedIndex}...`);
-            updateSyncStatusDisplay('loading', 'Sync: Navigating...');
+            console.log(`[${context}] Updating to index ${receivedIndex}...`);
+            updateSyncStatusDisplay('loading', `${context}: Navigating...`);
 
-            await ensureMediaLoadedForIndex(receivedIndex); // Pass only index, syncStatus removed
+            await ensureMediaLoadedForIndex(receivedIndex); // Pass only index
 
             // Only render if the index is valid within the *now potentially updated* list
             if (receivedIndex < app.state.fullMediaList.length) {
                 renderMediaWindow(receivedIndex);
-                updateSyncStatusDisplay('success', 'Sync: Updated ✓', 2000);
+                updateSyncStatusDisplay('success', `${context}: Updated ✓`, 2000);
             } else {
-                console.warn(`Cannot render index ${receivedIndex}, only have ${app.state.fullMediaList.length} items loaded after attempting load.`);
-                updateSyncStatusDisplay('warning', 'Sync: Media Not Available', 3000);
+                console.warn(`[${context}] Cannot render index ${receivedIndex}, only have ${app.state.fullMediaList.length} items loaded after attempting load.`);
+                updateSyncStatusDisplay('warning', `${context}: Media Not Available`, 3000);
             }
         }
     } catch (error) {
-        console.error('Error processing sync update:', error);
-        updateSyncStatusDisplay('error', 'Sync: Update Error', 3000);
+        console.error(`Error processing ${context} navigation:`, error);
+        updateSyncStatusDisplay('error', `${context}: Update Error`, 3000);
     }
 }
 
@@ -745,5 +839,6 @@ async function ensureMediaLoadedForIndex(index) {
 export {
     checkSyncMode,    // Initial check on page load
     toggleSyncMode,   // Called by UI button
-    sendSyncUpdate    // Called by media navigation when host changes media
+    sendSyncUpdate,   // Called by media navigation when host changes media
+    ensureMediaLoadedForIndex // Needed by chatManager for /myview links
 };

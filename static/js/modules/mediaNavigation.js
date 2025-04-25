@@ -22,6 +22,10 @@ import {
 import { loadMoreMedia, preloadNextMedia, updateSwipeIndicators } from './mediaLoader.js';
 import { setupControls } from './uiController.js';
 
+// Need access to the socket instance for state updates
+// Socket instance (initialized via initMediaNavigation)
+let socket = null;
+
 /**
  * Navigate between media items with performance optimizations
  * @param {string} direction - The direction to navigate ('next', 'prev', or undefined for play/pause)
@@ -149,6 +153,9 @@ function navigateMedia(direction, event) {
                 });
             }
         }
+        
+        // Emit state update after navigation
+        emitMyStateUpdate(app.state.currentCategoryId, nextIndex);
     }
 }
 
@@ -304,11 +311,59 @@ function renderMediaWindow(index) {
         }, 100);
 
         // Spinner is hidden by loadMoreMedia's finally block
+        
+        // Emit state update after successful render
+        emitMyStateUpdate(app.state.currentCategoryId, app.state.currentMediaIndex);
+        
     } catch (renderError) {
         console.error("!!! Error inside renderMediaWindow:", renderError);
         // Ensure spinner is hidden on render error if loadMoreMedia didn't catch it
         if (spinnerContainer) spinnerContainer.style.display = 'none';
         throw renderError;
+    }
+}
+
+
+/**
+ * Emits the current user's state to the server.
+ * @param {string} categoryId - The current category ID.
+ * @param {number} index - The current media index.
+ */
+function emitMyStateUpdate(categoryId, index) {
+    // Check if socket exists and is connected
+    if (!socket) {
+        console.warn('emitMyStateUpdate: Socket instance is not available.');
+        return;
+    }
+    if (!socket.connected) {
+        console.warn(`emitMyStateUpdate: Socket not connected. Cannot send state update for Cat=${categoryId}, Idx=${index}`);
+        return;
+    }
+    
+    // Validate categoryId and index
+    if (!categoryId || typeof categoryId !== 'string' || !categoryId.trim()) {
+        console.warn(`emitMyStateUpdate: Invalid or missing categoryId: ${categoryId}. Skipping update.`);
+        return;
+    }
+    if (typeof index !== 'number' || index < 0 || !Number.isInteger(index)) {
+        console.warn(`emitMyStateUpdate: Invalid or missing index: ${index}. Skipping update.`);
+        return;
+    }
+    
+
+    // If validation passes, emit the event
+    const currentOrder = app.state.fullMediaList.map(item => item ? item.url : null).filter(url => url); // Send only URLs
+    console.log(`Emitting state update: Cat=${categoryId}, Idx=${index}, Order URLs: ${currentOrder.length}`);
+    try {
+        socket.emit('update_my_state', {
+            category_id: categoryId,
+            index: index,
+            media_order: currentOrder // Send the current order URLs
+            
+        });
+        
+    } catch (error) {
+        console.error(`emitMyStateUpdate: Error emitting 'update_my_state' event:`, error);
     }
 }
 
@@ -559,5 +614,16 @@ export {
     createVideoElement,
     createImageElement,
     createPlaceholderElement,
-    updateMediaInfoOverlay
+    updateMediaInfoOverlay,
+    initMediaNavigation // Export init function
 };
+
+/**
+ * Initialize the media navigation module.
+ * @param {Object} socketInstance - The shared Socket.IO instance.
+ */
+function initMediaNavigation(socketInstance) {
+    socket = socketInstance;
+    console.log('Media navigation initialized with socket.');
+    // Any other initialization logic for this module can go here
+}
