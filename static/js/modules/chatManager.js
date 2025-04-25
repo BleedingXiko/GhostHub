@@ -529,20 +529,26 @@ function setupSocketHandlers() {
  */
 function displayLocalSystemMessage(message) {
     if (!chatMessages) return;
-    
+
     // Create system message element
     const messageEl = document.createElement('div');
     messageEl.className = 'chat-local-system';
     messageEl.textContent = message;
-    
+
     // Add to DOM
     chatMessages.appendChild(messageEl);
-    
+
     // Scroll to bottom if chat is expanded
     if (chatState.isExpanded) {
         scrollToBottom();
     }
+
+    // Auto-delete after 2 seconds
+    setTimeout(() => {
+        messageEl.remove();
+    }, 2000);
 }
+
 
 /**
  * Display a clickable command message (for /myview)

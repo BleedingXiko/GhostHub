@@ -309,84 +309,6 @@ function initWebSocket() {
             // Potentially disable sync mode locally or take other action
             updateSyncStatusDisplay('error', `Sync Error: ${error.message}`, 5000);
         });
-        
-        // Handle view state received from request_view (for /view command)
-        socket.on('receive_view_state', (data) => {
-            console.log('Received view state via WebSocket:', data);
-            
-            // Check if we received valid data
-            if (!data || data.error) {
-                console.error('Received invalid view state:', data);
-                // Display error message to user via chat system
-                if (window.appModules && window.appModules.chatManager) {
-                    window.appModules.chatManager.displayLocalSystemMessage(
-                        `Error: Could not find the requested view. The user may not be online or hasn't viewed any media.`
-                    );
-                }
-                return;
-            }
-            
-            // Check if we have the required fields
-            if (!data.category_id || data.index === undefined) {
-                console.error('Received view state missing required fields:', data);
-                // Display error message to user via chat system
-                if (window.appModules && window.appModules.chatManager) {
-                    window.appModules.chatManager.displayLocalSystemMessage(
-                        `Error: Received incomplete view data from server.`
-                    );
-                }
-                return;
-            }
-            
-            // Store the current sync state to restore it later
-            const wasSyncEnabled = app.state.syncModeEnabled;
-            const wasHost = app.state.isHost;
-            
-            try {
-                // Pretend we're a guest in sync mode to use handleSyncUpdate
-                app.state.syncModeEnabled = true;
-                app.state.isHost = false;
-                
-                // Process the update using the navigation function
-                navigateToState(data.category_id, data.index, 'View')
-                    .then(() => {
-                        console.log('Successfully navigated to requested view');
-                        // Display success message to user via chat system
-                        if (window.appModules && window.appModules.chatManager) {
-                            window.appModules.chatManager.displayLocalSystemMessage(
-                                `Successfully navigated to the requested view.`
-                            );
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Error navigating to requested view:', err);
-                        // Display error message to user via chat system
-                        if (window.appModules && window.appModules.chatManager) {
-                            window.appModules.chatManager.displayLocalSystemMessage(
-                                `Error: Could not navigate to the requested view.`
-                            );
-                        }
-                    })
-                    .finally(() => {
-                        // Restore the original sync state
-                        app.state.syncModeEnabled = wasSyncEnabled;
-                        app.state.isHost = wasHost;
-                        console.log('Restored original sync state:', { syncEnabled: wasSyncEnabled, isHost: wasHost });
-                    });
-            } catch (error) {
-                console.error('Error processing view state:', error);
-                // Restore the original sync state
-                app.state.syncModeEnabled = wasSyncEnabled;
-                app.state.isHost = wasHost;
-                
-                // Display error message to user via chat system
-                if (window.appModules && window.appModules.chatManager) {
-                    window.appModules.chatManager.displayLocalSystemMessage(
-                        `Error: Failed to process the requested view.`
-                    );
-                }
-            }
-        });
 
         // Helper function to get cookie value
         function getCookieValue(name) {
@@ -399,7 +321,7 @@ function initWebSocket() {
             // Fallback or notification needed if io() itself fails
             updateSyncStatusDisplay('error', 'Sync: WS Init Failed!');
        }
-}
+};
 
 /**
  * Disconnect WebSocket connection.
