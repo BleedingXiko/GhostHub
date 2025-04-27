@@ -492,8 +492,8 @@ function preloadNextMedia() {
         mediaElement = document.createElement('video');
         
         // Set video attributes for faster loading
-        // On mobile, use 'metadata' instead of 'auto' to reduce initial data usage
-        mediaElement.preload = MOBILE_DEVICE ? 'metadata' : 'auto';
+        // Always use 'metadata' to reduce initial data usage
+        mediaElement.preload = 'metadata';
         mediaElement.playsInline = true;
         mediaElement.setAttribute('playsinline', 'true');
         mediaElement.setAttribute('webkit-playsinline', 'true');
@@ -662,7 +662,7 @@ function preloadNextMedia() {
  */
 function optimizeVideoElement(videoElement) {
     // Set video attributes for faster loading
-    videoElement.preload = 'auto';
+    videoElement.preload = 'metadata'; // Changed from 'auto'
     videoElement.playsInline = true;
     videoElement.setAttribute('playsinline', 'true');
     videoElement.setAttribute('webkit-playsinline', 'true');
