@@ -15,7 +15,6 @@ dnspython==2.3.0
 Pillow==9.5.0  # Image processing and thumbnail generation
 opencv-python==4.7.0.72  # Video processing and thumbnail generation
 numpy<2.0.0  # Pin NumPy to version below 2.0 for OpenCV compatibility
-av==10.0.0  # PyAV for video transcoding
 
 # Utilities
 pyperclip==1.8.2  # Clipboard operations for sharing URLs

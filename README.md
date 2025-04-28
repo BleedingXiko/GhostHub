@@ -46,7 +46,7 @@ The `.exe` contains everything — no setup needed.
 
 > 📌 `media_categories.json` is saved in the same folder — you can edit this to manage your categories.
 >
-> ✅ No need for `cloudflared.exe` — it's bundled inside the `.exe`
+> ✅ No need for `cloudflared.exe` or `ffmpeg.exe` — it's bundled inside the `.exe`
 
 ---
 
@@ -54,8 +54,9 @@ The `.exe` contains everything — no setup needed.
 
 1. Install **Python 3.7+**
 
-2. **Required:** Download and place this executable in the project root:
-   - [`cloudflared.exe`](https://github.com/cloudflare/cloudflared)
+2. **Required:** Download and place these executables in the project root:
+   - [`cloudflared.exe`](https://github.com/cloudflare/cloudflared) (for tunnel functionality)
+   - [`ffmpeg.exe` and `ffprobe.exe`](https://ffmpeg.org/download.html) (for video transcoding)
 
 3. Install dependencies:
    ```bash
@@ -74,6 +75,8 @@ The `.exe` contains everything — no setup needed.
 5. Open your browser manually to: [http://localhost:5000](http://localhost:5000)
 
 > 💡 Tunnel will prompt automatically if cloudflared.exe is present
+> 
+> 🎬 FFmpeg is required for video transcoding functionality. Make sure both ffmpeg and ffprobe executables are in your system PATH or in the project root directory.
 
 ---
 
@@ -181,6 +184,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 
 - Media not loading? Check your paths and file types
 - Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
+- Video transcoding not working? Make sure ffmpeg and ffprobe are installed and accessible
 - Chat or sync buggy? Refresh — GhostHub is resilient and stateless
 - Crashes? Run from terminal for logs:
   ```bash

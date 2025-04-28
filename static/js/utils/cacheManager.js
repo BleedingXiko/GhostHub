@@ -76,7 +76,41 @@ function performCacheCleanup(aggressive = false) {
     
     if (aggressive || now - app.state.lastCleanupTime > effectiveInterval) {
         console.log(`Performing ${aggressive ? 'aggressive' : 'periodic'} cache cleanup`);
-        clearCache();
+        
+        // Instead of clearing the entire cache, we'll be more selective
+        if (aggressive) {
+            // In aggressive mode, clear the entire cache
+            clearCache();
+        } else {
+            // In normal mode, only prune the cache to a reasonable size
+            // Keep items that are likely to be needed soon
+            const currentIndex = app.state.currentMediaIndex;
+            const listLength = app.state.fullMediaList ? app.state.fullMediaList.length : 0;
+            
+            if (listLength > 0 && app.mediaCache.size > MAX_CACHE_SIZE / 2) {
+                // Create a set of URLs for media items we want to keep
+                const keepUrls = new Set();
+                
+                // Keep items near the current index
+                const keepWindow = Math.min(10, Math.floor(MAX_CACHE_SIZE / 4));
+                for (let i = Math.max(0, currentIndex - keepWindow); 
+                     i <= Math.min(listLength - 1, currentIndex + keepWindow); i++) {
+                    const file = app.state.fullMediaList[i];
+                    if (file && file.url) {
+                        keepUrls.add(file.url);
+                    }
+                }
+                
+                // Delete items from cache that aren't in the keep set
+                for (const url of app.mediaCache.keys()) {
+                    if (!keepUrls.has(url)) {
+                        app.mediaCache.delete(url);
+                    }
+                }
+                
+                console.log(`Selective cache cleanup: kept ${keepUrls.size} items, removed ${app.mediaCache.size - keepUrls.size} items`);
+            }
+        }
         
         // Clear any media elements that might be detached but still referenced
         if (aggressive) {

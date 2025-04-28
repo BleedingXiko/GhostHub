@@ -2,7 +2,7 @@ FROM python:3.9-slim-buster
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including FFmpeg
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libglib2.0-0 \
     libgl1-mesa-glx \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

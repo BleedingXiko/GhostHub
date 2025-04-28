@@ -31,6 +31,10 @@ a = Analysis(
         # (instance_dir, 'instance') if path.exists(instance_dir) else ([], 'instance'),
         # Include cloudflared.exe if it exists
         (path.join(base_dir, 'cloudflared.exe'), '.') if path.exists(path.join(base_dir, 'cloudflared.exe')) else ([],'.'),
+        # Include ffmpeg.exe if it exists
+        (path.join(base_dir, 'ffmpeg.exe'), '.') if path.exists(path.join(base_dir, 'ffmpeg.exe')) else ([],'.'),
+        # Include ffprobe.exe if it exists
+        (path.join(base_dir, 'ffprobe.exe'), '.') if path.exists(path.join(base_dir, 'ffprobe.exe')) else ([],'.'),
     ] + opencv_datas, # Add opencv datas here
     hiddenimports=[
         # OpenCV and dependencies

@@ -69,6 +69,7 @@ function navigateMedia(direction, event) {
                 if (el.tagName === 'VIDEO') {
                     try {
                         el.pause();
+                        el.src = ''; // Explicitly clear src before removing attribute
                         el.removeAttribute('src');
                         el.load(); // Force release of video resources
                     } catch (e) {
@@ -168,10 +169,16 @@ function renderMediaWindow(index) {
         // Save the spinner container before clearing
         const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
         
-        // Remove all media elements and fullscreen buttons
-        tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
-        tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
+        // Instead of removing all media elements, we'll keep track of which ones we're using
+        // and only remove those that are no longer needed at the end
+        const existingElements = new Map();
+        tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => {
+            const dataIndex = parseInt(el.getAttribute('data-index'), 10);
+            existingElements.set(dataIndex, el);
+        });
         
+        // Remove fullscreen buttons - we'll add them back as needed
+        tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
         
         // Track the render time to prevent fullscreen issues during rapid rendering
         app.state.lastRenderTime = Date.now();
@@ -228,47 +235,24 @@ function renderMediaWindow(index) {
 
             let mediaElement;
             
-            // Check if media is already in cache
-            if (hasInCache(file.url)) {
-                mediaElement = getFromCache(file.url);
-                // Ensure cached videos respect the unmuted state and have loop set
-                if (mediaElement && mediaElement.tagName === 'VIDEO') {
-                    mediaElement.muted = false;
-                    mediaElement.loop = true;
-                    mediaElement.setAttribute('loop', 'true');
-                    // Set autoplay for active videos
-                    if (i === index) {
-                        mediaElement.autoplay = true;
-                        mediaElement.setAttribute('autoplay', 'true');
-                    }
-                }
-            } else {
-                if (file.type === 'video') {
-                    mediaElement = createVideoElement(file, i === index);
-                } else if (file.type === 'image') {
-                    mediaElement = createImageElement(file);
-                } else {
-                    // Handle unknown file types with a placeholder
-                    mediaElement = createPlaceholderElement(file);
-                }
+            // Check if we already have this element in the DOM
+            if (existingElements.has(i)) {
+                mediaElement = existingElements.get(i);
+                existingElements.delete(i); // Remove from map to mark as used
                 
-                // Store in cache
-                if (mediaElement) {
-                    addToCache(file.url, mediaElement);
-                }
-            }
-
-            if (mediaElement) {
-                mediaElement.className = 'tiktok-media';
-                mediaElement.setAttribute('data-index', i);
-
-                // Position elements correctly
+                // Update element properties as needed
                 if (i === index) {
                     mediaElement.classList.add('active');
                     mediaElement.style.transform = 'translateY(0)';
                     
-                    // Autoplay current video
+                    // Ensure video is ready to play if it's the active element
                     if (mediaElement.tagName === 'VIDEO') {
+                        mediaElement.muted = false;
+                        mediaElement.loop = true;
+                        mediaElement.setAttribute('loop', 'true');
+                        mediaElement.autoplay = true;
+                        mediaElement.setAttribute('autoplay', 'true');
+                        
                         setTimeout(() => {
                             // Attempt to play unmuted
                             mediaElement.play().catch(e => {
@@ -279,11 +263,94 @@ function renderMediaWindow(index) {
                             });
                         }, 50);
                     }
+                } else {
+                    mediaElement.classList.remove('active');
+                    // Position non-active elements appropriately
+                    if (i < index) {
+                        mediaElement.style.transform = 'translateY(-100%)';
+                    } else if (i > index) {
+                        mediaElement.style.transform = 'translateY(100%)';
+                    }
                 }
-                
-                tiktokContainer.appendChild(mediaElement);
+            } else {
+                // Element doesn't exist in DOM, create it
+                // Check if media is already in cache
+                if (hasInCache(file.url)) {
+                    mediaElement = getFromCache(file.url);
+                    // Ensure cached videos respect the unmuted state and have loop set
+                    if (mediaElement && mediaElement.tagName === 'VIDEO') {
+                        mediaElement.muted = false;
+                        mediaElement.loop = true;
+                        mediaElement.setAttribute('loop', 'true');
+                        // Set autoplay for active videos
+                        if (i === index) {
+                            mediaElement.autoplay = true;
+                            mediaElement.setAttribute('autoplay', 'true');
+                        }
+                    }
+                } else {
+                    if (file.type === 'video') {
+                        mediaElement = createVideoElement(file, i === index);
+                    } else if (file.type === 'image') {
+                        mediaElement = createImageElement(file);
+                    } else {
+                        // Handle unknown file types with a placeholder
+                        mediaElement = createPlaceholderElement(file);
+                    }
+                    
+                    // Store in cache
+                    if (mediaElement) {
+                        addToCache(file.url, mediaElement);
+                    }
+                }
+
+                if (mediaElement) {
+                    mediaElement.className = 'tiktok-media';
+                    mediaElement.setAttribute('data-index', i);
+
+                    // Position elements correctly
+                    if (i === index) {
+                        mediaElement.classList.add('active');
+                        mediaElement.style.transform = 'translateY(0)';
+                    } else if (i < index) {
+                        mediaElement.style.transform = 'translateY(-100%)';
+                    } else if (i > index) {
+                        mediaElement.style.transform = 'translateY(100%)';
+                    }
+                    
+                    // Autoplay current video
+                    if (i === index && mediaElement.tagName === 'VIDEO') {
+                        setTimeout(() => {
+                            // Attempt to play unmuted
+                            mediaElement.play().catch(e => {
+                                console.warn("Autoplay failed, possibly due to browser restrictions. Trying muted autoplay...", e);
+                                // Fallback: try playing muted if unmuted autoplay fails
+                                mediaElement.muted = true;
+                                mediaElement.play().catch(e2 => console.error("Muted autoplay also failed:", e2));
+                            });
+                        }, 50);
+                    }
+                    
+                    tiktokContainer.appendChild(mediaElement);
+                }
             }
         }
+        
+        // Now remove any elements that weren't used in this render
+        existingElements.forEach((element, dataIndex) => {
+            // Release resources for videos
+            if (element.tagName === 'VIDEO') {
+                try {
+                    element.pause();
+                    element.src = ''; // Explicitly clear src
+                    element.removeAttribute('src');
+                    element.load(); // Force release of video resources
+                } catch (e) {
+                    console.warn('Error cleaning up video:', e);
+                }
+            }
+            element.remove();
+        });
         
         // Queue preloading of nearby media
         app.state.preloadQueue = [];
@@ -478,7 +545,7 @@ function createImageElement(file) {
     // Add error handling for images
     mediaElement.onerror = function() {
         console.error(`Error loading image: ${file.url}`);
-        this.onerror = null; // Prevent infinite loop
+        this.onerror = null; // Prevent infinite loopS
         
         // Replace the image element with the placeholder
         if (this.parentNode) {
