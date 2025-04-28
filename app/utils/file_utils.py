@@ -13,8 +13,6 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-INDEX_FILENAME = "ghosthub_index.json"  # Removed the leading dot
-
 def get_categories_filepath():
     """Get absolute path to the categories JSON file."""
     # Use instance_path which is correctly set by the app factory
@@ -92,7 +90,9 @@ def backup_corrupted_file(filepath):
 
 def get_index_filepath(category_path):
     """Get the absolute path to the index file for a given category path."""
-    return os.path.join(category_path, INDEX_FILENAME)
+    # Use StorageService to get the path to the index file
+    from app.services.storage_service import StorageService
+    return StorageService.get_index_path(category_path)
 
 def load_index(category_path):
     """
@@ -131,8 +131,8 @@ def save_index(category_path, index_data):
     Returns:
         bool: True if successful, False otherwise.
     """
-    # Use a direct path to the index file in the category directory
-    filepath = os.path.join(category_path, INDEX_FILENAME)
+    # Get the path to the index file using StorageService
+    filepath = get_index_filepath(category_path)
     
     try:
         file_count = len(index_data.get('files', []))

@@ -206,16 +206,21 @@ class IndexingService:
                                 except Exception as file_error:
                                     logger.warning(f"Error processing file {filename} during async indexing: {file_error}")
 
-                                # Trigger Transcoding
+                                # Trigger Transcoding only for files that don't already have a transcoded version
                                 if get_media_type(filename) == 'video':
                                     try:
-                                        if TranscodingService.should_transcode(filepath):
-                                            logger.info(f"Queueing transcoding for eligible video: {filename}")
-                                            # Submit job (fire and forget in the background)
-                                            TranscodingService.transcode_video(category_id, filepath, filename)
+                                        # First check if a transcoded version already exists
+                                        if not TranscodingService.has_transcoded_version(category_path, filename):
+                                            # Only check if it should be transcoded if no transcoded version exists
+                                            if TranscodingService.should_transcode(filepath):
+                                                logger.info(f"Queueing transcoding for eligible video: {filename}")
+                                                # Submit job (fire and forget in the background)
+                                                TranscodingService.transcode_video(category_path, filepath, filename)
+                                            else:
+                                                # Logged within should_transcode
+                                                logger.debug(f"Video {filename} doesn't need transcoding based on criteria")
                                         else:
-                                            # Logged within should_transcode
-                                            pass
+                                            logger.debug(f"Skipping transcoding for {filename} - transcoded version already exists")
                                     except Exception as transcode_check_err:
                                         logger.error(f"Error checking/submitting transcoding for {filename}: {transcode_check_err}")
 

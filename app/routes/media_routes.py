@@ -71,10 +71,14 @@ def serve_media(category_id, filename):
 
         # --- Transcoding Logic ---
         if is_vid and TranscodingService.is_enabled():
+            # Get the category path from the category ID
+            category = CategoryService.get_category_by_id(category_id)
+            category_path = category['path']
+            
             # Check if a valid transcoded version exists
-            if TranscodingService.has_transcoded_version(category_id, decoded_filename):
+            if TranscodingService.has_transcoded_version(category_path, decoded_filename):
                 # Use the transcoded file path
-                filepath = StorageService.get_transcoded_path(category_id, decoded_filename)
+                filepath = StorageService.get_transcoded_path(category_path, decoded_filename)
                 logger.info(f"Serving transcoded version for {decoded_filename}")
                 
                 # Update file stats for the transcoded file
@@ -99,7 +103,7 @@ def serve_media(category_id, filename):
                 # No transcoded version exists, and it should be transcoded
                 # Schedule transcoding for the *original* file
                 TranscodingService.transcode_video(
-                    category_id, original_filepath, decoded_filename)
+                    category_path, original_filepath, decoded_filename)
                 logger.info(f"Scheduled transcoding for future viewing: {decoded_filename}")
                 # Serve the original file for now
                 filepath = original_filepath 
@@ -158,7 +162,7 @@ def serve_media(category_id, filename):
 # Route uses '/media/thumbnails/' prefix now for consistency
 @media_bp.route('/media/thumbnails/<category_id>/<filename>')
 def serve_thumbnail(category_id, filename):
-    """Serve thumbnail from centralized instance storage."""
+    """Serve thumbnail from .ghosthub directory within category path."""
     logger.debug(f"Request received for thumbnail: Category ID={category_id}, Filename={filename}")
     try:
         # Decode filename just in case
@@ -168,11 +172,18 @@ def serve_thumbnail(category_id, filename):
             logger.error(f"Error decoding thumbnail filename '{filename}': {decode_error}")
             abort(400, description='Invalid filename encoding')
 
+        # Get the category path from the category ID
+        category = CategoryService.get_category_by_id(category_id)
+        if not category:
+            logger.error(f"Category not found for thumbnail: {category_id}")
+            abort(404, description="Category not found")
+        
+        category_path = category['path']
+        
         # Get the directory where thumbnails for this category are stored
-        thumbnail_dir = StorageService.get_thumbnail_dir(category_id)
+        thumbnail_dir = StorageService.get_thumbnail_dir(category_path)
         
         # Check if the specific thumbnail file exists
-        # Note: We don't need the original filename here, the URL already contains the expected thumbnail name
         thumbnail_path = os.path.join(thumbnail_dir, decoded_filename)
 
         if not os.path.exists(thumbnail_path) or not os.path.isfile(thumbnail_path):

@@ -304,10 +304,10 @@ class TranscodingService:
         return False
 
     @staticmethod
-    def has_transcoded_version(category_id, filename):
+    def has_transcoded_version(category_path, filename):
         """Check if a transcoded version exists."""
-        # This logic remains the same, but now checks for ffmpeg output
-        transcoded_path = StorageService.get_transcoded_path(category_id, filename)
+        # Use category_path instead of category_id
+        transcoded_path = StorageService.get_transcoded_path(category_path, filename)
         if not os.path.exists(transcoded_path):
             return False
 
@@ -377,9 +377,14 @@ class TranscodingService:
                 })
 
     @staticmethod
-    def transcode_video(category_id, original_path, filename):
+    def transcode_video(category_path, original_path, filename):
         """
         Submit video transcoding job using ffmpeg to the thread pool executor.
+        
+        Args:
+            category_path: Path to the category directory (used for output path)
+            original_path: Full path to the original video file
+            filename: Name of the file (without path)
         """
         if not os.path.exists(original_path):
             logger.error(f"Original video not found for transcoding: {original_path}")
@@ -392,7 +397,7 @@ class TranscodingService:
                     logger.debug(f"Transcoding job for {filename} already exists with status: {status}")
                     return True
 
-        output_path = StorageService.get_transcoded_path(category_id, filename)
+        output_path = StorageService.get_transcoded_path(category_path, filename)
 
         try:
             video_bitrate = TranscodingService.get_video_bitrate()

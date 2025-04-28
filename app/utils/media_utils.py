@@ -59,21 +59,21 @@ def get_mime_type(filename):
 THUMBNAIL_SIZE = (256, 256)
 THUMBNAIL_FORMAT = "JPEG" # Use JPEG for good compression/quality balance
 
-def generate_thumbnail(original_media_path, category_id, filename, size=THUMBNAIL_SIZE):
+def generate_thumbnail(original_media_path, category_path, filename, size=THUMBNAIL_SIZE):
     """
     Generate a thumbnail for an image or video file and save it using StorageService.
     
     Args:
         original_media_path: Path to the original media file.
-        category_id: Category identifier for storage path.
+        category_path: Path to the category directory.
         filename: Original filename (for naming the thumbnail).
         size: Target thumbnail dimensions.
         
     Returns:
         Tuple of (success_bool, thumbnail_path_or_none).
     """
-    # Determine the save path using StorageService
-    thumbnail_save_path = StorageService.get_thumbnail_path(category_id, filename)
+    # Determine the save path using StorageService with category_path
+    thumbnail_save_path = StorageService.get_thumbnail_path(category_path, filename)
     
     media_type = get_media_type(filename) # Use filename here
     logger.info(f"Attempting thumbnail generation for {media_type}: {original_media_path} -> {thumbnail_save_path}")
@@ -202,6 +202,11 @@ def find_thumbnail(category_path, category_id, category_name):
     """
     Find or generate a suitable thumbnail for a category using StorageService.
     
+    Args:
+        category_path: Path to the category directory.
+        category_id: Category identifier (still needed for URL generation).
+        category_name: Name of the category (for logging).
+        
     Returns (media_count, thumbnail_url, contains_video) tuple.
     """
     thumbnail_url = None
@@ -265,8 +270,8 @@ def find_thumbnail(category_path, category_id, category_name):
                         logger.warning(f"Original file {original_file_path} not accessible, skipping.")
                         continue
 
-                    # Determine thumbnail path using StorageService
-                    thumbnail_path = StorageService.get_thumbnail_path(category_id, original_filename)
+                    # Determine thumbnail path using StorageService with category_path
+                    thumbnail_path = StorageService.get_thumbnail_path(category_path, original_filename)
 
                     # Check if thumbnail exists or generate it
                     thumbnail_exists = os.path.exists(thumbnail_path)
@@ -274,9 +279,9 @@ def find_thumbnail(category_path, category_id, category_name):
 
                     if not thumbnail_exists:
                         logger.info(f"Thumbnail {thumbnail_path} not found, attempting generation.")
-                        # Call the modified generate_thumbnail
+                        # Call generate_thumbnail with category_path
                         generation_success, generated_path = generate_thumbnail(
-                            original_file_path, category_id, original_filename
+                            original_file_path, category_path, original_filename
                         )
                         if generation_success:
                              logger.info(f"Successfully generated thumbnail: {generated_path}")
