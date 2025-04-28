@@ -11,8 +11,9 @@ import traceback
 import threading
 from queue import Queue, Empty
 from flask import current_app
-from app.utils.media_utils import is_media_file
+from app.utils.media_utils import is_media_file, get_media_type
 from app.utils.file_utils import load_index, save_index, is_large_directory
+from app.services.transcoding_service import TranscodingService
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,20 @@ class IndexingService:
                                     logger.warning(f"File disappeared during async indexing: {filename}")
                                 except Exception as file_error:
                                     logger.warning(f"Error processing file {filename} during async indexing: {file_error}")
-                        
+
+                                # Trigger Transcoding
+                                if get_media_type(filename) == 'video':
+                                    try:
+                                        if TranscodingService.should_transcode(filepath):
+                                            logger.info(f"Queueing transcoding for eligible video: {filename}")
+                                            # Submit job (fire and forget in the background)
+                                            TranscodingService.transcode_video(category_id, filepath, filename)
+                                        else:
+                                            # Logged within should_transcode
+                                            pass
+                                    except Exception as transcode_check_err:
+                                        logger.error(f"Error checking/submitting transcoding for {filename}: {transcode_check_err}")
+
                         # Always update the files list at the end
                         async_index_status[category_id]['files'] = all_files_metadata
                         logger.info(f"Finished processing all {processed} files for '{category_name}'")

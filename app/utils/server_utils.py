@@ -13,6 +13,8 @@ import subprocess
 import threading
 import re
 import pyperclip
+import platform # Added
+import shutil   # Added
 from app import create_app, socketio, logger as app_logger
 from app.utils.system_utils import get_local_ip
 from app.utils.file_utils import init_categories_file
@@ -257,3 +259,55 @@ def cleanup_tunnel(tunnel_process):
             print("Tunnel process did not terminate quickly, killing...")
             tunnel_process.kill()
         print("Cloudflare Tunnel process stopped.")
+
+def find_ffmpeg_executable(executable_name="ffmpeg"):
+    """
+    Find the path to the ffmpeg or ffprobe executable based on runtime environment.
+
+    Args:
+        executable_name (str): The name of the executable ('ffmpeg' or 'ffprobe').
+
+    Returns:
+        str: The full path to the executable.
+
+    Raises:
+        FileNotFoundError: If the executable cannot be found.
+    """
+    # Determine executable name based on OS
+    exe_suffix = ".exe" if platform.system() == "Windows" else ""
+    full_executable_name = f"{executable_name}{exe_suffix}"
+
+    # 1. Check if it's in the system PATH first (common in Docker or manual setup)
+    found_path = shutil.which(full_executable_name)
+    if found_path:
+        app_logger.info(f"Found '{full_executable_name}' in system PATH: {found_path}")
+        return found_path
+
+    # 2. Determine potential locations based on execution mode
+    potential_dirs = []
+    if getattr(sys, 'frozen', False):
+        # Running as a PyInstaller executable
+        app_dir = os.path.dirname(sys.executable)
+        potential_dirs.append(app_dir) # Alongside the .exe
+        if hasattr(sys, '_MEIPASS'):
+             potential_dirs.append(sys._MEIPASS) # Inside the temporary bundle
+    else:
+        # Running as a script - project root is two levels up from this file's dir
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        potential_dirs.append(project_root) # Project root
+
+    # 3. Check potential directories
+    for directory in potential_dirs:
+        path_attempt = os.path.join(directory, full_executable_name)
+        if os.path.exists(path_attempt) and os.path.isfile(path_attempt):
+            app_logger.info(f"Found '{full_executable_name}' at: {path_attempt}")
+            return path_attempt
+        # Also check common subdirectories like 'bin'
+        path_attempt_bin = os.path.join(directory, 'bin', full_executable_name)
+        if os.path.exists(path_attempt_bin) and os.path.isfile(path_attempt_bin):
+             app_logger.info(f"Found '{full_executable_name}' at: {path_attempt_bin}")
+             return path_attempt_bin
+
+    # 4. If not found, raise error
+    app_logger.error(f"Could not find '{full_executable_name}' in system PATH or potential project locations: {potential_dirs}")
+    raise FileNotFoundError(f"Could not locate the required executable: {full_executable_name}. Ensure ffmpeg and ffprobe are placed in the project root, bin directory, or system PATH.")

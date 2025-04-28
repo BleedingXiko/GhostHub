@@ -7,6 +7,7 @@ Supports both script and executable modes with environment variable overrides.
 # app/config.py
 import os
 import sys
+import multiprocessing # Added for cpu_count
 
 def get_application_root():
     """
@@ -51,8 +52,26 @@ class Config:
     
     # Memory management
     MEMORY_CLEANUP_INTERVAL = int(os.environ.get('MEMORY_CLEANUP_INTERVAL', 60000))  # ms
-    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50))
-    
+    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50)) # Max number of items in certain caches (e.g., file descriptors)
+    SMALL_FILE_THRESHOLD = int(os.environ.get('SMALL_FILE_THRESHOLD', 10 * 1024 * 1024)) # 10MB threshold for small file caching in memory
+    MAX_SMALL_CACHE_SIZE = int(os.environ.get('MAX_SMALL_CACHE_SIZE', 100 * 1024 * 1024)) # 100MB total size for small file cache
+    MAX_FD_CACHE_SIZE = int(os.environ.get('MAX_FD_CACHE_SIZE', 50)) # Max number of open file descriptors to cache
+
+    # Transcoding settings
+    ENABLE_TRANSCODING = os.environ.get('ENABLE_TRANSCODING', 'true').lower() == 'true'  # Global toggle
+    TRANSCODING_VIDEO_BITRATE = int(os.environ.get('TRANSCODING_VIDEO_BITRATE', 2500000))  # 2.5 Mbps default
+    TRANSCODING_AUDIO_BITRATE = int(os.environ.get('TRANSCODING_AUDIO_BITRATE', 192000))   # 192 Kbps default
+    TRANSCODING_CRF = int(os.environ.get('TRANSCODING_CRF', 23))  # Constant Rate Factor (18-28, lower = better quality)
+    TRANSCODING_MIN_SIZE = int(os.environ.get('TRANSCODING_MIN_SIZE', 2 * 1024 * 1024))  # Only transcode files larger than 2MB
+    TRANSCODING_MAX_STORAGE = int(os.environ.get('TRANSCODING_MAX_STORAGE_MB', 5000)) * 1024 * 1024 # 5GB limit for transcoded files (in MB for env var)
+    TRANSCODING_PRESET = os.environ.get('TRANSCODING_PRESET', 'fast') # Encoder preset (ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow) - Changed default back to 'fast' for speed
+    TRANSCODING_TARGET_RESOLUTION = int(os.environ.get('TRANSCODING_TARGET_RESOLUTION', 0)) # Target vertical resolution (e.g., 720, 1080). 0 means keep original.
+    TRANSCODING_MIN_BITRATE_SAVING_RATIO = float(os.environ.get('TRANSCODING_MIN_BITRATE_SAVING_RATIO', 1.5)) # Only transcode if original bitrate is X times target bitrate
+    TRANSCODING_MIN_RESOLUTION_FOR_SCALING = int(os.environ.get('TRANSCODING_MIN_RESOLUTION_FOR_SCALING', 720)) # Min original height to consider scaling down from
+    # Determine default workers: half CPU cores, minimum 1
+    _default_workers = max(1, (multiprocessing.cpu_count() or 2) // 2)
+    TRANSCODING_WORKERS = int(os.environ.get('TRANSCODING_WORKERS', _default_workers)) # Number of parallel transcoding processes
+
     # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
     

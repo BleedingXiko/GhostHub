@@ -11,6 +11,7 @@ from flask import current_app
 from PIL import Image
 from urllib.parse import quote
 import threading # Use standard threading instead of eventlet
+from app.services.storage_service import StorageService # Import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -55,22 +56,37 @@ def get_mime_type(filename):
     return None
 
 # Thumbnail Generation Constants
-
-THUMBNAIL_DIR_NAME = ".thumbnails"
 THUMBNAIL_SIZE = (256, 256)
 THUMBNAIL_FORMAT = "JPEG" # Use JPEG for good compression/quality balance
 
-def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_SIZE):
+def generate_thumbnail(original_media_path, category_id, filename, size=THUMBNAIL_SIZE):
     """
-    Generate a thumbnail for an image or video file.
+    Generate a thumbnail for an image or video file and save it using StorageService.
     
-    Returns True if successful, False otherwise.
+    Args:
+        original_media_path: Path to the original media file.
+        category_id: Category identifier for storage path.
+        filename: Original filename (for naming the thumbnail).
+        size: Target thumbnail dimensions.
+        
+    Returns:
+        Tuple of (success_bool, thumbnail_path_or_none).
     """
-    media_type = get_media_type(os.path.basename(original_media_path))
+    # Determine the save path using StorageService
+    thumbnail_save_path = StorageService.get_thumbnail_path(category_id, filename)
+    
+    media_type = get_media_type(filename) # Use filename here
     logger.info(f"Attempting thumbnail generation for {media_type}: {original_media_path} -> {thumbnail_save_path}")
 
     def _generate():
         """Process thumbnail generation (runs in thread)."""
+        # Ensure the target directory exists before trying to save
+        try:
+            os.makedirs(os.path.dirname(thumbnail_save_path), exist_ok=True)
+        except OSError as e:
+             logger.error(f"Failed to create thumbnail directory {os.path.dirname(thumbnail_save_path)}: {e}")
+             return False # Cannot proceed if directory creation fails
+
         try:
             if media_type == 'image':
                 with Image.open(original_media_path) as img:
@@ -78,8 +94,8 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                         img = img.convert('RGB')
                     img.thumbnail(size)
                     img.save(thumbnail_save_path, THUMBNAIL_FORMAT, quality=85)
-                logger.info(f"Successfully generated IMAGE thumbnail: {thumbnail_save_path}")
-                return True
+                    logger.info(f"Successfully generated IMAGE thumbnail: {thumbnail_save_path}")
+                return True # Return True on success
             elif media_type == 'video':
                 # Check if OpenCV is available
                 if not OPENCV_AVAILABLE:
@@ -128,7 +144,7 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                     cap.release()
                     
                     logger.info(f"Successfully generated VIDEO thumbnail: {thumbnail_save_path}")
-                    return True
+                    return True # Return True on success
                 except Exception as video_err:
                     logger.error(f"OpenCV error generating video thumbnail for {original_media_path}: {video_err}")
                     logger.debug(traceback.format_exc())
@@ -149,34 +165,27 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
                     logger.info(f"Removed potentially corrupted thumbnail file: {thumbnail_save_path}")
                 except Exception as remove_e:
                     logger.error(f"Error removing corrupted thumbnail file {thumbnail_save_path}: {remove_e}")
-            return False
+            return False # Return False on error
 
     try:
-        # Ensure the thumbnail directory exists (this is quick, no need to offload)
-        thumbnail_dir = os.path.dirname(thumbnail_save_path)
-        os.makedirs(thumbnail_dir, exist_ok=True)
-
         # Execute the blocking generation logic in a separate thread
-        thread = threading.Thread(target=lambda: None)
-        thread.result = None
-        
+        # Using a simple approach for thread result retrieval
+        result_container = {'result': False} # Use a mutable container
+
         def run_in_thread():
-            thread.result = _generate()
-        
-        thread_obj = threading.Thread(target=run_in_thread)
+            result_container['result'] = _generate()
+
+        thread_obj = threading.Thread(target=run_in_thread, name=f"ThumbGen-{filename}")
         thread_obj.daemon = True
         thread_obj.start()
-        thread_obj.join()
-        
-        return thread.result
+        thread_obj.join() # Wait for the thread to complete
+
+        success = result_container['result']
+        return success, thumbnail_save_path if success else None
 
     except Exception as e:
-        # Catch potential errors from tpool itself or directory creation
-        logger.error(f"Error in tpool execution or directory creation for {original_media_path}: {str(e)}")
-        logger.debug(traceback.format_exc())
-        return False
-    except Exception as e:
-        logger.error(f"Error generating thumbnail for {original_media_path}: {str(e)}")
+        # Catch potential errors during thread execution or setup
+        logger.error(f"Error setting up or running thumbnail generation thread for {original_media_path}: {str(e)}")
         logger.debug(traceback.format_exc())
         # Attempt to remove potentially corrupted thumbnail file if save started but failed
         if os.path.exists(thumbnail_save_path):
@@ -191,7 +200,7 @@ def generate_thumbnail(original_media_path, thumbnail_save_path, size=THUMBNAIL_
 
 def find_thumbnail(category_path, category_id, category_name):
     """
-    Find a suitable thumbnail for a category from its media files.
+    Find or generate a suitable thumbnail for a category using StorageService.
     
     Returns (media_count, thumbnail_url, contains_video) tuple.
     """
@@ -256,26 +265,29 @@ def find_thumbnail(category_path, category_id, category_name):
                         logger.warning(f"Original file {original_file_path} not accessible, skipping.")
                         continue
 
-                    # Determine thumbnail path and filename
-                    thumbnail_filename = original_filename + '.' + THUMBNAIL_FORMAT.lower()
-                    thumbnail_save_path = os.path.join(category_path, THUMBNAIL_DIR_NAME, thumbnail_filename)
+                    # Determine thumbnail path using StorageService
+                    thumbnail_path = StorageService.get_thumbnail_path(category_id, original_filename)
 
                     # Check if thumbnail exists or generate it
-                    thumbnail_exists = os.path.exists(thumbnail_save_path)
-                    thumbnail_generated = False
+                    thumbnail_exists = os.path.exists(thumbnail_path)
+                    generation_success = False
 
                     if not thumbnail_exists:
-                        logger.info(f"Thumbnail {thumbnail_save_path} not found, attempting generation.")
-                        # Attempt generation for both image and video types now
-                        thumbnail_generated = generate_thumbnail(original_file_path, thumbnail_save_path)
-                        # No need to check type here, generate_thumbnail handles it
+                        logger.info(f"Thumbnail {thumbnail_path} not found, attempting generation.")
+                        # Call the modified generate_thumbnail
+                        generation_success, generated_path = generate_thumbnail(
+                            original_file_path, category_id, original_filename
+                        )
+                        if generation_success:
+                             logger.info(f"Successfully generated thumbnail: {generated_path}")
+                        else:
+                             logger.warning(f"Failed to generate thumbnail for {original_filename}")
 
                     # If thumbnail exists or was successfully generated, create the URL
-                    if thumbnail_exists or thumbnail_generated:
-                        # URL encode the generated thumbnail filename
-                        encoded_thumbnail_filename = quote(thumbnail_filename)
-                        thumbnail_url = f"/thumbnails/{category_id}/{encoded_thumbnail_filename}"
-                        # Log the source type, but we don't need to return it anymore
+                    if thumbnail_exists or generation_success:
+                        # Generate URL using StorageService
+                        thumbnail_url = StorageService.get_thumbnail_url(category_id, original_filename)
+                        
                         source_type = get_media_type(original_filename)
                         logger.info(f"Using {description} thumbnail (source type: {source_type}) for '{category_name}': {thumbnail_url} (Source: {original_filename})")
                         candidate_found = True

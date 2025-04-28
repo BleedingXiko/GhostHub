@@ -8,10 +8,15 @@ import logging
 import traceback
 import tkinter as tk
 from tkinter import filedialog
+import os # Import os for path operations
 from flask import Blueprint, jsonify, request, current_app
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
 from app.services.sync_service import SyncService # Import SyncService
+# Import transcoding related services and utils
+from app.services.transcoding_service import TranscodingService
+from app.services.storage_service import StorageService
+from app.services.streaming_service import is_video_file # Corrected import location
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint('api', __name__)
@@ -181,6 +186,114 @@ def browse_folders():
         logger.error(f"Unexpected error opening folder browser: {str(e)}")
         logger.debug(traceback.format_exc())
         return jsonify({'error': f'Failed to open folder browser: {str(e)}'}), 500
+
+
+# --- Transcoding API Endpoints ---
+
+@api_bp.route('/api/transcoding/status/<category_id>/<path:filename>')
+def get_transcoding_status_route(category_id, filename):
+    """Get status of transcoding for a specific file."""
+    try:
+        # Decode filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+
+        # Get the filepath for the original file
+        filepath, error = MediaService.get_media_filepath(category_id, decoded_filename)
+        
+        if error:
+             # Use appropriate status code based on error
+            status_code = 404 if "not found" in error else 400 if "Invalid" in error else 500
+            return jsonify({'error': error}), status_code
+            
+        # Get the status from the service
+        status = TranscodingService.get_transcoding_status(filepath)
+        
+        if not status or status.get('status') == 'unknown': # Check if status is empty or unknown
+            # Check if it's already transcoded and provide details
+            if TranscodingService.has_transcoded_version(category_id, decoded_filename):
+                try:
+                    # Get original and transcoded file sizes
+                    original_size = StorageService.get_file_size(filepath)
+                    transcoded_path = StorageService.get_transcoded_path(category_id, decoded_filename)
+                    transcoded_size = StorageService.get_file_size(transcoded_path)
+                    
+                    # Calculate savings
+                    size_reduction = original_size - transcoded_size
+                    percent_reduction = (size_reduction / original_size) * 100 if original_size > 0 else 0
+                    
+                    return jsonify({
+                        'status': 'complete',
+                        'progress': 100,
+                        'original_size': original_size,
+                        'transcoded_size': transcoded_size,
+                        'size_reduction': size_reduction,
+                        'percent_reduction': round(percent_reduction, 1)
+                    })
+                except Exception as size_err:
+                     logger.error(f"Error getting file sizes for status check: {size_err}")
+                     # Fallback to simple complete status if size check fails
+                     return jsonify({'status': 'complete', 'progress': 100})
+
+            # If not transcoded and no active job, check if it *should* be transcoded
+            elif TranscodingService.should_transcode(filepath):
+                 return jsonify({'status': 'pending', 'progress': 0, 'message': 'Eligible for transcoding'})
+            else:
+                 return jsonify({'status': 'not_applicable', 'progress': 0, 'message': 'Transcoding not required or file too small'})
+        
+        # Return the status obtained from the service
+        return jsonify(status)
+    
+    except Exception as e:
+        logger.error(f"Error getting transcoding status for {filename}: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'error': f'Server error getting status: {str(e)}'}), 500
+
+@api_bp.route('/api/transcoding/start/<category_id>/<path:filename>', methods=['POST']) # Use POST for action
+def start_transcoding_route(category_id, filename):
+    """Manually start transcoding for a file."""
+    try:
+        # Decode filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+
+        # Get the filepath
+        filepath, error = MediaService.get_media_filepath(category_id, decoded_filename)
+        
+        if error:
+            status_code = 404 if "not found" in error else 400 if "Invalid" in error else 500
+            return jsonify({'error': error}), status_code
+            
+        # Only allow transcoding videos
+        if not is_video_file(decoded_filename):
+            return jsonify({'error': 'Only video files can be transcoded'}), 400
+            
+        # Check if it should be transcoded (e.g., size check)
+        if not TranscodingService.should_transcode(filepath):
+             return jsonify({'status': 'skipped', 'message': 'Transcoding not required for this file (e.g., too small)'}), 200
+
+        # Start transcoding
+        success = TranscodingService.transcode_video(
+            category_id, filepath, decoded_filename)
+            
+        if success:
+            # Return status indicating job was queued or already running
+            status = TranscodingService.get_transcoding_status(filepath)
+            return jsonify({'status': status.get('status', 'queued'), 'message': 'Transcoding job started or already exists.'}), 202 # 202 Accepted
+        else:
+            # Check if there was a specific error reported by the service
+            status = TranscodingService.get_transcoding_status(filepath)
+            error_msg = status.get('error', 'Failed to start transcoding job.')
+            return jsonify({'error': error_msg}), 500
+    
+    except Exception as e:
+        logger.error(f"Error starting transcoding for {filename}: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'error': f'Server error starting job: {str(e)}'}), 500
+
+
+# --- End Transcoding API Endpoints ---
+
 
 # API error handlers
 @api_bp.app_errorhandler(404)
