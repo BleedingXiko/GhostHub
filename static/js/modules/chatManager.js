@@ -5,6 +5,9 @@
 
 import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
+import { initCommandHandler } from './commandHandler.js';
+import { ensureMediaLoadedForIndex } from './syncManager.js'; // Import directly
+
 
 // Session storage keys
 const STORAGE_KEY = 'ghosthub_chat_messages';
@@ -42,6 +45,9 @@ let isTouchClick = false; // Flag to indicate if a touch was a click
 // Socket reference (will use the existing socket connection)
 let socket = null;
 
+// Command handler reference
+let commandHandler = null;
+
 /**
  * Initialize the chat module
  * @param {Object} socketInstance - The existing socket.io instance
@@ -53,6 +59,9 @@ function initChat(socketInstance) {
     }
     
     socket = socketInstance;
+    
+    // Initialize command handler
+    commandHandler = initCommandHandler(socket, displayLocalSystemMessage);
     
     // Initialize DOM references - use existing elements from index.html
     chatContainer = document.getElementById('chat-container');
@@ -496,6 +505,199 @@ function setupSocketHandlers() {
     socket.on('chat_notification', (data) => {
         addNotification(data);
     });
+    
+    // Handle command messages (for /myview)
+    socket.on('command', (data) => {
+        console.log('Received "command" event:', data);
+        if (data.cmd === 'myview' && data.from && data.arg) {
+            console.log('Processing /myview command message.');
+            // Ensure data.arg contains the required fields
+            if (data.arg.category_id !== undefined && data.arg.index !== undefined) {
+                displayClickableCommandMessage(data);
+            } else {
+                console.error('Invalid /myview command data: missing category_id or index in arg', data.arg);
+            }
+        } else {
+            console.log('Ignoring command event (not /myview or missing required data).');
+        }
+    });
+}
+
+/**
+ * Display a local system message (only visible to the current user)
+ * @param {string} message - The message text
+ */
+function displayLocalSystemMessage(message) {
+    if (!chatMessages) return;
+
+    // Create system message element
+    const messageEl = document.createElement('div');
+    messageEl.className = 'chat-local-system';
+    messageEl.textContent = message;
+
+    // Add to DOM
+    chatMessages.appendChild(messageEl);
+
+    // Scroll to bottom if chat is expanded
+    if (chatState.isExpanded) {
+        scrollToBottom();
+    }
+
+    // Auto-delete after 2 seconds
+    setTimeout(() => {
+        messageEl.remove();
+    }, 2000);
+}
+
+
+/**
+ * Display a clickable command message (for /myview)
+ * @param {Object} data - The command data { cmd, arg, from }
+ */
+function displayClickableCommandMessage(data) {
+    console.log('Inside displayClickableCommandMessage:', data);
+    
+    // Validate required elements and data
+    if (!chatMessages) {
+        console.error('displayClickableCommandMessage: chatMessages element not found!');
+        return;
+    }
+    
+    if (!data.from) {
+        console.error('displayClickableCommandMessage: Missing "from" field in data!');
+        return;
+    }
+    
+    if (!data.arg) {
+        console.error('displayClickableCommandMessage: Missing "arg" field in data!');
+        return;
+    }
+    
+    if (data.arg.category_id === undefined || data.arg.index === undefined) {
+        console.error('displayClickableCommandMessage: Missing category_id or index in arg!', data.arg);
+        return;
+    }
+    
+    // Create message element
+    const messageEl = document.createElement('div');
+    messageEl.className = 'chat-message';
+    
+    // Format timestamp
+    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    // Create the clickable link
+    const linkText = `Jump to this view`;
+    const displayUserId = data.from ? data.from.substring(0, 8) : 'Unknown'; // Use truncated ID for display
+    
+    // Prepare media order data attribute (store as JSON string)
+    const mediaOrderAttr = data.arg.media_order ? `data-media-order='${JSON.stringify(data.arg.media_order)}'` : '';
+    
+    // Set message content
+    messageEl.innerHTML = `
+        <span class="chat-user">${displayUserId}</span>
+        <span class="chat-text">
+            Shared a view: 
+            <span class="command-link" 
+                  data-session-id="${data.from}" 
+                  data-category-id="${data.arg.category_id}" 
+                  data-index="${data.arg.index}"
+                  ${mediaOrderAttr}>
+                ${linkText}
+            </span>
+        </span>
+        <span class="chat-time">${timeString}</span>
+    `;
+    
+    // Add click handler for the command link
+    const commandLink = messageEl.querySelector('.command-link');
+    if (commandLink) {
+        commandLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            
+            // Get data attributes
+            const sessionId = commandLink.getAttribute('data-session-id');
+            const categoryId = commandLink.getAttribute('data-category-id');
+            const index = parseInt(commandLink.getAttribute('data-index'), 10);
+            const mediaOrderJson = commandLink.getAttribute('data-media-order');
+            let mediaOrder = null;
+            
+            // Try to parse the media order if it exists
+            if (mediaOrderJson) {
+                try {
+                    mediaOrder = JSON.parse(mediaOrderJson);
+                    if (!Array.isArray(mediaOrder)) {
+                        console.error('Invalid media order data found:', mediaOrder);
+                        mediaOrder = null; // Reset if not an array
+                    }
+                } catch (parseError) {
+                    console.error('Error parsing media order JSON:', parseError);
+                    mediaOrder = null;
+                }
+            }
+            
+            // Navigate directly to the category and index, potentially with a forced order
+            displayLocalSystemMessage(`Navigating to shared view (Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
+            
+            // Call viewCategory with the forced order if available
+            window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder) // Pass mediaOrder
+                .then(() => {
+                    // After category is potentially loaded with forced order, navigate to index
+                    // Ensure the index is valid within the potentially updated list
+                    if (index < app.state.fullMediaList.length) {
+                        window.appModules.mediaNavigation.renderMediaWindow(index);
+                    } else {
+                        // If the index is still out of bounds (shouldn't happen often with forced order)
+                        console.warn(`Index ${index} out of bounds after loading category ${categoryId} with forced order.`);
+                        // Attempt to load more (though less likely to succeed with forced order)
+                        ensureMediaLoadedForIndex(index)
+                            .then(() => {
+                                window.appModules.mediaNavigation.renderMediaWindow(index);
+                            })
+                            .catch(err => {
+                                console.error('Error loading media for index after forced order:', err);
+                                displayLocalSystemMessage(`Error: Could not load the specific item in the shared view.`);
+                            });
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading category with forced order:', err);
+                    displayLocalSystemMessage(`Error: Could not load the shared category view.`);
+                });
+        });
+    }
+    
+    // Add to DOM
+    try {
+        chatMessages.appendChild(messageEl);
+        console.log('displayClickableCommandMessage: Appended message to chatMessages');
+    } catch (appendError) {
+        console.error('displayClickableCommandMessage: Error appending message to chatMessages:', appendError);
+    }
+    
+    // Skip updating latest message display for command messages
+    
+    // Increment unread count if chat is collapsed
+    if (!chatState.isExpanded) {
+        chatState.unreadCount++;
+        updateUnreadIndicator();
+    }
+    
+    // Scroll to bottom if chat is expanded
+    if (chatState.isExpanded) {
+        scrollToBottom();
+    }
+    
+    // Save the command message to chat state for persistence
+    const commandMessageData = {
+        ...data, // Includes cmd, arg, from
+        isCommandMessage: true, // Add a flag to identify this type
+        timestamp: Date.now() // Add a timestamp
+    };
+    chatState.messages.push(commandMessageData);
+    if (chatState.messages.length > chatState.maxMessages) {
+        chatState.messages.shift();
+    }
+    saveChatHistory(); // Save updated history
 }
 
 /**
@@ -613,7 +815,21 @@ function sendMessage() {
     
     if (!message) return;
     
-    // Emit the message event
+    // Check if this is a command (starts with /)
+    if (commandHandler && message.startsWith('/')) {
+        // Process the command and only continue if it wasn't handled
+        const wasHandled = commandHandler.processCommand(message);
+        if (wasHandled) {
+            // Clear the input field
+            chatInput.value = '';
+            
+            // Focus the input field again
+            chatInput.focus();
+            return;
+        }
+    }
+    
+    // If not a command or command handling failed, send as regular message
     socket.emit('chat_message', {
         message: message,
         timestamp: Date.now()
@@ -643,12 +859,86 @@ function addMessageToDOM(data, saveToState = true) {
         timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
     
-    // Set message content
-    messageEl.innerHTML = `
-        <span class="chat-user">${data.user_id || 'Unknown'}</span>
-        <span class="chat-text">${escapeHTML(data.message)}</span>
-        ${timeString ? `<span class="chat-time">${timeString}</span>` : ''}
-    `;
+    // Check if this is a saved command message (like /myview)
+    if (data.isCommandMessage && data.cmd === 'myview' && data.arg) {
+        // Reconstruct the clickable command message
+        const linkText = `Jump to this view`;
+        const displayUserId = data.from ? data.from.substring(0, 8) : 'Unknown';
+        
+        // Prepare media order data attribute (store as JSON string)
+        const mediaOrderAttr = data.arg.media_order ? `data-media-order='${JSON.stringify(data.arg.media_order)}'` : '';
+        
+        messageEl.innerHTML = `
+            <span class="chat-user">${displayUserId}</span>
+            <span class="chat-text">
+                Shared a view: 
+                <span class="command-link" 
+                      data-session-id="${data.from}" 
+                      data-category-id="${data.arg.category_id}" 
+                      data-index="${data.arg.index}"
+                      ${mediaOrderAttr}>
+                    ${linkText}
+                </span>
+            </span>
+            <span class="chat-time">${timeString}</span>
+        `;
+        
+        // Add click handler for the command link
+        const commandLink = messageEl.querySelector('.command-link');
+        if (commandLink) {
+            commandLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                
+                const sessionId = commandLink.getAttribute('data-session-id');
+                const categoryId = commandLink.getAttribute('data-category-id');
+                const index = parseInt(commandLink.getAttribute('data-index'), 10);
+                const mediaOrderJson = commandLink.getAttribute('data-media-order');
+                let mediaOrder = null;
+                
+                if (mediaOrderJson) {
+                    try {
+                        mediaOrder = JSON.parse(mediaOrderJson);
+                        if (!Array.isArray(mediaOrder)) {
+                            console.error('Invalid media order data found:', mediaOrder);
+                            mediaOrder = null;
+                        }
+                    } catch (parseError) {
+                        console.error('Error parsing media order JSON:', parseError);
+                        mediaOrder = null;
+                    }
+                }
+                
+                displayLocalSystemMessage(`Navigating to shared view (Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
+                
+                window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder)
+                    .then(() => {
+                        if (index < app.state.fullMediaList.length) {
+                            window.appModules.mediaNavigation.renderMediaWindow(index);
+                        } else {
+                            ensureMediaLoadedForIndex(index)
+                                .then(() => {
+                                    window.appModules.mediaNavigation.renderMediaWindow(index);
+                                })
+                                .catch(err => {
+                                    console.error('Error loading media for index:', err);
+                                    displayLocalSystemMessage(`Error: Could not load the specific item in the shared view.`);
+                                });
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Error loading category:', err);
+                        displayLocalSystemMessage(`Error: Could not load the shared category view.`);
+                    });
+            });
+        }
+    } else {
+        // Regular message
+        messageEl.innerHTML = `
+            <span class="chat-user">${data.user_id || 'Unknown'}</span>
+            <span class="chat-text">${escapeHTML(data.message)}</span>
+            ${timeString ? `<span class="chat-time">${timeString}</span>` : ''}
+        `;
+    }
     
     // Add to messages array if saveToState is true
     if (saveToState) {
@@ -709,8 +999,10 @@ function addMessage(data) {
     // Add message to DOM
     addMessageToDOM(data);
     
-    // Update latest message display
-    updateLatestMessage(data.message);
+    // Skip updating latest message display for command messages
+    if (!data.isCommandMessage) {
+        updateLatestMessage(data.message);
+    }
     
     // Increment unread count if chat is collapsed
     if (!chatState.isExpanded) {
@@ -795,5 +1087,8 @@ export {
     initChat,
     joinChat,
     leaveChat,
-    toggleChat
+    toggleChat,
+    displayLocalSystemMessage,
+    displayClickableCommandMessage
+    
 };

@@ -58,7 +58,8 @@ def register_socket_events(socketio):
         """Handles client disconnections with cleanup."""
         try:
             client_id = request.sid
-            log_message = f"Client disconnected: {client_id}"
+            session_id = request.cookies.get('session_id') # Get session ID before disconnect
+            log_message = f"Client disconnected: {client_id} (Session: {session_id})"
             if reason:
                 log_message += f" (Reason: {reason})"
             logger.info(log_message)
@@ -66,6 +67,10 @@ def register_socket_events(socketio):
             # Clean up connection stats for this client
             if client_id in client_connection_stats:
                 del client_connection_stats[client_id]
+                
+            # Remove session state if it exists
+            if session_id:
+                SyncService.remove_session_state(session_id)
                 
         except Exception as e:
             logger.error(f"Error during client disconnection: {str(e)}")
@@ -219,5 +224,119 @@ def register_socket_events(socketio):
             emit(SE['HEARTBEAT_RESPONSE'], {'status': 'ok', 'timestamp': time.time()}, room=client_id)
         except Exception as e:
             logger.error(f"Error during heartbeat: {str(e)}")
+            
+    # Command handlers for slash commands
+    @socketio.on(SE['COMMAND'])
+    def handle_command(data):
+        """Handles command events (e.g., /myview) and broadcasts them to other users."""
+        try:
+            if not data or 'cmd' not in data:
+                return
+                
+            client_id = request.sid
+            session_id = request.cookies.get('session_id', 'unknown')
+            
+            # Currently only /myview command is supported for broadcasting
+            if data['cmd'] == 'myview':
+                # Validate required fields
+                if 'arg' not in data or 'from' not in data:
+                    logger.warning(f"Invalid command data from {client_id}: missing required fields")
+                    return
+                    
+                # Validate arg contains required fields for myview
+                if not isinstance(data['arg'], dict) or 'category_id' not in data['arg'] or 'index' not in data['arg']:
+                    logger.warning(f"Invalid myview command data from {client_id}: missing category_id or index")
+                    return
+                
+                # Retrieve the sender's current state, including media order
+                sender_state = SyncService.get_session_state(session_id)
+                media_order = sender_state.get('media_order') if sender_state else None
+                
+                # Log the command and order info
+                logger.info(f"Command from {session_id} (client {client_id}): {data['cmd']} with args: {data['arg']}, Order URLs: {len(media_order) if media_order else 'N/A'}")
+                
+                # Add media_order to the payload if available
+                if media_order:
+                    data['arg']['media_order'] = media_order
+                else:
+                    logger.warning(f"Could not retrieve media order for session {session_id} when handling /myview")
+                    # Optionally, send an error back or just omit the order
+                
+                # Broadcast the command (including media_order if found)
+                emit(SE['COMMAND'], data, room=CHAT_ROOM, include_self=True) # Send to sender too
+            else:
+                logger.warning(f"Unsupported command type: {data['cmd']}")
+                
+        except Exception as e:
+            logger.error(f"Error handling command: {str(e)}")
+            # Try to notify the sender about the error
+            try:
+                emit(SE['CHAT_ERROR'], {'message': 'Failed to process command'}, room=client_id)
+            except:
+                pass  # Ignore errors in the error handler
+
+
+    @socketio.on(SE['UPDATE_MY_STATE'])
+    def handle_update_my_state(data):
+        """Handles clients reporting their current view state with enhanced validation."""
+        try:
+            client_id = request.sid
+            session_id = request.cookies.get('session_id')
+            
+            if not session_id:
+                logger.warning(f"Client {client_id} tried to update state without session ID.")
+                return
+                
+            # Validate data structure
+            if not data or 'category_id' not in data or 'index' not in data or 'media_order' not in data:
+                logger.warning(f"Invalid state update data from {session_id} (client {client_id}): Missing fields - {data}")
+                return
+                
+            category_id = data['category_id']
+            index = data['index']
+            media_order = data['media_order'] # Get the media order
+            
+            # Validate category_id format
+            if not isinstance(category_id, str) or not category_id.strip():
+                logger.warning(f"Invalid category_id in state update from {session_id}: {category_id}")
+                return
+                
+            # Ensure index is a valid integer
+            try:
+                index = int(index)
+                if index < 0:
+                    raise ValueError("Index cannot be negative")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid index in state update from {session_id}: {index} - {str(e)}")
+                return
+                
+            # Validate media_order format (should be a list of strings)
+            if not isinstance(media_order, list) or not all(isinstance(url, str) for url in media_order):
+                logger.warning(f"Invalid media_order format in state update from {session_id}: {media_order}")
+                return
+
+            logger.info(f"Updating view state for {session_id}: category={category_id}, index={index}, order_length={len(media_order)}")
+            
+            # Update the state in the service, now including media_order
+            success = SyncService.update_session_state(session_id, category_id, index, media_order)
+            
+            if not success:
+                logger.error(f"Failed to update state for session {session_id}")
+                # Send error back to client if needed
+                emit(SE['CHAT_ERROR'], {
+                    'message': 'Failed to save your view state'
+                }, room=client_id)
+            else:
+                logger.debug(f"Successfully updated state for {session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error handling state update: {str(e)}")
+            # Try to notify the client about the error
+            try:
+                emit(SE['CHAT_ERROR'], {
+                    'message': 'Failed to update your view state'
+                }, room=client_id)
+            except:
+                pass  # Ignore errors in the error handler
 
     logger.info("SocketIO event handlers registered with improved error handling.")

@@ -28,16 +28,17 @@ import { setupControls } from './uiController.js';
 /**
  * Load and display a media category
  * @param {string} categoryId - Category ID to view
+ * @param {string[]|null} [forced_order=null] - Optional array of media URLs to force a specific order
  * @returns {Promise} Resolves when loaded
  */
-function viewCategory(categoryId) {
+function viewCategory(categoryId, forced_order = null) {
     return new Promise(async (resolve, reject) => {
-        console.log(`Starting viewCategory for categoryId: ${categoryId}`);
+        console.log(`Starting viewCategory for categoryId: ${categoryId}, Forced Order: ${forced_order ? 'Yes' : 'No'}`);
         
-        // IMPORTANT: First check if we're already viewing this category
-        if (app.state.currentCategoryId === categoryId) {
-            console.log("Already viewing this category, resolving immediately");
-            resolve(); // Resolve immediately if already viewing
+        // IMPORTANT: Check if we're already viewing this category *unless* a forced order is given
+        if (!forced_order && app.state.currentCategoryId === categoryId) {
+            console.log("Already viewing this category (no forced order), resolving immediately");
+            resolve(); // Resolve immediately if already viewing and no forced order
             return;
         }
         
@@ -59,13 +60,13 @@ function viewCategory(categoryId) {
             });
         }
     
-        // STEP 1: Reset all state variables FIRST before any other operations
+        // STEP 1: Reset state variables
         app.state.currentCategoryId = categoryId;
-        app.state.currentPage = 1; 
-        app.state.hasMoreMedia = true; 
-        app.state.isLoading = false; 
-        app.state.fullMediaList = []; 
-        app.state.preloadQueue = []; 
+        app.state.currentPage = 1;
+        app.state.hasMoreMedia = !forced_order; // No more media if order is forced
+        app.state.isLoading = false;
+        app.state.fullMediaList = [];
+        app.state.preloadQueue = [];
         app.state.isPreloading = false;
         app.state.currentMediaIndex = 0;
         
@@ -115,40 +116,58 @@ function viewCategory(categoryId) {
                 // Show spinner before fetching
                 if (spinnerContainer) spinnerContainer.style.display = 'flex';
 
-                // STEP 8: Only force refresh when explicitly needed
-                const shouldForceRefresh = false; // Changed from true to false
-                console.log(`Loading category with forceRefresh: ${shouldForceRefresh}`);
-                
-                // Fetch the first page of media, passing the specific signal for this view
-                await loadMoreMedia(pageSize, app.state.currentFetchController.signal, shouldForceRefresh);
+                if (forced_order) {
+                    console.log("Using forced media order.");
+                    // Reconstruct fullMediaList based on forced_order URLs
+                    // This is a simplified version - assumes URLs are unique identifiers
+                    // A more robust version might need to fetch metadata if objects aren't readily available
+                    
+                    // Try to find existing file objects matching the URLs
+                    const tempMap = new Map();
+                    app.state.fullMediaList.forEach(item => { if (item) tempMap.set(item.url, item); });
+                    
+                    app.state.fullMediaList = forced_order.map(url => {
+                        // Basic reconstruction - assumes URL is enough or we find it in a previous list
+                        // This might need enhancement if full file objects are required immediately
+                        return tempMap.get(url) || { url: url, name: url.split('/').pop(), type: url.match(/\.(jpg|jpeg|png|gif)$/i) ? 'image' : (url.match(/\.(mp4|webm|mov)$/i) ? 'video' : 'unknown') };
+                    });
+                    
+                    app.state.hasMoreMedia = false; // No more pages when using forced order
+                    console.log(`Reconstructed list with ${app.state.fullMediaList.length} items from forced order.`);
+                    if (spinnerContainer) spinnerContainer.style.display = 'none'; // Hide spinner
+                    
+                } else {
+                    // STEP 8: Fetch the first page of media if no forced order
+                    const shouldForceRefresh = false; 
+                    console.log(`Loading category with forceRefresh: ${shouldForceRefresh}`);
+                    await loadMoreMedia(pageSize, app.state.currentFetchController.signal, shouldForceRefresh);
 
-                // Check if the fetch was aborted (e.g., user switched category again quickly)
-                if (app.state.currentFetchController.signal.aborted) {
-                    console.log("Fetch aborted during initial load, stopping viewCategory.");
-                    if (spinnerContainer) spinnerContainer.style.display = 'none'; // Hide spinner if aborted
-                    return; 
+                    // Check if the fetch was aborted
+                    if (app.state.currentFetchController.signal.aborted) {
+                        console.log("Fetch aborted during initial load, stopping viewCategory.");
+                        if (spinnerContainer) spinnerContainer.style.display = 'none';
+                        return; 
+                    }
                 }
 
-                // Only proceed if media was successfully loaded
+                // Proceed if we have media (either from fetch or forced order)
                 if (app.state.fullMediaList && app.state.fullMediaList.length > 0) {
-                    // Unified TikTok View for Images and Videos
                     console.log("Showing unified TikTok view.");
                     categoryView.classList.add('hidden');
-                    mediaView.classList.add('hidden'); // Ensure old view is hidden
+                    mediaView.classList.add('hidden'); 
                     tiktokContainer.classList.remove('hidden');
                     
-                    // Setup navigation (index is already 0)
                     setupMediaNavigation(); 
+                    renderMediaWindow(0); // Render starting at index 0
                     
-                    // Render initial window
-                    renderMediaWindow(0); // This function handles its own DOM clearing now
-                    
-                    // Spinner is hidden by loadMoreMedia's finally block
-                    resolve(); // Resolve the promise when everything is loaded
-
-                } else {
-                    // Handle the case when no media files are found
+                    resolve(); 
+                } else if (!forced_order) {
+                    // Handle no media only if not using forced order
                     handleNoMediaFiles(categoryId, pageSize, resolve, reject);
+                } else {
+                    // If forced order resulted in empty list (shouldn't happen if parsing works)
+                    console.error("Forced order resulted in an empty media list.");
+                    reject(new Error("Failed to load media from shared order."));
                 }
             
 

@@ -201,6 +201,41 @@ html.is-fullscreen .chat-container {
     font-style: italic;
 }
 
+/* Local system messages (only visible to the current user) */
+.chat-local-system {
+    text-align: center;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+    margin: var(--space-md) 0;
+    font-style: italic;
+    background-color: rgba(var(--accent-color-rgb), 0.1);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--accent-color);
+}
+
+/* Command links in chat messages */
+.command-link {
+    color: var(--accent-color);
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast) ease;
+    display: inline-block;
+    margin: 2px 0;
+}
+
+.command-link:hover {
+    background-color: rgba(var(--accent-color-rgb), 0.2);
+    text-decoration: none;
+}
+
+.command-link:active {
+    background-color: rgba(var(--accent-color-rgb), 0.3);
+    transform: translateY(1px);
+}
+
 .chat-form {
     display: flex;
     padding: var(--space-md);

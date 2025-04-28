@@ -35,7 +35,13 @@ SOCKET_EVENTS = {
     'LEAVE_CHAT': 'leave_chat',
     'CHAT_MESSAGE': 'chat_message',
     'CHAT_NOTIFICATION': 'chat_notification',
-    'CHAT_ERROR': 'chat_error'
+    'CHAT_ERROR': 'chat_error',
+    
+    # Command events (for slash commands)
+    'COMMAND': 'command',
+    
+    # Client state update
+    'UPDATE_MY_STATE': 'update_my_state'
 }
 
 # File Types
