@@ -186,6 +186,15 @@ class MediaService:
                 except Exception as save_error:
                     logger.error(f"Error saving index for '{category['name']}': {save_error}")
                 
+                # Clean up orphaned transcoded files when rebuilding the index
+                try:
+                    from app.services.storage_service import StorageService
+                    removed_transcoded, removed_index_entries = StorageService.cleanup_orphaned_transcoded_files(category_path)
+                    if removed_transcoded > 0 or removed_index_entries > 0:
+                        logger.info(f"Cleaned up {removed_transcoded} orphaned transcoded files and removed {removed_index_entries} index entries for '{category['name']}'")
+                except Exception as cleanup_error:
+                    logger.error(f"Error cleaning up orphaned files for '{category['name']}': {cleanup_error}")
+                
                 # Check if this is a large directory that should use async indexing
                 if is_large_directory(category_path, IndexingService.LARGE_DIRECTORY_THRESHOLD):
                     logger.info(f"Large directory detected for '{category['name']}', starting async indexing")

@@ -59,13 +59,13 @@ class Config:
 
     # Transcoding settings
     ENABLE_TRANSCODING = os.environ.get('ENABLE_TRANSCODING', 'true').lower() == 'true'  # Global toggle
-    TRANSCODING_VIDEO_BITRATE = int(os.environ.get('TRANSCODING_VIDEO_BITRATE', 2500000))  # 2.5 Mbps default
-    TRANSCODING_AUDIO_BITRATE = int(os.environ.get('TRANSCODING_AUDIO_BITRATE', 192000))   # 192 Kbps default
+    TRANSCODING_VIDEO_BITRATE = int(os.environ.get('TRANSCODING_VIDEO_BITRATE', 1000000))  # 1 Mbps default (reduced from 2.5 Mbps)
+    TRANSCODING_AUDIO_BITRATE = int(os.environ.get('TRANSCODING_AUDIO_BITRATE', 128000))   # 128 Kbps default (reduced from 192 Kbps)
     TRANSCODING_CRF = int(os.environ.get('TRANSCODING_CRF', 23))  # Constant Rate Factor (18-28, lower = better quality)
     TRANSCODING_MIN_SIZE = int(os.environ.get('TRANSCODING_MIN_SIZE', 2 * 1024 * 1024))  # Only transcode files larger than 2MB
     TRANSCODING_MAX_STORAGE = int(os.environ.get('TRANSCODING_MAX_STORAGE_MB', 5000)) * 1024 * 1024 # 5GB limit for transcoded files (in MB for env var)
     TRANSCODING_PRESET = os.environ.get('TRANSCODING_PRESET', 'fast') # Encoder preset (ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow) - Changed default back to 'fast' for speed
-    TRANSCODING_TARGET_RESOLUTION = int(os.environ.get('TRANSCODING_TARGET_RESOLUTION', 0)) # Target vertical resolution (e.g., 720, 1080). 0 means keep original.
+    TRANSCODING_TARGET_RESOLUTION = int(os.environ.get('TRANSCODING_TARGET_RESOLUTION', 720)) # Target vertical resolution (e.g., 720, 1080). Changed from 0 (keep original) to 720p.
     TRANSCODING_MIN_BITRATE_SAVING_RATIO = float(os.environ.get('TRANSCODING_MIN_BITRATE_SAVING_RATIO', 1.5)) # Only transcode if original bitrate is X times target bitrate
     TRANSCODING_MIN_RESOLUTION_FOR_SCALING = int(os.environ.get('TRANSCODING_MIN_RESOLUTION_FOR_SCALING', 720)) # Min original height to consider scaling down from
     # Determine default workers: half CPU cores, minimum 1

@@ -242,6 +242,15 @@ class IndexingService:
                                 logger.error(f"Failed to save index in background worker for '{category_name}'")
                         except Exception as save_error:
                             logger.error(f"Error saving index in background worker: {save_error}")
+                            
+                        # Clean up orphaned transcoded files and update index
+                        try:
+                            from app.services.storage_service import StorageService
+                            removed_transcoded, removed_index_entries = StorageService.cleanup_orphaned_transcoded_files(category_path)
+                            if removed_transcoded > 0 or removed_index_entries > 0:
+                                logger.info(f"Cleaned up {removed_transcoded} orphaned transcoded files and removed {removed_index_entries} index entries for '{category_name}'")
+                        except Exception as cleanup_error:
+                            logger.error(f"Error cleaning up orphaned files for '{category_name}': {cleanup_error}")
                         
                         # Update final status
                         async_index_status[category_id]['status'] = 'complete'

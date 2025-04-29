@@ -105,6 +105,31 @@ class CategoryService:
 
         if save_categories(categories):
             logger.info(f"Successfully added category: ID={new_category['id']}, Name='{name}'")
+            
+            # Start indexing and transcoding for the new category
+            try:
+                category_id = new_category['id']
+                logger.info(f"Starting indexing and transcoding for new category: {name} (ID: {category_id})")
+                
+                # Use MediaService to start async indexing, which will also trigger transcoding
+                from app.services.media_service import MediaService
+                MediaService.start_async_indexing(
+                    category_id,
+                    path,
+                    name,
+                    force_refresh=True  # Force refresh since it's a new category
+                )
+                
+                # Add indexing status to the response
+                new_category['indexing_started'] = True
+                
+            except Exception as index_error:
+                logger.error(f"Error starting indexing for new category {name}: {index_error}")
+                logger.debug(traceback.format_exc())
+                # Don't fail the whole request if indexing fails to start
+                new_category['indexing_started'] = False
+                new_category['indexing_error'] = str(index_error)
+            
             return new_category, None
         else:
             logger.error(f"Failed to save categories after attempting to add: Name='{name}'")

@@ -143,7 +143,104 @@ class StorageService:
             max_age_days: Maximum age of files to keep (in days)
             max_size_mb: Maximum storage to use for this category (in MB)
         """
-        # TODO: Implement per-category cleanup for transcoded files
-        # For now, this is a not prioity
-        logger.info(f"Cleanup for transcoded files in {category_path} is not yet implemented")
+        # TODO: Implement per-category cleanup for transcoded files based on age/size
+        # For now, this is not a priority
+        logger.info(f"Age/size-based cleanup for transcoded files in {category_path} is not yet implemented")
         pass
+    
+    @staticmethod
+    def cleanup_orphaned_transcoded_files(category_path):
+        """
+        Clean up transcoded files whose original media files no longer exist.
+        Also updates the index JSON to remove entries for deleted files.
+        
+        Args:
+            category_path: Path to the category directory
+            
+        Returns:
+            tuple: (num_removed_transcoded, num_removed_index_entries)
+        """
+        if not os.path.exists(category_path) or not os.path.isdir(category_path):
+            logger.error(f"Cannot clean up orphaned files: Category path does not exist or is not a directory: {category_path}")
+            return 0, 0
+            
+        # Get paths to transcoded directory and index file
+        transcoded_dir = StorageService.get_transcoded_dir(category_path)
+        index_path = StorageService.get_index_path(category_path)
+        
+        # Track counts for reporting
+        removed_transcoded = 0
+        removed_index_entries = 0
+        
+        # Get list of original media files in the category
+        try:
+            original_files = set()
+            for filename in os.listdir(category_path):
+                if os.path.isfile(os.path.join(category_path, filename)):
+                    original_files.add(filename)
+            
+            logger.info(f"Found {len(original_files)} original media files in {category_path}")
+        except Exception as e:
+            logger.error(f"Error listing original files in {category_path}: {e}")
+            return 0, 0
+            
+        # Check transcoded directory for orphaned files
+        try:
+            if os.path.exists(transcoded_dir) and os.path.isdir(transcoded_dir):
+                for transcoded_file in os.listdir(transcoded_dir):
+                    # Get original filename (remove .mp4 extension and add back original extension)
+                    base_name = os.path.splitext(transcoded_file)[0]
+                    
+                    # Check if any original file with this base name exists
+                    original_exists = False
+                    for orig_file in original_files:
+                        orig_base = os.path.splitext(orig_file)[0]
+                        # Use sanitized comparison since transcoded filenames are sanitized
+                        safe_orig_base = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in orig_base)
+                        safe_orig_base = safe_orig_base[:100]  # Apply same length limit as in get_transcoded_path
+                        
+                        if safe_orig_base == base_name:
+                            original_exists = True
+                            break
+                    
+                    # If original doesn't exist, delete the transcoded file
+                    if not original_exists:
+                        transcoded_path = os.path.join(transcoded_dir, transcoded_file)
+                        try:
+                            os.remove(transcoded_path)
+                            removed_transcoded += 1
+                            logger.info(f"Removed orphaned transcoded file: {transcoded_path}")
+                        except Exception as del_err:
+                            logger.error(f"Error deleting orphaned transcoded file {transcoded_path}: {del_err}")
+        except Exception as e:
+            logger.error(f"Error cleaning up transcoded directory {transcoded_dir}: {e}")
+            
+        # Update index JSON to remove entries for deleted files
+        try:
+            from app.utils.file_utils import load_index, save_index
+            
+            index_data = load_index(category_path)
+            if index_data and 'files' in index_data:
+                original_count = len(index_data['files'])
+                
+                # Filter out entries for files that no longer exist
+                index_data['files'] = [
+                    f for f in index_data['files'] 
+                    if f.get('name') in original_files
+                ]
+                
+                removed_index_entries = original_count - len(index_data['files'])
+                
+                if removed_index_entries > 0:
+                    # Update timestamp and save the modified index
+                    index_data['timestamp'] = time.time()
+                    save_success = save_index(category_path, index_data)
+                    
+                    if save_success:
+                        logger.info(f"Updated index JSON, removed {removed_index_entries} entries for deleted files")
+                    else:
+                        logger.error(f"Failed to save updated index after removing {removed_index_entries} entries")
+        except Exception as idx_err:
+            logger.error(f"Error updating index JSON for {category_path}: {idx_err}")
+            
+        return removed_transcoded, removed_index_entries

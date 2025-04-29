@@ -43,11 +43,13 @@ def add_category():
     path = data.get('path')
 
     try:
+        # CategoryService.add_category now handles indexing and transcoding
         new_category, error = CategoryService.add_category(name, path)
         if error:
             # Determine appropriate status code based on error
             status_code = 400 if "exists" in error or "not a directory" in error else 500
             return jsonify({'error': error}), status_code
+            
         return jsonify(new_category), 201
     except Exception as e:
         logger.error(f"Unexpected error adding category: Name='{name}', Path='{path}': {str(e)}")
