@@ -431,7 +431,7 @@ function clearResources(aggressive = false) {
 }
 
 /**
- * Preload next media items in background
+ * Preload next media items in background with bandwidth optimization
  */
 function preloadNextMedia() {
     if (app.state.isPreloading || app.state.preloadQueue.length === 0) return;
@@ -471,8 +471,7 @@ function preloadNextMedia() {
     
     app.state.isPreloading = true;
     
-    // Prioritize next item for immediate viewing
-    const nextItems = app.state.preloadQueue.slice(0, 1); // Only preload 1 at a time
+    // Get the current index to determine preload strategy
     const currentIndex = app.state.currentMediaIndex;
     
     // Get the next file to preload
@@ -485,7 +484,11 @@ function preloadNextMedia() {
         return;
     }
     
-    console.log(`Preloading ${file.type}: ${file.name}`);
+    // Determine if this is the immediate next item (higher priority)
+    const isNextItem = app.state.fullMediaList[currentIndex + 1] && 
+                      app.state.fullMediaList[currentIndex + 1].url === file.url;
+    
+    console.log(`Preloading ${file.type}: ${file.name} (${isNextItem ? 'next item' : 'future item'})`);
     let mediaElement;
         
     if (file.type === 'video') {
@@ -493,7 +496,8 @@ function preloadNextMedia() {
         
         // Set video attributes for faster loading
         // Always use 'metadata' to reduce initial data usage
-        mediaElement.preload = 'metadata';
+        // Only use 'auto' for the immediate next video
+        mediaElement.preload = isNextItem ? 'auto' : 'metadata';
         mediaElement.playsInline = true;
         mediaElement.setAttribute('playsinline', 'true');
         mediaElement.setAttribute('webkit-playsinline', 'true');
@@ -502,8 +506,8 @@ function preloadNextMedia() {
         mediaElement.muted = true; // Muted for faster loading
         mediaElement.style.display = 'none';
         
-        // Add fetch priority hint for next items
-        if (nextItems.includes(file)) {
+        // Add fetch priority hint only for the next item
+        if (isNextItem) {
             mediaElement.setAttribute('fetchpriority', 'high');
         }
         
@@ -518,9 +522,9 @@ function preloadNextMedia() {
             setTimeout(preloadNextMedia, 0);
         };
         
-        // For videos, preload both metadata and some content
-        mediaElement.addEventListener('loadeddata', () => {
-            console.log(`Video data loaded: ${file.name}`);
+        // For videos, preload metadata for all, but only load data for next item
+        const loadHandler = () => {
+            console.log(`Video ${isNextItem ? 'data' : 'metadata'} loaded: ${file.name}`);
             addToCache(file.url, mediaElement);
             if (document.body.contains(mediaElement)) {
                 document.body.removeChild(mediaElement);
@@ -528,7 +532,14 @@ function preloadNextMedia() {
             app.state.isPreloading = false;
             // Continue preloading immediately
             setTimeout(preloadNextMedia, 0);
-        });
+        };
+        
+        // Use appropriate event based on preload strategy
+        if (isNextItem) {
+            mediaElement.addEventListener('loadeddata', loadHandler);
+        } else {
+            mediaElement.addEventListener('loadedmetadata', loadHandler);
+        }
         
         // Set a shorter timeout for faster recovery from stalled loading
         const loadTimeout = setTimeout(() => {
@@ -539,27 +550,39 @@ function preloadNextMedia() {
             app.state.isPreloading = false;
             // Continue preloading immediately
             setTimeout(preloadNextMedia, 0);
-        }, 5000); // Reduced from 10s to 5s
+        }, 5000); // 5 second timeout
         
-        mediaElement.addEventListener('loadeddata', () => {
-            clearTimeout(loadTimeout);
+        // Clear timeout when appropriate event fires
+        if (isNextItem) {
+            mediaElement.addEventListener('loadeddata', () => clearTimeout(loadTimeout));
+        } else {
+            mediaElement.addEventListener('loadedmetadata', () => clearTimeout(loadTimeout));
+        }
+        
+        // Only buffer the immediate next video, and only if on a high-bandwidth connection
+        // But don't even add the event listener on low bandwidth to avoid any chance of buffering
+        if (isNextItem && !isLowMemory && navigator.connection && 
+            (navigator.connection.effectiveType === '4g' || navigator.connection.downlink > 1.5)) {
+            mediaElement.addEventListener('canplay', () => {
+                console.log(`Minimal buffering for next video: ${file.name}`);
+                // We don't actually play the video to buffer - just loading it is sufficient
+                // This significantly reduces bandwidth usage while still improving UX
+            });
+        }
+        
+        // Add stability improvements to prevent unexpected resets
+        mediaElement.addEventListener('abort', (e) => {
+            console.warn(`Video preload aborted: ${file.name}`, e);
         });
         
-        // Add a small amount of buffering for smoother playback
-        mediaElement.addEventListener('canplay', () => {
-            // If this is the next video to be played, buffer a bit more
-            if (app.state.fullMediaList[currentIndex + 1] && 
-                app.state.fullMediaList[currentIndex + 1].url === file.url) {
-                console.log(`Buffering next video: ${file.name}`);
-                // Start playing muted to buffer, then pause
-                mediaElement.play().then(() => {
-                    setTimeout(() => {
-                        mediaElement.pause();
-                    }, 500); // Buffer for 500ms
-                }).catch(e => {
-                    console.warn(`Could not buffer video: ${e}`);
-                });
-            }
+        mediaElement.addEventListener('stalled', (e) => {
+            console.warn(`Video preload stalled: ${file.name}`, e);
+            // Don't try to auto-recover from stalled state, as this can cause resets
+        });
+        
+        // Add a suspend handler to properly handle network interruptions
+        mediaElement.addEventListener('suspend', () => {
+            console.log(`Video preload suspended: ${file.name}`);
         });
         
         // Use a data URL for the poster to avoid an extra network request
@@ -579,8 +602,8 @@ function preloadNextMedia() {
         mediaElement = new Image();
         mediaElement.style.display = 'none';
         
-        // Add fetch priority hint for next items
-        if (nextItems.includes(file)) {
+        // Add fetch priority hint only for the next item
+        if (isNextItem) {
             mediaElement.setAttribute('fetchpriority', 'high');
         }
         
@@ -614,7 +637,7 @@ function preloadNextMedia() {
             app.state.isPreloading = false;
             // Continue preloading immediately
             setTimeout(preloadNextMedia, 0);
-        }, 5000); // Reduced from 10s to 5s
+        }, 5000); // 5 second timeout
         
         mediaElement.onload = () => {
             clearTimeout(loadTimeout);

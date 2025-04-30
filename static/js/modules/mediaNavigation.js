@@ -203,10 +203,34 @@ function renderMediaWindow(index) {
             updateMediaInfoOverlay(app.state.fullMediaList[index]);
         }
 
-        const startIndex = Math.max(0, index - renderWindowSize);
-        const endIndex = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
-        const preloadStartIndex = Math.max(0, index - 2);
-        const preloadEndIndex = Math.min(app.state.fullMediaList.length - 1, index + 2);
+        // Adjust render window size based on network conditions
+        let effectiveRenderWindowSize = renderWindowSize;
+        
+        // Check for network conditions if the API is available
+        if (navigator.connection) {
+            const isLowBandwidth = navigator.connection.saveData || 
+                                  navigator.connection.effectiveType === 'slow-2g' ||
+                                  navigator.connection.effectiveType === '2g' ||
+                                  (navigator.connection.downlink && navigator.connection.downlink < 0.5);
+            
+            // Reduce window size on low bandwidth connections
+            if (isLowBandwidth) {
+                effectiveRenderWindowSize = 1; // Only render immediate neighbors on low bandwidth
+                console.log('Low bandwidth detected, using reduced render window size');
+            }
+        }
+        
+        // Use smaller render window on mobile devices
+        if (MOBILE_DEVICE && effectiveRenderWindowSize > 2) {
+            effectiveRenderWindowSize = 2; // Smaller window on mobile
+        }
+        
+        const startIndex = Math.max(0, index - effectiveRenderWindowSize);
+        const endIndex = Math.min(app.state.fullMediaList.length - 1, index + effectiveRenderWindowSize);
+        
+        // Always keep preload window small to reduce bandwidth
+        const preloadStartIndex = Math.max(0, index - 1);
+        const preloadEndIndex = Math.min(app.state.fullMediaList.length - 1, index + 1);
 
         console.log(`Rendering window: ${startIndex} to ${endIndex} (current: ${index})`);
         
@@ -247,21 +271,64 @@ function renderMediaWindow(index) {
                     
                     // Ensure video is ready to play if it's the active element
                     if (mediaElement.tagName === 'VIDEO') {
+                        // Store the current time and playing state before updating properties
+                        const wasPlaying = !mediaElement.paused;
+                        const currentTime = mediaElement.currentTime;
+                        
+                        // Update properties without resetting playback
                         mediaElement.muted = false;
                         mediaElement.loop = true;
                         mediaElement.setAttribute('loop', 'true');
-                        mediaElement.autoplay = true;
-                        mediaElement.setAttribute('autoplay', 'true');
                         
-                        setTimeout(() => {
-                            // Attempt to play unmuted
-                            mediaElement.play().catch(e => {
-                                console.warn("Autoplay failed, possibly due to browser restrictions. Trying muted autoplay...", e);
-                                // Fallback: try playing muted if unmuted autoplay fails
-                                mediaElement.muted = true;
-                                mediaElement.play().catch(e2 => console.error("Muted autoplay also failed:", e2));
+                        // Only set autoplay if it wasn't already playing
+                        if (!wasPlaying) {
+                            mediaElement.autoplay = true;
+                            mediaElement.setAttribute('autoplay', 'true');
+                        }
+                        
+                        // Add a flag to prevent unnecessary reloads
+                        if (!mediaElement.hasAttribute('data-initialized')) {
+                            mediaElement.setAttribute('data-initialized', 'true');
+                            
+                            // Add event listeners to detect and prevent unexpected resets
+                            mediaElement.addEventListener('emptied', (e) => {
+                                console.warn('Video emptied event detected - preventing reset', e);
+                                // Try to restore playback if emptied unexpectedly
+                                if (currentTime > 0) {
+                                    mediaElement.currentTime = currentTime;
+                                    if (wasPlaying) mediaElement.play();
+                                }
                             });
-                        }, 50);
+                            
+                            // Prevent seeking issues
+                            mediaElement.addEventListener('seeking', () => {
+                                console.log(`Video seeking: ${mediaElement.currentTime}`);
+                            });
+                            
+                            mediaElement.addEventListener('seeked', () => {
+                                console.log(`Video seeked to: ${mediaElement.currentTime}`);
+                            });
+                        }
+                        
+                        // Restore playback state
+                        if (currentTime > 0) {
+                            mediaElement.currentTime = currentTime;
+                        }
+                        
+                        // Only attempt to play if it was playing before or is new
+                        if (wasPlaying || !mediaElement.hasAttribute('data-played-once')) {
+                            mediaElement.setAttribute('data-played-once', 'true');
+                            
+                            setTimeout(() => {
+                                // Attempt to play unmuted
+                                mediaElement.play().catch(e => {
+                                    console.warn("Autoplay failed, possibly due to browser restrictions. Trying muted autoplay...", e);
+                                    // Fallback: try playing muted if unmuted autoplay fails
+                                    mediaElement.muted = true;
+                                    mediaElement.play().catch(e2 => console.error("Muted autoplay also failed:", e2));
+                                });
+                            }, 50);
+                        }
                     }
                 } else {
                     mediaElement.classList.remove('active');
@@ -336,20 +403,24 @@ function renderMediaWindow(index) {
             }
         }
         
-        // Now remove any elements that weren't used in this render
+        // Now remove any elements that weren't used in this render, EXCEPT the active video
         existingElements.forEach((element, dataIndex) => {
-            // Release resources for videos
-            if (element.tagName === 'VIDEO') {
-                try {
-                    element.pause();
-                    element.src = ''; // Explicitly clear src
-                    element.removeAttribute('src');
-                    element.load(); // Force release of video resources
-                } catch (e) {
-                    console.warn('Error cleaning up video:', e);
+            if (dataIndex !== index) { // Only remove if it's not the active element
+                // Release resources for videos
+                if (element.tagName === 'VIDEO') {
+                    try {
+                        element.pause();
+                        element.src = ''; // Explicitly clear src
+                        element.removeAttribute('src');
+                        element.load(); // Force release of video resources
+                    } catch (e) {
+                        console.warn('Error cleaning up non-active video:', e);
+                    }
                 }
+                element.remove();
+            } else {
+                console.log(`Keeping active video element (index ${index}) in DOM`);
             }
-            element.remove();
         });
         
         // Queue preloading of nearby media
@@ -417,18 +488,72 @@ function emitMyStateUpdate(categoryId, index) {
         return;
     }
     
-
-    // If validation passes, emit the event
-    const currentOrder = app.state.fullMediaList.map(item => item ? item.url : null).filter(url => url); // Send only URLs
-    console.log(`Emitting state update: Cat=${categoryId}, Idx=${index}, Order URLs: ${currentOrder.length}`);
-    try {
-        socket.emit('update_my_state', {
-            category_id: categoryId,
-            index: index,
-            media_order: currentOrder // Send the current order URLs
-            
-        });
+    // Check if we need to send the full order
+    // We'll only send the full order in specific cases to reduce bandwidth:
+    // 1. First update for this category (lastEmittedCategory doesn't match)
+    // 2. Order has changed (e.g., after a shuffle)
+    // 3. Every 10th update as a sync check
+    
+    // Track last emitted values in app state if not already present
+    if (!app.state.lastEmittedCategory) {
+        app.state.lastEmittedCategory = null;
+        app.state.lastEmittedIndex = -1;
+        app.state.emitCount = 0;
+        app.state.lastEmittedOrderHash = null;
+    }
+    
+    // Increment emit count
+    app.state.emitCount++;
+    
+    // Determine if we need to send the full order
+    const categoryChanged = app.state.lastEmittedCategory !== categoryId;
+    const periodicFullSync = app.state.emitCount % 10 === 0; // Every 10th update
+    
+    // Simple hash function for the order to detect changes
+    const getOrderHash = (list) => {
+        if (!list || list.length === 0) return '0';
+        // Just use the first, middle and last few items as a fingerprint
+        // This is not a cryptographic hash, just a quick way to detect changes
+        const items = [
+            list[0],
+            list[Math.floor(list.length / 2)],
+            list[list.length - 1]
+        ].filter(Boolean);
+        return items.join('|').slice(0, 100); // Limit length
+    };
+    
+    // Get current order hash
+    const currentOrder = app.state.fullMediaList.map(item => item ? item.url : null).filter(url => url);
+    const currentOrderHash = getOrderHash(currentOrder);
+    const orderChanged = currentOrderHash !== app.state.lastEmittedOrderHash;
+    
+    // Determine if we need to send the full order
+    const sendFullOrder = categoryChanged || orderChanged || periodicFullSync;
+    
+    // Prepare the update payload - always include media_order as the server expects it
+    const updateData = {
+        category_id: categoryId,
+        index: index,
+        media_order: currentOrder // Always include media_order as the server expects it
+    };
+    
+    // Log appropriate message based on whether this is a full update or not
+    if (sendFullOrder) {
+        console.log(`Emitting FULL state update: Cat=${categoryId}, Idx=${index}, Order URLs: ${currentOrder.length}`);
         
+        // Update tracking variables
+        app.state.lastEmittedOrderHash = currentOrderHash;
+    } else {
+        console.log(`Emitting state update: Cat=${categoryId}, Idx=${index}`);
+    }
+    
+    // Update tracking variables
+    app.state.lastEmittedCategory = categoryId;
+    app.state.lastEmittedIndex = index;
+    
+    // Emit the event
+    try {
+        socket.emit('update_my_state', updateData);
     } catch (error) {
         console.error(`emitMyStateUpdate: Error emitting 'update_my_state' event:`, error);
     }
@@ -503,6 +628,25 @@ function createVideoElement(file, isActive) {
             }
         }
     };
+    
+    // Add stability improvements to prevent unexpected resets
+    mediaElement.addEventListener('abort', (e) => {
+        console.warn(`Video playback aborted: ${file.name}`, e);
+    });
+    
+    mediaElement.addEventListener('stalled', (e) => {
+        console.warn(`Video playback stalled: ${file.name}`, e);
+        // Don't try to auto-recover from stalled state, as this can cause resets
+    });
+    
+    // Prevent seeking issues that can cause resets
+    mediaElement.addEventListener('seeking', () => {
+        console.log(`Video seeking: ${file.name}`);
+    });
+    
+    mediaElement.addEventListener('seeked', () => {
+        console.log(`Video seeked: ${file.name}`);
+    });
     
     // Add minimal performance monitoring - only log canplay for active videos
     if (isActive) {

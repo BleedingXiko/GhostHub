@@ -122,39 +122,64 @@ window.appInstance = app;
 if (MOBILE_DEVICE) {
     console.log('Mobile device detected: Setting up aggressive memory management');
     
-    // Periodic memory cleanup
+    // Periodic memory cleanup - less aggressive to prevent video resets
     app.state.cleanupInterval = setInterval(() => {
         console.log('Mobile device: performing periodic cleanup');
         
-        // Clear any media that's not currently visible
-        if (app.state.currentMediaIndex !== null && app.state.fullMediaList.length > 0) {
-            const currentMedia = app.state.fullMediaList[app.state.currentMediaIndex];
+        // Only perform cleanup if we're not actively playing a video
+        const activeVideo = document.querySelector('video.active');
+        const isVideoPlaying = activeVideo && !activeVideo.paused;
+        
+        if (!isVideoPlaying) {
+            console.log('No active video playing, safe to perform cleanup');
             
-            // Only keep the current media in cache, clear everything else
-            app.mediaCache.clear();
-            if (currentMedia && currentMedia.url) {
-                // Re-add just the current item if it exists
-                const cachedItem = document.querySelector(`[data-media-url="${currentMedia.url}"]`);
-                if (cachedItem) {
-                    app.mediaCache.set(currentMedia.url, cachedItem.cloneNode(true));
+            // Clear any media that's not currently visible or about to be viewed
+            if (app.state.currentMediaIndex !== null && app.state.fullMediaList.length > 0) {
+                const currentIndex = app.state.currentMediaIndex;
+                const essentialIndices = new Set([
+                    currentIndex,
+                    Math.max(0, currentIndex - 1),
+                    Math.min(app.state.fullMediaList.length - 1, currentIndex + 1)
+                ]);
+                
+                // Keep essential media in cache, clear everything else
+                const keysToKeep = [];
+                
+                // Collect URLs of essential media
+                essentialIndices.forEach(index => {
+                    const media = app.state.fullMediaList[index];
+                    if (media && media.url) {
+                        keysToKeep.push(media.url);
+                    }
+                });
+                
+                // Selectively clear cache
+                for (const key of app.mediaCache.keys()) {
+                    if (!keysToKeep.includes(key)) {
+                        app.mediaCache.delete(key);
+                    }
                 }
+                
+                console.log(`Selective mobile cleanup: kept ${keysToKeep.length} essential items`);
             }
-        }
-        
-        // Force garbage collection hint
-        app.state.lastCleanupTime = Date.now();
-        
-        // Clear any stale fetch timeouts
-        const now = Date.now();
-        Object.keys(app.state.fetchTimeouts).forEach(key => {
-            if (now - app.state.fetchTimeouts[key] > MOBILE_FETCH_TIMEOUT) {
-                delete app.state.fetchTimeouts[key];
+            
+            // Force garbage collection hint
+            app.state.lastCleanupTime = Date.now();
+            
+            // Clear any stale fetch timeouts
+            const now = Date.now();
+            Object.keys(app.state.fetchTimeouts).forEach(key => {
+                if (now - app.state.fetchTimeouts[key] > MOBILE_FETCH_TIMEOUT) {
+                    delete app.state.fetchTimeouts[key];
+                }
+            });
+            
+            // Call the cacheManager's cleanup if available - but NOT aggressive
+            if (window.appModules && window.appModules.cacheManager) {
+                window.appModules.cacheManager.performCacheCleanup(false); // Use regular cleanup, not aggressive
             }
-        });
-        
-        // Call the cacheManager's cleanup if available
-        if (window.appModules && window.appModules.cacheManager) {
-            window.appModules.cacheManager.performCacheCleanup(true);
+        } else {
+            console.log('Active video playing, skipping cleanup to prevent reset');
         }
         
         // Ensure fullscreen buttons are present on active videos
