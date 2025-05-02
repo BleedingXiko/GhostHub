@@ -196,6 +196,110 @@ def generate_thumbnail(original_media_path, category_path, filename, size=THUMBN
                 logger.error(f"Error removing corrupted thumbnail file {thumbnail_save_path}: {remove_e}")
         return False
 
+def get_thumbnail_url(category_id, original_filename):
+    """
+    Construct the URL for a thumbnail.
+    
+    Args:
+        category_id (str): The category ID.
+        original_filename (str): The original filename.
+        
+    Returns:
+        str: The URL path for the thumbnail.
+    """
+    thumbnail_filename = original_filename + '.' + THUMBNAIL_FORMAT.lower()
+    encoded_thumbnail_filename = quote(thumbnail_filename)
+    return f"/thumbnails/{category_id}/{encoded_thumbnail_filename}"
+
+def process_category_thumbnails(category_path, all_files_metadata, force_refresh=False):
+    """
+    Process thumbnails for a category based on its content.
+    
+    For video-heavy categories:
+    - Generate thumbnails for all videos
+    - Generate one image thumbnail if available (for category preview)
+    
+    For image-heavy categories:
+    - Generate thumbnails for all videos
+    - Generate only one image thumbnail (for category preview)
+    
+    Args:
+        category_path (str): Path to the category directory.
+        all_files_metadata (list): List of file metadata dictionaries.
+        force_refresh (bool): Whether to force regeneration of existing thumbnails.
+        
+    Returns:
+        tuple: (image_count, video_count, thumbnails_generated)
+    """
+    if not all_files_metadata:
+        logger.warning(f"No files to process thumbnails for in {category_path}")
+        return 0, 0, 0
+    
+    # Ensure thumbnail directory exists
+    thumbnail_dir = os.path.join(category_path, THUMBNAIL_DIR_NAME)
+    os.makedirs(thumbnail_dir, exist_ok=True)
+    
+    # Count image and video files
+    image_count = 0
+    video_count = 0
+    image_files = []
+    video_files = []
+    
+    for file_meta in all_files_metadata:
+        filename = file_meta['name']
+        file_type = get_media_type(filename)
+        
+        if file_type == 'image':
+            image_count += 1
+            image_files.append(filename)
+        elif file_type == 'video':
+            video_count += 1
+            video_files.append(filename)
+    
+    total_files = image_count + video_count
+    if total_files == 0:
+        logger.warning(f"No media files found in {category_path}")
+        return 0, 0, 0
+    
+    # Determine if category is image-heavy (>90% images)
+    is_image_heavy = (image_count > 0) and (image_count / total_files > 0.9)
+    logger.info(f"Category {category_path} has {image_count} images, {video_count} videos. Image-heavy: {is_image_heavy}")
+    
+    thumbnails_generated = 0
+    
+    # Always generate thumbnails for all videos
+    for video_filename in video_files:
+        original_file_path = os.path.join(category_path, video_filename)
+        thumbnail_filename = video_filename + '.' + THUMBNAIL_FORMAT.lower()
+        thumbnail_save_path = os.path.join(thumbnail_dir, thumbnail_filename)
+        
+        # Check if thumbnail exists or needs refresh
+        if not os.path.exists(thumbnail_save_path) or force_refresh:
+            logger.info(f"Generating thumbnail for video: {video_filename}")
+            if generate_thumbnail(original_file_path, thumbnail_save_path):
+                thumbnails_generated += 1
+    
+    # For image-heavy categories, generate only one image thumbnail (for category preview)
+    # For video-heavy categories, still generate one image thumbnail if available
+    if image_files:
+        # Sort image files for consistency
+        image_files.sort()
+        
+        # Use the first image as the category preview
+        preview_image = image_files[0]
+        original_file_path = os.path.join(category_path, preview_image)
+        thumbnail_filename = preview_image + '.' + THUMBNAIL_FORMAT.lower()
+        thumbnail_save_path = os.path.join(thumbnail_dir, thumbnail_filename)
+        
+        # Check if thumbnail exists or needs refresh
+        if not os.path.exists(thumbnail_save_path) or force_refresh:
+            logger.info(f"Generating thumbnail for category preview image: {preview_image}")
+            if generate_thumbnail(original_file_path, thumbnail_save_path):
+                thumbnails_generated += 1
+    
+    logger.info(f"Processed thumbnails for {category_path}: {thumbnails_generated} generated/updated")
+    return image_count, video_count, thumbnails_generated
+
 # Thumbnail Finding
 
 def find_thumbnail(category_path, category_id, category_name):

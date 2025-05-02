@@ -460,7 +460,7 @@ function preloadNextMedia() {
     const maxConcurrentPreloads = isLowMemory ? 1 : 2;
     
     // Count active preloads (elements with preload attribute)
-    const activePreloads = document.querySelectorAll('video[preload="auto"], img[fetchpriority="high"]').length;
+    const activePreloads = document.querySelectorAll('video[preload="metadata"], img[fetchpriority="high"]').length;
     
     if (activePreloads >= maxConcurrentPreloads) {
         console.log(`Too many active preloads (${activePreloads}), deferring preload.`);
@@ -490,39 +490,66 @@ function preloadNextMedia() {
     
     console.log(`Preloading ${file.type}: ${file.name} (${isNextItem ? 'next item' : 'future item'})`);
     let mediaElement;
-        
+    
     if (file.type === 'video') {
+if (file.type === 'video') {
+    // If thumbnail exists, preload it and cache it
+    if (file.thumbnailUrl) {
+        console.log(`Preloading video thumbnail for: ${file.name}`);
+        mediaElement = new Image();
+        mediaElement.style.display = 'none';
+
+        if (nextItems.includes(file)) {
+            mediaElement.setAttribute('fetchpriority', 'high');
+        }
+
+        const loadTimeout = setTimeout(() => {
+            console.warn(`Thumbnail load timeout: ${file.name}`);
+            if (document.body.contains(mediaElement)) {
+                document.body.removeChild(mediaElement);
+            }
+            app.state.isPreloading = false;
+            setTimeout(preloadNextMedia, 0);
+        }, 5000);
+
+        mediaElement.onload = () => {
+            clearTimeout(loadTimeout);
+            console.log(`Thumbnail loaded: ${file.name}`);
+            addToCache(file.url, mediaElement);
+            app.state.isPreloading = false;
+            setTimeout(preloadNextMedia, 0);
+        };
+
+        mediaElement.onerror = () => {
+            clearTimeout(loadTimeout);
+            console.error(`Error preloading thumbnail: ${file.thumbnailUrl}`);
+            if (document.body.contains(mediaElement)) {
+                document.body.removeChild(mediaElement);
+            }
+            app.state.isPreloading = false;
+            setTimeout(preloadNextMedia, 0);
+        };
+
+        document.body.appendChild(mediaElement);
+        mediaElement.src = file.thumbnailUrl;
+
+    } else {
+        // No thumbnail, so fall back to preloading video metadata
+        console.log(`No thumbnail. Preloading video metadata for: ${file.name}`);
         mediaElement = document.createElement('video');
-        
-        // Set video attributes for faster loading
-        // Always use 'metadata' to reduce initial data usage
-        // Only use 'auto' for the immediate next video
         mediaElement.preload = isNextItem ? 'auto' : 'metadata';
         mediaElement.playsInline = true;
         mediaElement.setAttribute('playsinline', 'true');
         mediaElement.setAttribute('webkit-playsinline', 'true');
         mediaElement.setAttribute('controlsList', 'nodownload nofullscreen');
         mediaElement.disablePictureInPicture = true;
-        mediaElement.muted = true; // Muted for faster loading
+        mediaElement.muted = true;
         mediaElement.style.display = 'none';
-        
-        // Add fetch priority hint only for the next item
+
         if (isNextItem) {
             mediaElement.setAttribute('fetchpriority', 'high');
         }
-        
-        // Add error handling for videos
-        mediaElement.onerror = function() {
-            console.error(`Error preloading video: ${file.url}`);
-            if (document.body.contains(mediaElement)) {
-                document.body.removeChild(mediaElement);
-            }
-            app.state.isPreloading = false;
-            // Continue preloading immediately
-            setTimeout(preloadNextMedia, 0);
-        };
-        
-        // For videos, preload metadata for all, but only load data for next item
+
         const loadHandler = () => {
             console.log(`Video ${isNextItem ? 'data' : 'metadata'} loaded: ${file.name}`);
             addToCache(file.url, mediaElement);
@@ -530,74 +557,44 @@ function preloadNextMedia() {
                 document.body.removeChild(mediaElement);
             }
             app.state.isPreloading = false;
-            // Continue preloading immediately
             setTimeout(preloadNextMedia, 0);
         };
-        
-        // Use appropriate event based on preload strategy
-        if (isNextItem) {
-            mediaElement.addEventListener('loadeddata', loadHandler);
-        } else {
-            mediaElement.addEventListener('loadedmetadata', loadHandler);
-        }
-        
-        // Set a shorter timeout for faster recovery from stalled loading
+
         const loadTimeout = setTimeout(() => {
             console.warn(`Video load timeout: ${file.name}`);
             if (document.body.contains(mediaElement)) {
                 document.body.removeChild(mediaElement);
             }
             app.state.isPreloading = false;
-            // Continue preloading immediately
             setTimeout(preloadNextMedia, 0);
-        }, 5000); // 5 second timeout
-        
-        // Clear timeout when appropriate event fires
-        if (isNextItem) {
-            mediaElement.addEventListener('loadeddata', () => clearTimeout(loadTimeout));
-        } else {
-            mediaElement.addEventListener('loadedmetadata', () => clearTimeout(loadTimeout));
-        }
-        
-        // Only buffer the immediate next video, and only if on a high-bandwidth connection
-        // But don't even add the event listener on low bandwidth to avoid any chance of buffering
-        if (isNextItem && !isLowMemory && navigator.connection && 
-            (navigator.connection.effectiveType === '4g' || navigator.connection.downlink > 1.5)) {
-            mediaElement.addEventListener('canplay', () => {
-                console.log(`Minimal buffering for next video: ${file.name}`);
-                // We don't actually play the video to buffer - just loading it is sufficient
-                // This significantly reduces bandwidth usage while still improving UX
-            });
-        }
-        
-        // Add stability improvements to prevent unexpected resets
-        mediaElement.addEventListener('abort', (e) => {
-            console.warn(`Video preload aborted: ${file.name}`, e);
-        });
-        
-        mediaElement.addEventListener('stalled', (e) => {
-            console.warn(`Video preload stalled: ${file.name}`, e);
-            // Don't try to auto-recover from stalled state, as this can cause resets
-        });
-        
-        // Add a suspend handler to properly handle network interruptions
-        mediaElement.addEventListener('suspend', () => {
-            console.log(`Video preload suspended: ${file.name}`);
-        });
-        
-        // Use a data URL for the poster to avoid an extra network request
+        }, isNextItem ? 5000 : 3000);
+
+        const loadEvent = isNextItem ? 'loadeddata' : 'loadedmetadata';
+        mediaElement.addEventListener(loadEvent, loadHandler);
+        mediaElement.addEventListener(loadEvent, () => clearTimeout(loadTimeout));
+
+        mediaElement.onerror = () => {
+            console.error(`Error preloading video: ${file.url}`);
+            if (document.body.contains(mediaElement)) {
+                document.body.removeChild(mediaElement);
+            }
+            app.state.isPreloading = false;
+            setTimeout(preloadNextMedia, 0);
+        };
+
         mediaElement.poster = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxYTFhM2EiLz48L3N2Zz4=';
-        
+
         document.body.appendChild(mediaElement);
-        
-        // Add source with type for better loading
+
         const source = document.createElement('source');
         source.src = file.url;
-        source.type = 'video/mp4'; // Assume MP4 for better browser compatibility
+        source.type = 'video/mp4';
         mediaElement.appendChild(source);
-        
-        // Force load
+
         mediaElement.load();
+    }
+}
+
     } else if (file.type === 'image') {
         mediaElement = new Image();
         mediaElement.style.display = 'none';

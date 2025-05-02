@@ -24,6 +24,7 @@ Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container
 - 🎞️ TikTok-style swipe navigation for images & videos
 - 🔁 Optional host sync — everyone sees the same media, watches at their own pace
 - 💬 Built-in real-time chat (ephemeral, anonymous)
+- ⌨️ Slash commands like /myview, /help, and more coming soon
 - 📱 Fully mobile and desktop optimized
 - 🌐 Optional public sharing via Cloudflare Tunnel
 - 🖥️ Portable `.exe` with no dependencies or setup

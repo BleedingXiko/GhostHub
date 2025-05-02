@@ -45,6 +45,10 @@ def add_category():
     try:
         # CategoryService.add_category now handles indexing and transcoding
         new_category, error = CategoryService.add_category(name, path)
+        # Start indexing category
+        if new_category and 'id' in new_category:
+            MediaService.start_async_indexing(new_category['id'], new_category['path'], new_category['name'])
+
         if error:
             # Determine appropriate status code based on error
             status_code = 400 if "exists" in error or "not a directory" in error else 500

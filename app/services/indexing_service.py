@@ -11,7 +11,7 @@ import traceback
 import threading
 from queue import Queue, Empty
 from flask import current_app
-from app.utils.media_utils import is_media_file, get_media_type
+from app.utils.media_utils import is_media_file, get_media_type, process_category_thumbnails
 from app.utils.file_utils import load_index, save_index, is_large_directory
 from app.services.transcoding_service import TranscodingService
 
@@ -227,6 +227,18 @@ class IndexingService:
                         # Always update the files list at the end
                         async_index_status[category_id]['files'] = all_files_metadata
                         logger.info(f"Finished processing all {processed} files for '{category_name}'")
+                        
+                        # Process thumbnails for all videos and one image (for category preview)
+                        try:
+                            image_count, video_count, thumbnails_generated = process_category_thumbnails(
+                                category_path, all_files_metadata, force_refresh
+                            )
+                            logger.info(f"Processed thumbnails for '{category_name}': {thumbnails_generated} generated/updated "
+                                       f"({video_count} videos, {image_count} images)")
+                        except Exception as thumb_error:
+                            logger.error(f"Error processing thumbnails for '{category_name}': {thumb_error}")
+                            logger.debug(traceback.format_exc())
+                            # Continue with saving the index even if thumbnail processing fails
                         
                         # Save the complete index
                         current_time = time.time()
