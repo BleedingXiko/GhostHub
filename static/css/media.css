@@ -352,3 +352,69 @@ img.tiktok-media {
 .lazy-load.loaded {
     opacity: 1;
 }
+
+/* Video Thumbnail Styles */
+.video-thumbnail-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background-color: #000;
+    z-index: 10;
+}
+
+.video-thumbnail-container.active {
+    display: flex !important;
+    z-index: 15;
+    opacity: 1;
+}
+
+.video-thumbnail-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    max-width: 100vw;
+    max-height: 100vh;
+    transition: transform 0.2s ease;
+}
+
+.video-thumbnail-container:hover .video-thumbnail-image {
+    transform: scale(1.02);
+}
+
+/* Play Icon Overlay */
+.play-icon-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    background-color: rgba(0, 0, 0, 0.6);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.play-icon-overlay::before {
+    content: '';
+    width: 0;
+    height: 0;
+    border-top: 20px solid transparent;
+    border-bottom: 20px solid transparent;
+    border-left: 30px solid white;
+    margin-left: 8px; /* Offset slightly to center visually */
+}
+
+.video-thumbnail-container:hover .play-icon-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+    transform: translate(-50%, -50%) scale(1.1);
+}

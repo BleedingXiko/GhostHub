@@ -25,6 +25,87 @@ import { setupControls } from './uiController.js';
 // Need access to the socket instance for state updates
 // Socket instance (initialized via initMediaNavigation)
 let socket = null;
+// Flag to ensure the delegated listener is attached only once
+let thumbnailClickListenerAttached = false;
+
+/**
+ * Sets up a delegated event listener on the main container for thumbnail clicks.
+ */
+function setupThumbnailClickListener() {
+    if (thumbnailClickListenerAttached || !tiktokContainer) return;
+
+    console.log("Setting up delegated thumbnail click listener.");
+    tiktokContainer.addEventListener('click', function(e) {
+        // Find the closest thumbnail container ancestor
+        const thumbnailContainer = e.target.closest('.video-thumbnail-container');
+
+        if (thumbnailContainer) {
+            e.preventDefault(); // Prevent default link behavior if wrapped
+            e.stopPropagation(); // Stop event bubbling
+
+            // Prevent multiple rapid clicks
+            if (thumbnailContainer.classList.contains('loading-video')) {
+                console.log(`Delegated click ignored for ${thumbnailContainer.dataset.videoSrc}: already loading.`);
+                return;
+            }
+            thumbnailContainer.classList.add('loading-video');
+
+            const videoSrc = thumbnailContainer.dataset.videoSrc;
+            const fileInfo = JSON.parse(thumbnailContainer.dataset.fileInfo);
+            const currentDataIndex = thumbnailContainer.dataset.index;
+
+            console.log(`Delegated thumbnail click detected for index: ${currentDataIndex}, file: ${fileInfo.name}`);
+
+            try {
+                // Create the actual video element, initially muted and with preload='none'
+                const videoElement = createActualVideoElement(fileInfo, false); // Pass isActive = false
+
+                // Ensure the new video element has the correct classes and attributes before replacing
+                videoElement.classList.add('tiktok-media', 'active'); // Still mark as active visually
+                if (currentDataIndex) {
+                    videoElement.setAttribute('data-index', currentDataIndex); // Copy index
+                }
+                videoElement.style.transform = 'translateY(0)'; // Ensure it's positioned correctly
+
+                // Replace the thumbnail container with the video element
+                if (thumbnailContainer.parentNode) {
+                    thumbnailContainer.parentNode.replaceChild(videoElement, thumbnailContainer);
+                    console.log(`Replaced thumbnail with video for index: ${currentDataIndex}`);
+
+                    // Add fullscreen button after replacing
+                    setTimeout(() => {
+                        if (window.appModules && window.appModules.fullscreenManager) {
+                            window.appModules.fullscreenManager.addFullscreenButton(videoElement);
+                        }
+                    }, 100);
+
+                    // Start loading and playing the video AFTER it's in the DOM
+                    setTimeout(() => {
+                        videoElement.preload = 'auto'; // Now set preload to auto
+                        videoElement.muted = false;   // Unmute before playing
+                        videoElement.play().then(() => {
+                            console.log(`Video playback started for index: ${currentDataIndex}`);
+                        }).catch(err => {
+                            console.error(`Error playing video after click for index ${currentDataIndex}:`, err);
+                            // If unmuted play fails, try muted as a fallback (though less likely needed now)
+                            videoElement.muted = true;
+                            videoElement.play().catch(e2 => console.error(`Muted playback also failed for index ${currentDataIndex}:`, e2));
+                        });
+                    }, 50); // Small delay to ensure DOM is ready
+                } else {
+                    console.error("Cannot replace thumbnail container - no parent node found.");
+                    thumbnailContainer.classList.remove('loading-video'); // Remove loading lock if replacement fails
+                }
+            } catch (error) {
+                 console.error(`Error creating or replacing video for ${fileInfo.name}:`, error);
+                 thumbnailContainer.classList.remove('loading-video'); // Ensure loading class is removed on error
+            }
+        }
+    });
+
+    thumbnailClickListenerAttached = true; // Set flag
+}
+
 
 /**
  * Navigate between media items with performance optimizations
@@ -131,7 +212,11 @@ function navigateMedia(direction, event) {
     // Render the new window centered on nextIndex, only if index changed
     if (nextIndex !== app.state.currentMediaIndex) {
         renderMediaWindow(nextIndex);
-        
+
+        // REMOVED: All automatic playback logic after navigation/render.
+        // Playback is now ONLY initiated by the delegated thumbnail click handler
+        // or the manual play/pause tap handler within navigateMedia itself.
+
         // Update media info overlay if file exists
         if (app.state.fullMediaList && app.state.fullMediaList.length > nextIndex && app.state.fullMediaList[nextIndex]) {
             updateMediaInfoOverlay(app.state.fullMediaList[nextIndex]);
@@ -227,23 +312,36 @@ function renderMediaWindow(index) {
             if (!file || file.type === 'error') continue;
 
             let mediaElement;
-            
+            let useCache = false; // Flag to determine if we should use the cached element
+
             // Check if media is already in cache
             if (hasInCache(file.url)) {
-                mediaElement = getFromCache(file.url);
-                // Ensure cached videos respect the unmuted state and have loop set
-                if (mediaElement && mediaElement.tagName === 'VIDEO') {
-                    mediaElement.muted = false;
-                    mediaElement.loop = true;
-                    mediaElement.setAttribute('loop', 'true');
-                    // Set autoplay for active videos
-                    if (i === index) {
-                        mediaElement.autoplay = true;
-                        mediaElement.setAttribute('autoplay', 'true');
+                const cachedElement = getFromCache(file.url);
+                // Use cache ONLY if it's NOT just a preloaded thumbnail image for a video file
+                if (!(file.type === 'video' && cachedElement.tagName === 'IMG')) {
+                    mediaElement = cachedElement;
+                    useCache = true;
+                    // Ensure cached videos respect the unmuted state and have loop set
+                    if (mediaElement && mediaElement.tagName === 'VIDEO') {
+                        mediaElement.muted = false; // Will be handled by click/navigate now
+                        mediaElement.loop = true;
+                        mediaElement.setAttribute('loop', 'true');
+                        // Remove explicit autoplay setting from cache retrieval
+                        // if (i === index) {
+                        //     mediaElement.autoplay = true;
+                        //     mediaElement.setAttribute('autoplay', 'true');
+                        // }
                     }
+                } else {
+                     console.log(`Ignoring cached thumbnail image for video: ${file.name}`);
                 }
-            } else {
+            }
+
+            // If not using cache (or cache was ignored), create the element
+            if (!useCache) {
                 if (file.type === 'video') {
+                    // Always call createVideoElement for videos if not using a valid cached element
+                    // It will return either the thumbnail container or the actual video element
                     mediaElement = createVideoElement(file, i === index);
                 } else if (file.type === 'image') {
                     mediaElement = createImageElement(file);
@@ -259,28 +357,29 @@ function renderMediaWindow(index) {
             }
 
             if (mediaElement) {
-                mediaElement.className = 'tiktok-media';
+                // Ensure both base class and specific class (if applicable) are present
+                if (!mediaElement.classList.contains('tiktok-media')) {
+                    mediaElement.classList.add('tiktok-media');
+                }
                 mediaElement.setAttribute('data-index', i);
 
                 // Position elements correctly
                 if (i === index) {
                     mediaElement.classList.add('active');
                     mediaElement.style.transform = 'translateY(0)';
-                    
-                    // Autoplay current video
+
+                    // Explicitly pause the initial active video right after adding to DOM
+                    // This aims to counteract any browser autoplay triggered by the initial link click
                     if (mediaElement.tagName === 'VIDEO') {
                         setTimeout(() => {
-                            // Attempt to play unmuted
-                            mediaElement.play().catch(e => {
-                                console.warn("Autoplay failed, possibly due to browser restrictions. Trying muted autoplay...", e);
-                                // Fallback: try playing muted if unmuted autoplay fails
-                                mediaElement.muted = true;
-                                mediaElement.play().catch(e2 => console.error("Muted autoplay also failed:", e2));
-                            });
-                        }, 50);
+                            if (mediaElement.parentNode) { // Check if still in DOM
+                                mediaElement.pause();
+                                console.log(`Explicitly paused initial video at index ${i}`);
+                            }
+                        }, 0); // Execute immediately after current stack clears
                     }
                 }
-                
+
                 tiktokContainer.appendChild(mediaElement);
             }
         }
@@ -298,10 +397,13 @@ function renderMediaWindow(index) {
         
         // Start preloading process
         preloadNextMedia();
-        
+
         setupControls(); // Setup controls (now just the back button wrapper)
         updateSwipeIndicators(index, app.state.fullMediaList.length);
-        
+
+        // Setup the delegated click listener for thumbnails ONCE after rendering
+        setupThumbnailClickListener();
+
         // Ensure fullscreen buttons are added to all active videos
         // Use a small delay to ensure videos are fully rendered
         setTimeout(() => {
@@ -369,27 +471,78 @@ function emitMyStateUpdate(categoryId, index) {
 
 
 /**
- * Create a video element for the given file with optimized loading
+ * Create a video element or thumbnail container for the given file with optimized loading
  * @param {Object} file - The file object
  * @param {boolean} isActive - Whether this is the active media
- * @returns {HTMLVideoElement} - The created video element
+ * @returns {HTMLElement} - The created element (video or thumbnail container)
  */
 function createVideoElement(file, isActive) {
-    const mediaElement = document.createElement('video');
-    
-    // Set essential attributes only
-    mediaElement.loop = true;
-    mediaElement.setAttribute('loop', 'true');
-    mediaElement.muted = isActive ? false : true; // Only unmute if active
-    
-    // Set preload based on whether this is the active video
-    mediaElement.preload = isActive ? 'auto' : 'metadata';
-    
-    // Only set autoplay for active videos
-    if (isActive) {
-        mediaElement.autoplay = true;
-        mediaElement.setAttribute('autoplay', 'true');
+    // Always create a thumbnail container first if a thumbnail URL exists
+    if (file.thumbnailUrl) {
+        // Create container for thumbnail and play button
+        const containerElement = document.createElement('div');
+        // Add BOTH classes for easier selection and consistent styling/cleanup
+        containerElement.className = 'tiktok-media video-thumbnail-container';
+        containerElement.setAttribute('data-video-src', file.url);
+        containerElement.setAttribute('data-file-info', JSON.stringify(file)); // Store full file info
+
+        // Create thumbnail image
+        const thumbnailImage = document.createElement('img');
+        thumbnailImage.className = 'video-thumbnail-image';
+        thumbnailImage.src = file.thumbnailUrl;
+        thumbnailImage.alt = file.name;
+        thumbnailImage.loading = 'lazy'; // Lazy load thumbnails
+
+        // Create play button overlay
+        const playOverlay = document.createElement('div');
+        playOverlay.className = 'play-icon-overlay';
+        // You might add an SVG or text for the play icon here via CSS or JS
+
+        // REMOVED: Individual click listener. Will be handled by delegation below.
+
+        // Append elements to container
+        containerElement.appendChild(thumbnailImage);
+        containerElement.appendChild(playOverlay);
+
+        return containerElement; // Return the container with thumbnail
+    } else {
+        // If no thumbnail, create and return the actual video element directly
+        console.log(`No thumbnail for ${file.name}, creating video element directly.`);
+        // Always pass isActive = false here to ensure preload='none' initially
+        const videoElement = createActualVideoElement(file, false);
+        // Ensure the base class is added even when created directly
+        if (!videoElement.classList.contains('tiktok-media')) {
+             videoElement.classList.add('tiktok-media');
+        }
+        return videoElement;
     }
+}
+
+/**
+ * Create the actual video element (used directly or via thumbnail click)
+ * @param {Object} file - The file object
+ * @param {boolean} isActive - Whether this is the active media (determines preload and muted state)
+ * @returns {HTMLVideoElement} - The created video element
+ */
+function createActualVideoElement(file, isActive) {
+    console.log(`Creating actual video element for ${file.name}, isActive: ${isActive}`);
+    const mediaElement = document.createElement('video');
+
+    // Set essential attributes
+    mediaElement.loop = true; // Always loop videos
+    mediaElement.setAttribute('loop', 'true');
+    // ALWAYS create muted initially. Playback is handled by click or navigation.
+    mediaElement.muted = true;
+
+    // Set preload to 'none' initially for ALL videos. It will be set to 'auto' in the click handler.
+    mediaElement.preload = 'none';
+
+    // Explicitly remove autoplay attribute - playback is controlled manually
+    mediaElement.removeAttribute('autoplay');
+    // if (isActive) { // Old logic removed
+    //     mediaElement.autoplay = true; // Removed
+    //     mediaElement.setAttribute('autoplay', 'true');
+    // }
     
     // Show controls on desktop, hide on mobile
     mediaElement.controls = !MOBILE_DEVICE; // Show controls on desktop only
@@ -404,8 +557,12 @@ function createVideoElement(file, isActive) {
     mediaElement.setAttribute('disableRemotePlayback', 'true');
     mediaElement.disablePictureInPicture = true;
     
-    // Use a data URL for the poster to avoid an extra network request
-    mediaElement.poster = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxYTFhM2EiLz48L3N2Zz4=';
+    // Use thumbnail as poster if available, otherwise use a data URL
+    if (file.thumbnailUrl) {
+        mediaElement.poster = file.thumbnailUrl;
+    } else {
+        mediaElement.poster = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxYTFhM2EiLz48L3N2Zz4=';
+    }
     
     // Add fetchpriority for active videos
     if (isActive) {
@@ -611,7 +768,8 @@ function updateMediaInfoOverlay(file) {
 export {
     navigateMedia,
     renderMediaWindow,
-    createVideoElement,
+    createVideoElement, // Keep this export
+    createActualVideoElement, // Add export for the new function if needed elsewhere, otherwise remove
     createImageElement,
     createPlaceholderElement,
     updateMediaInfoOverlay,
@@ -625,5 +783,7 @@ export {
 function initMediaNavigation(socketInstance) {
     socket = socketInstance;
     console.log('Media navigation initialized with socket.');
+    // Setup the delegated listener during initialization as well
+    setupThumbnailClickListener();
     // Any other initialization logic for this module can go here
 }
