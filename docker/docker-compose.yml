@@ -1,7 +1,9 @@
 
 services:
   ghosthub:
-    build: ./
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: ghosthub
     container_name: ghosthub
     ports:
@@ -33,4 +35,10 @@ services:
       - PORT=5000
       - FLASK_CONFIG=production
       - DOCKER_ENV=true
-      - USE_CLOUDFLARE_TUNNEL=n  # Set to 'y' to enable Cloudflare Tunnel
+      # Tunnel configuration (choose one: none, cloudflare, pinggy)
+      - TUNNEL_CHOICE=pinggy
+      # - TUNNEL_CHOICE=cloudflare
+      # - TUNNEL_CHOICE=pinggy
+      
+      # Required if TUNNEL_CHOICE=pinggy
+      - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
