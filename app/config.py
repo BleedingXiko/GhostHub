@@ -25,7 +25,7 @@ def get_application_root():
             return os.path.dirname(sys.executable)
     else:
         # Running as a script
-        # The root is the directory containing media_server.py
+        # The root is the directory containing ghosthub.py
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Config:

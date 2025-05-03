@@ -33,8 +33,8 @@ echo [+] Starting GhostHub with optimized performance...
 echo [+] Server will run on http://localhost:%PORT%
 
 REM Start the server directly in this window
-echo [+] Running python media_server.py...
-python media_server.py
+echo [+] Running python ghosthub.py...
+python ghosthub.py
 
 REM The script will now pause here until the server is stopped (e.g., with Ctrl+C)
 REM The lines below might not be reached unless the server exits cleanly.

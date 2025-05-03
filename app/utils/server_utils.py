@@ -155,6 +155,63 @@ def start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='n'):
         
     return tunnel_process
 
+def start_pinggy_tunnel(port, token):
+    """
+    Start Pinggy Tunnel using SSH.
+
+    Args:
+        port (int): The local port the server is running on.
+        token (str): The Pinggy authentication token.
+
+    Returns:
+        subprocess.Popen: The tunnel process object or None if failed.
+    """
+    tunnel_process = None
+    if not token:
+        print("[!] Pinggy token is required.")
+        return None
+
+    try:
+        print("Starting Pinggy Tunnel...")
+        command = [
+            "ssh", "-p", "443",
+            f"-R0:127.0.0.1:{port}", # Tunnel remote port 0 (random) to local port
+            "-L4300:127.0.0.1:4300", # Optional: Local forward for accessing something else? Keeping as per user request.
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ServerAliveInterval=30",
+            f"{token}@pro.pinggy.io"
+        ]
+        app_logger.info(f"Executing Pinggy command: {' '.join(command)}") # Log the command without token for security if needed, but token is visible here. Be careful in production logs.
+
+        # Start tunnel process, capturing stdout and stderr
+        # Consider adding creationflags=subprocess.CREATE_NO_WINDOW on Windows if the SSH window is undesirable
+        tunnel_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1
+
+        )
+
+        # Removed the capture_pinggy_url function and the thread
+
+        print("\n[+] Pinggy Tunnel process started successfully.")
+        print("[!] Please use your permanent Pinggy URL to access the server.")
+        # Optionally, print the known permanent URL if provided
+        # print(f"[!] Access via: YOUR_PERMANENT_PINGGY_URL")
+
+    except FileNotFoundError:
+        print("[!] Error starting Pinggy Tunnel: 'ssh' command not found. Make sure SSH client is installed and in your PATH.")
+        tunnel_process = None # Ensure it's None if ssh isn't found
+    except Exception as e:
+        print(f"[!] Error starting Pinggy Tunnel: {e}")
+        if tunnel_process:
+            tunnel_process.kill() # Ensure process is killed if Popen succeeded but something else failed
+            tunnel_process = None
+
+    return tunnel_process
+
+
 def configure_socket_options():
     """Configure socket options for connection stability."""
     # Configure socket options for better stability
@@ -247,13 +304,18 @@ def run_server(app, port, debug=False):
          print(f"[!] Failed to start server: {server_err}")
 
 def cleanup_tunnel(tunnel_process):
-    """Terminate Cloudflare Tunnel process gracefully."""
+    """Terminate the active tunnel process (Cloudflare or Pinggy) gracefully."""
     if tunnel_process:
-        print("Terminating Cloudflare Tunnel process...")
+        print("Terminating tunnel process...")
         tunnel_process.terminate()
         try:
-            tunnel_process.wait(timeout=5) # Wait briefly for termination
+            # Wait briefly for graceful termination
+            tunnel_process.wait(timeout=5)
+            print("Tunnel process terminated.")
         except subprocess.TimeoutExpired:
-            print("Tunnel process did not terminate quickly, killing...")
+            print("Tunnel process did not terminate gracefully, killing...")
             tunnel_process.kill()
-        print("Cloudflare Tunnel process stopped.")
+            print("Tunnel process killed.")
+        except Exception as e:
+            # Catch potential errors during wait/kill
+            print(f"[!] Error during tunnel cleanup: {e}")

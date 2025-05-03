@@ -19,7 +19,7 @@ instance_dir = path.join(base_dir, 'instance')
 
 # Create the analysis object
 a = Analysis(
-    ['media_server.py'],
+    ['ghosthub.py'],
     pathex=[base_dir],
     binaries=opencv_binaries, # Add opencv binaries here
     datas=[
