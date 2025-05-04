@@ -29,17 +29,26 @@ import { setupControls } from './uiController.js';
  * Load and display a media category
  * @param {string} categoryId - Category ID to view
  * @param {string[]|null} [forced_order=null] - Optional array of media URLs to force a specific order
+ * @param {number} [startIndex=0] - Optional index to start rendering from
  * @returns {Promise} Resolves when loaded
  */
-function viewCategory(categoryId, forced_order = null) {
+function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     return new Promise(async (resolve, reject) => {
-        console.log(`Starting viewCategory for categoryId: ${categoryId}, Forced Order: ${forced_order ? 'Yes' : 'No'}`);
+        console.log(`Starting viewCategory for categoryId: ${categoryId}, Forced Order: ${forced_order ? 'Yes' : 'No'}, StartIndex: ${startIndex}`);
         
-        // IMPORTANT: Check if we're already viewing this category *unless* a forced order is given
-        if (!forced_order && app.state.currentCategoryId === categoryId) {
-            console.log("Already viewing this category (no forced order), resolving immediately");
-            resolve(); // Resolve immediately if already viewing and no forced order
+        // IMPORTANT: Check if we're already viewing this category *unless* a forced order is given or startIndex is different
+        // If startIndex is different, we need to re-render even if categoryId is the same
+        if (!forced_order && app.state.currentCategoryId === categoryId && app.state.currentMediaIndex === startIndex) {
+            console.log(`Already viewing category ${categoryId} at index ${startIndex} (no forced order), resolving immediately`);
+            resolve();
             return;
+        }
+        // If category is the same but index is different, just render the new index without full reload
+        if (!forced_order && app.state.currentCategoryId === categoryId && app.state.currentMediaIndex !== startIndex) {
+             console.log(`Same category ${categoryId}, but different index. Rendering index ${startIndex}`);
+             renderMediaWindow(startIndex);
+             resolve();
+             return;
         }
         
         // If sync mode is enabled and we're the host, send update to server
@@ -68,7 +77,8 @@ function viewCategory(categoryId, forced_order = null) {
         app.state.fullMediaList = [];
         app.state.preloadQueue = [];
         app.state.isPreloading = false;
-        app.state.currentMediaIndex = 0;
+        // Set currentMediaIndex based on startIndex BEFORE loading/rendering
+        app.state.currentMediaIndex = startIndex; 
         
         // STEP 2: Explicitly clear the media cache to prevent stale data
         app.mediaCache.clear();
@@ -158,7 +168,8 @@ function viewCategory(categoryId, forced_order = null) {
                     tiktokContainer.classList.remove('hidden');
                     
                     setupMediaNavigation(); 
-                    renderMediaWindow(0); // Render starting at index 0
+                    // Use the startIndex provided to the function
+                    renderMediaWindow(app.state.currentMediaIndex); 
                     
                     resolve(); 
                 } else if (!forced_order) {

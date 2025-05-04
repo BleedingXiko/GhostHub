@@ -98,7 +98,7 @@ video:-ms-fullscreen {
     z-index: 10;
     background-color: #000;
     opacity: 0;
-    transition: opacity var(--transition-normal) ease;
+    /* transition: opacity var(--transition-normal) ease; */ /* Removed transition */
 }
 
 video.tiktok-media {

@@ -250,6 +250,9 @@ function navigateMedia(direction, event) {
  */
 function renderMediaWindow(index) {
     try {
+        // Ensure the delegated click listener is attached early
+        setupThumbnailClickListener();
+
         // Save the spinner container before clearing
         const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
         
@@ -381,17 +384,7 @@ function renderMediaWindow(index) {
                 }
 
                 tiktokContainer.appendChild(mediaElement);
-            }
-        }
-        
-        // Queue preloading of nearby media
-        app.state.preloadQueue = [];
-        for (let i = preloadStartIndex; i <= preloadEndIndex; i++) {
-            if (i < startIndex || i > endIndex) { // Only preload items not already rendered
-                const file = app.state.fullMediaList[i];
-                if (file && file.type !== 'error' && !hasInCache(file.url)) {
-                    app.state.preloadQueue.push(file);
-                }
+
             }
         }
         
@@ -401,8 +394,7 @@ function renderMediaWindow(index) {
         setupControls(); // Setup controls (now just the back button wrapper)
         updateSwipeIndicators(index, app.state.fullMediaList.length);
 
-        // Setup the delegated click listener for thumbnails ONCE after rendering
-        setupThumbnailClickListener();
+        // Moved setupThumbnailClickListener to the beginning of the try block
 
         // Ensure fullscreen buttons are added to all active videos
         // Use a small delay to ensure videos are fully rendered
@@ -482,7 +474,8 @@ function createVideoElement(file, isActive) {
         // Create container for thumbnail and play button
         const containerElement = document.createElement('div');
         // Add BOTH classes for easier selection and consistent styling/cleanup
-        containerElement.className = 'tiktok-media video-thumbnail-container';
+        // Add 'active' class directly if this is the target media item
+        containerElement.className = `tiktok-media video-thumbnail-container${isActive ? ' active' : ''}`;
         containerElement.setAttribute('data-video-src', file.url);
         containerElement.setAttribute('data-file-info', JSON.stringify(file)); // Store full file info
 
