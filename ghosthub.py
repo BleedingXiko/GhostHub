@@ -28,7 +28,8 @@ from app.utils.server_utils import (
 )
 
 # Get configuration from environment variables
-config_name = os.getenv('FLASK_CONFIG', 'development')
+# Default to 'production' if FLASK_CONFIG is not set
+config_name = os.getenv('FLASK_CONFIG', 'production')
 port = int(os.getenv('PORT', 5000))
 
 # Initialize the Flask application
@@ -75,7 +76,8 @@ if __name__ == '__main__':
     print("\n--- Starting Server ---")
     try:
         # Run the server (blocking call)
-        run_server(app, port, debug=app.config.get('DEBUG', False))
+        # The run_server function now determines debug/production mode internally
+        run_server(app, port)
     finally:
         # Clean up tunnel process if it exists
         cleanup_tunnel(tunnel_process)

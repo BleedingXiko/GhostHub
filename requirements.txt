@@ -8,7 +8,8 @@ Flask-SocketIO==5.1.1
 python-socketio==5.4.0
 python-engineio==4.2.1
 gevent==21.12.0
-gevent-websocket==0.10.1
+gevent-websocket==0.10.1 # Required for Gunicorn SocketIO worker
+gunicorn==22.0.0         # Production WSGI server for Linux/macOS
 dnspython==2.3.0
 
 # Media Processing

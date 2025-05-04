@@ -124,10 +124,12 @@ class Config:
 
 class DevelopmentConfig(Config):
     """Development configuration with debug mode enabled."""
+    ENV = 'development'
     DEBUG = True
 
 class ProductionConfig(Config):
     """Production configuration with debug mode disabled."""
+    ENV = 'production'
     DEBUG = False
     # Add any production-specific settings here
 
