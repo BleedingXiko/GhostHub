@@ -93,13 +93,15 @@ function performCacheCleanup(aggressive = false) {
                 }
                 
                 // For videos and audio, explicitly release resources
-                if (element.tagName === 'VIDEO' || element.tagName === 'AUDIO') {
+                if (!document.body.contains(element)) {
                     try {
-                        element.pause();
-                        element.src = '';
-                        element.load();
-                    } catch (e) {
-                        // Ignore errors
+                        if (element.tagName === 'VIDEO' || element.tagName === 'AUDIO') {
+                            element.pause();
+                            element.removeAttribute('src');
+                            element.load();
+                        }
+                    } catch (e){
+                        // ignore
                     }
                 }
             });
