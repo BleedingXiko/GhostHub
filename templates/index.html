@@ -56,6 +56,19 @@
             </svg>
         </button>
     </div>
+    
+    <!-- Tunnel Icon -->
+    <div class="header-tunnel">
+        <button id="tunnel-toggle-btn" class="config-toggle-btn" aria-label="Open Tunnel Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12h20"/>
+                <path d="M5 18H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/>
+                <path d="M19 6h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>
+                <path d="M10 18v-3.535A4.002 4.002 0 0 1 10 6"/>
+                <path d="M14 18v-3.535A4.002 4.002 0 0 0 14 6"/>
+            </svg>
+        </button>
+    </div>
 
     <!-- Sync toggle on right -->
     <div id="sync-toggle-container" class="sync-toggle-container">
@@ -187,6 +200,42 @@
         <div class="modal-footer">
             <button id="config-modal-save-btn" class="btn btn-primary">Save Changes</button>
             <button id="config-modal-cancel-btn" class="btn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Tunnel Management Modal -->
+<div id="tunnel-modal" class="modal hidden">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Tunnel Management</h2>
+            <button id="tunnel-modal-close-btn" class="modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body" id="tunnel-modal-body">
+            <div class="form-group">
+                <label for="tunnel-provider-select">Tunnel Provider:</label>
+                <select id="tunnel-provider-select" name="TUNNEL_PROVIDER">
+                    <option value="none">None</option>
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="pinggy">Pinggy</option>
+                </select>
+            </div>
+            <div id="pinggy-token-group" class="form-group hidden">
+                <label for="pinggy-access-token-input">Pinggy Access Token:</label>
+                <input type="password" id="pinggy-access-token-input" name="PINGGY_ACCESS_TOKEN" placeholder="Enter Pinggy Token">
+            </div>
+             <div class="form-group">
+                <label for="tunnel-local-port-input">Local Port to Tunnel:</label>
+                <input type="number" id="tunnel-local-port-input" name="TUNNEL_LOCAL_PORT" value="5000" placeholder="e.g., 5000">
+            </div>
+            <div id="tunnel-status-display" class="tunnel-status">
+                Status: Not Active
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button id="tunnel-modal-start-btn" class="btn btn-primary">Start Tunnel</button>
+            <button id="tunnel-modal-stop-btn" class="btn btn-danger">Stop Tunnel</button>
+            <button id="tunnel-modal-save-settings-btn" class="btn">Save Settings</button>
         </div>
     </div>
 </div>

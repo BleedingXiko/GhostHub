@@ -15,6 +15,19 @@ const configModalSaveBtn = document.getElementById('config-modal-save-btn');
 const configModalCancelBtn = document.getElementById('config-modal-cancel-btn');
 const configModalBody = document.getElementById('config-modal-body');
 
+// DOM Elements for Tunnel Modal
+const tunnelModal = document.getElementById('tunnel-modal');
+const tunnelToggleBtn = document.getElementById('tunnel-toggle-btn');
+const tunnelModalCloseBtn = document.getElementById('tunnel-modal-close-btn');
+const tunnelModalStartBtn = document.getElementById('tunnel-modal-start-btn');
+const tunnelModalStopBtn = document.getElementById('tunnel-modal-stop-btn');
+const tunnelModalSaveSettingsBtn = document.getElementById('tunnel-modal-save-settings-btn');
+const tunnelProviderSelect = document.getElementById('tunnel-provider-select');
+const pinggyTokenGroup = document.getElementById('pinggy-token-group');
+const pinggyAccessTokenInput = document.getElementById('pinggy-access-token-input');
+const tunnelLocalPortInput = document.getElementById('tunnel-local-port-input');
+const tunnelStatusDisplay = document.getElementById('tunnel-status-display');
+
 /**
  * Setup controls for media viewing - with mobile-specific handling
  */
@@ -203,7 +216,8 @@ export {
     disableNavigationControls,
     enableNavigationControls,
     updateSyncToggleButton,
-    openConfigModal // Export new function
+    openConfigModal, // Export new function
+    openTunnelModal // Export new function for tunnel modal
 };
 
 // --- Config Modal Logic ---
@@ -310,8 +324,11 @@ function populateConfigModal() {
 
         const pythonSettingsContainer = document.createElement('div');
         pythonSettingsContainer.className = 'config-section-settings collapsed'; // Collapsed by default
+        const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
         for (const [key, value] of Object.entries(window.appConfig.python_config)) {
-            pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+            if (!tunnelConfigKeys.includes(key)) { // Only add if not a tunnel-specific key
+                pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+            }
         }
         configModalBody.appendChild(pythonSettingsContainer);
         pythonHeader.addEventListener('click', () => {
@@ -419,6 +436,298 @@ if (configModal) {
     configModal.addEventListener('click', (event) => {
         if (event.target === configModal) {
             closeConfigModal();
+        }
+    });
+}
+
+// --- Tunnel Modal Logic ---
+
+/**
+ * Updates the visibility of Pinggy token input based on provider selection.
+ */
+function updatePinggyTokenVisibility() {
+    if (tunnelProviderSelect && pinggyTokenGroup) {
+        pinggyTokenGroup.classList.toggle('hidden', tunnelProviderSelect.value !== 'pinggy');
+    }
+}
+
+/**
+ * Populates the tunnel modal with current settings from appConfig.
+ */
+function populateTunnelModal() {
+    if (!window.appConfig || !window.appConfig.python_config) {
+        if (tunnelStatusDisplay) tunnelStatusDisplay.textContent = 'Error: App configuration not loaded.';
+        return;
+    }
+    const pythonConfig = window.appConfig.python_config;
+    if (tunnelProviderSelect) tunnelProviderSelect.value = pythonConfig.TUNNEL_PROVIDER || 'none';
+    if (pinggyAccessTokenInput) pinggyAccessTokenInput.value = pythonConfig.PINGGY_ACCESS_TOKEN || '';
+    if (tunnelLocalPortInput) tunnelLocalPortInput.value = pythonConfig.TUNNEL_LOCAL_PORT || 5000;
+    
+    updatePinggyTokenVisibility();
+    updateTunnelStatusDisplay(); // Fetch current status from backend
+}
+
+/**
+ * Opens the tunnel management modal.
+ */
+function openTunnelModal() {
+    populateTunnelModal();
+    if (tunnelModal) tunnelModal.classList.remove('hidden');
+}
+
+/**
+ * Closes the tunnel management modal.
+ */
+function closeTunnelModal() {
+    if (tunnelModal) tunnelModal.classList.add('hidden');
+}
+
+/**
+ * Updates the tunnel status display by fetching from the backend.
+ */
+async function updateTunnelStatusDisplay() {
+    if (!tunnelStatusDisplay) return;
+    tunnelStatusDisplay.textContent = 'Status: Checking...';
+    tunnelStatusDisplay.className = 'tunnel-status status-checking'; // Base class + checking
+
+    try {
+        const response = await fetch('/api/tunnel/status');
+        const data = await response.json();
+
+        if (response.ok) {
+            if (data.status === 'running') {
+                let displayText = `Status: Running (${data.provider || 'Unknown'}) on port ${data.local_port || 'N/A'}`;
+                if (data.url) {
+                    if (data.provider === 'cloudflare' && data.url.includes('trycloudflare.com')) {
+                        displayText += ` - URL: <a href="${data.url}" target="_blank">${data.url}</a>`;
+                        // Add copy button for Cloudflare URL
+                        const copyButton = document.createElement('button');
+                        copyButton.textContent = 'Copy URL';
+                        copyButton.className = 'btn btn-secondary btn-sm tunnel-copy-btn'; // Add classes for styling
+                        copyButton.style.marginLeft = '10px';
+                        copyButton.onclick = () => {
+                            navigator.clipboard.writeText(data.url).then(() => {
+                                alert('Cloudflare URL copied to clipboard!');
+                            }).catch(err => {
+                                console.error('Failed to copy Cloudflare URL: ', err);
+                                alert('Failed to copy URL. See console for details.');
+                            });
+                        };
+                        // The display text will be set via innerHTML, so we append the button after setting text.
+                        // For now, let's build the HTML string.
+                        displayText += ` <button class="btn btn-secondary btn-sm tunnel-copy-btn" data-url="${data.url}">Copy URL</button>`;
+                    } else if (data.provider === 'pinggy') {
+                        displayText += ` - Reminder: Use your permanent Pinggy URL.`;
+                    } else if (data.url) { 
+                        displayText += ` - URL: <a href="${data.url}" target="_blank">${data.url}</a>`;
+                    }
+                }
+                tunnelStatusDisplay.innerHTML = displayText;
+                // Add event listener for dynamically created copy buttons
+                // Ensure this runs *after* innerHTML is set
+                const copyButtons = tunnelStatusDisplay.querySelectorAll('.tunnel-copy-btn');
+                copyButtons.forEach(button => {
+                    // Remove old listener to prevent duplicates if any
+                    const newButton = button.cloneNode(true);
+                    button.parentNode.replaceChild(newButton, button);
+                    
+                    newButton.addEventListener('click', (e) => {
+                        const urlToCopy = e.target.dataset.url;
+                        if (urlToCopy) {
+                            navigator.clipboard.writeText(urlToCopy).then(() => {
+                                alert('URL copied to clipboard!');
+                            }).catch(err => {
+                                console.error('Failed to copy URL: ', err);
+                                alert('Failed to copy URL. See console for details.');
+                            });
+                        }
+                    });
+                });
+                tunnelStatusDisplay.className = 'tunnel-status status-running'; // Set class last
+            } else {
+                tunnelStatusDisplay.textContent = `Status: Stopped`;
+                tunnelStatusDisplay.className = 'tunnel-status status-stopped';
+            }
+        } else {
+            tunnelStatusDisplay.textContent = `Status: Error fetching - ${data.message || 'Unknown error'}`;
+            tunnelStatusDisplay.className = 'tunnel-status status-stopped'; // Treat error as stopped
+        }
+    } catch (error) {
+        console.error('Failed to fetch tunnel status:', error);
+        tunnelStatusDisplay.textContent = 'Status: Error fetching status.';
+        tunnelStatusDisplay.className = 'tunnel-status status-stopped';
+    }
+}
+
+/**
+ * Handles saving tunnel specific settings (provider, token, port).
+ */
+async function handleSaveTunnelSettings() {
+    if (!window.appConfig) {
+        alert('App configuration not loaded. Cannot save tunnel settings.');
+        return;
+    }
+
+    const newPythonConfig = { ...window.appConfig.python_config }; // Create a copy to modify
+
+    newPythonConfig.TUNNEL_PROVIDER = tunnelProviderSelect ? tunnelProviderSelect.value : 'none';
+    newPythonConfig.PINGGY_ACCESS_TOKEN = pinggyAccessTokenInput ? pinggyAccessTokenInput.value : '';
+    newPythonConfig.TUNNEL_LOCAL_PORT = tunnelLocalPortInput ? parseInt(tunnelLocalPortInput.value, 10) : 5000;
+
+    // Construct the full config object to save, preserving other parts of appConfig
+    const fullNewConfig = {
+        ...window.appConfig,
+        python_config: newPythonConfig
+    };
+    
+    try {
+        if(tunnelModalSaveSettingsBtn) {
+            tunnelModalSaveSettingsBtn.textContent = 'Saving...';
+            tunnelModalSaveSettingsBtn.disabled = true;
+        }
+        const result = await saveConfig(fullNewConfig); // Use the global saveConfig
+        alert(result.message || 'Tunnel settings saved successfully! These will be used next time a tunnel is started.');
+        // Optionally, update window.appConfig if saveConfig doesn't do it globally
+        window.appConfig.python_config = newPythonConfig; 
+    } catch (error) {
+        console.error('Failed to save tunnel settings:', error);
+        alert(`Error saving tunnel settings: ${error.message || 'Unknown error'}`);
+    } finally {
+        if(tunnelModalSaveSettingsBtn) {
+            tunnelModalSaveSettingsBtn.textContent = 'Save Settings';
+            tunnelModalSaveSettingsBtn.disabled = false;
+        }
+    }
+}
+
+/**
+ * Handles starting the tunnel.
+ */
+async function handleStartTunnel() {
+    if(tunnelModalStartBtn) {
+        tunnelModalStartBtn.textContent = 'Starting...';
+        tunnelModalStartBtn.disabled = true;
+    }
+    if(tunnelStatusDisplay) {
+        tunnelStatusDisplay.textContent = 'Status: Starting...';
+        tunnelStatusDisplay.className = 'tunnel-status status-starting';
+    }
+
+    try {
+        // Save settings first to ensure PINGGY_ACCESS_TOKEN and TUNNEL_LOCAL_PORT are up-to-date in config for next load
+        await handleSaveTunnelSettings(); 
+
+        const provider = tunnelProviderSelect ? tunnelProviderSelect.value : 'none';
+        const localPort = tunnelLocalPortInput ? parseInt(tunnelLocalPortInput.value, 10) : 5000;
+        let pinggyToken = '';
+        if (provider === 'pinggy') {
+            pinggyToken = pinggyAccessTokenInput ? pinggyAccessTokenInput.value : '';
+        }
+
+        if (provider === 'none') {
+            alert('Please select a tunnel provider.');
+            if(tunnelModalStartBtn) {
+                tunnelModalStartBtn.textContent = 'Start Tunnel';
+                tunnelModalStartBtn.disabled = false;
+            }
+            if(tunnelStatusDisplay) tunnelStatusDisplay.textContent = 'Status: Not Active';
+            return;
+        }
+
+        const body = {
+            provider: provider,
+            local_port: localPort
+        };
+        if (provider === 'pinggy') {
+            body.pinggy_token = pinggyToken;
+        }
+
+        const response = await fetch('/api/tunnel/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') { // Check data.status from backend response
+            alert(data.message || 'Tunnel started successfully!');
+        } else {
+            alert(`Error starting tunnel: ${data.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Failed to start tunnel:', error);
+        alert(`Error starting tunnel: ${error.toString()}`);
+    } finally {
+        if(tunnelModalStartBtn) {
+            tunnelModalStartBtn.textContent = 'Start Tunnel';
+            tunnelModalStartBtn.disabled = false;
+        }
+        updateTunnelStatusDisplay(); // Refresh status
+    }
+}
+
+/**
+ * Handles stopping the tunnel.
+ */
+async function handleStopTunnel() {
+    if(tunnelModalStopBtn) {
+        tunnelModalStopBtn.textContent = 'Stopping...';
+        tunnelModalStopBtn.disabled = true;
+    }
+    if(tunnelStatusDisplay) {
+        tunnelStatusDisplay.textContent = 'Status: Stopping...';
+        tunnelStatusDisplay.className = 'tunnel-status status-starting'; // Visually similar to starting
+    }
+    try {
+        const response = await fetch('/api/tunnel/stop', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok && data.status === 'success') {
+            alert(data.message || 'Tunnel stopped successfully!');
+        } else {
+            alert(`Error stopping tunnel: ${data.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Failed to stop tunnel:', error);
+        alert(`Error stopping tunnel: ${error.toString()}`);
+    } finally {
+        if(tunnelModalStopBtn) {
+            tunnelModalStopBtn.textContent = 'Stop Tunnel';
+            tunnelModalStopBtn.disabled = false;
+        }
+        updateTunnelStatusDisplay(); // Refresh status
+    }
+}
+
+
+// Event Listeners for Tunnel Modal
+if (tunnelToggleBtn) {
+    tunnelToggleBtn.addEventListener('click', openTunnelModal);
+}
+if (tunnelModalCloseBtn) {
+    tunnelModalCloseBtn.addEventListener('click', closeTunnelModal);
+}
+if (tunnelModalStartBtn) {
+    tunnelModalStartBtn.addEventListener('click', handleStartTunnel);
+}
+if (tunnelModalStopBtn) {
+    tunnelModalStopBtn.addEventListener('click', handleStopTunnel);
+}
+if (tunnelModalSaveSettingsBtn) {
+    tunnelModalSaveSettingsBtn.addEventListener('click', handleSaveTunnelSettings);
+}
+if (tunnelProviderSelect) {
+    tunnelProviderSelect.addEventListener('change', updatePinggyTokenVisibility);
+}
+
+// Close tunnel modal if clicking outside the content
+if (tunnelModal) {
+    tunnelModal.addEventListener('click', (event) => {
+        if (event.target === tunnelModal) {
+            closeTunnelModal();
         }
     });
 }

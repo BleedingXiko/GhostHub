@@ -49,6 +49,11 @@ class Config:
     WS_RECONNECT_FACTOR = 1.5
     MEMORY_CLEANUP_INTERVAL = 60000  # ms
     MAX_CACHE_SIZE = 50
+
+    # Tunneling settings
+    TUNNEL_PROVIDER = "none"  # "none", "pinggy", "cloudflare"
+    PINGGY_ACCESS_TOKEN = ""
+    TUNNEL_LOCAL_PORT = 5000
     
     # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
@@ -154,7 +159,10 @@ _configurable_keys_info = {
     'WS_RECONNECT_DELAY': int,
     'WS_RECONNECT_FACTOR': float,
     'MEMORY_CLEANUP_INTERVAL': int,
-    'MAX_CACHE_SIZE': int
+    'MAX_CACHE_SIZE': int,
+    'TUNNEL_PROVIDER': str,
+    'PINGGY_ACCESS_TOKEN': str,
+    'TUNNEL_LOCAL_PORT': int
 }
 
 for key, type_converter in _configurable_keys_info.items():

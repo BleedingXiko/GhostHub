@@ -203,6 +203,11 @@
     height: 22px;
 }
 
+/* Tunnel Icon in Header (similar to config) */
+.header-tunnel {
+    margin-left: var(--space-xs); /* Reduced space from config button */
+    margin-right: var(--space-sm);
+}
 
 /* Modal Styles (Generic - can be reused) */
 .modal {
@@ -302,16 +307,29 @@
 
 .modal-body .form-group input[type="text"],
 .modal-body .form-group input[type="number"],
+.modal-body .form-group input[type="password"], /* Added for Pinggy token field */
 .modal-body .form-group select {
     width: 100%;
     padding: var(--space-sm);
     border: 1px solid var(--divider-color);
     border-radius: var(--radius-md);
     background-color: var(--background-color-light);
-    color: var(--text-primary);
+    color: var(--text-primary); /* Ensures text is visible on the select box itself */
     font-size: 1rem;
     box-sizing: border-box; /* Ensure padding doesn't increase width */
 }
+
+/* Explicitly style select options for better visibility in dropdown */
+.modal-body .form-group select option {
+    background-color: var(--background-color-dark); /* Dark background for options */
+    color: var(--text-primary); /* Light text for options */
+}
+/* For browsers that might style the select element itself when open (like Firefox on some OS) */
+.modal-body .form-group select:focus {
+    background-color: var(--background-color-light); /* Keep consistent with closed state */
+    color: var(--text-primary);
+}
+
 
 .modal-body .form-group input[type="checkbox"] {
     margin-right: var(--space-sm);
@@ -448,4 +466,62 @@
     gap: var(--space-md);
     padding-top: var(--space-lg);
     border-top: 1px solid var(--divider-color);
+}
+
+/* Tunnel Status Display in Modal */
+.tunnel-status {
+    margin-top: var(--space-md);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    background-color: var(--background-color-light);
+    border: 1px solid var(--divider-color);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.tunnel-status.status-running {
+    color: var(--success-color);
+    border-color: var(--success-color-muted);
+    background-color: var(--success-color-bg);
+}
+
+.tunnel-status.status-stopped {
+    color: var(--error-color);
+    border-color: var(--error-color-muted);
+    background-color: var(--error-color-bg);
+}
+
+.tunnel-status.status-starting {
+    color: var(--warning-color); /* Or a neutral color */
+    border-color: var(--warning-color-muted);
+    background-color: var(--warning-color-bg);
+}
+
+.tunnel-status a {
+    color: var(--accent-color);
+    text-decoration: underline;
+}
+.tunnel-status a:hover {
+    color: var(--accent-color-light);
+}
+
+.tunnel-copy-btn { /* Style for the copy button */
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.8rem;
+    background-color: var(--secondary-color); /* Or another distinct color */
+    color: var(--text-primary);
+    border: 1px solid var(--secondary-color-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    margin-left: var(--space-sm);
+    text-transform: none; /* Override general button uppercase if needed */
+    letter-spacing: normal; /* Override general button letter-spacing */
+    width: auto; /* Override general button width */
+}
+
+.tunnel-copy-btn:hover {
+    background-color: var(--secondary-color-light);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
 }
