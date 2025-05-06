@@ -2,7 +2,7 @@
 
 [![Live Demo](https://img.shields.io/badge/🌐%20Live%20Demo-ghosthub.net-blue?style=for-the-badge)](https://ghosthub.net)
 
-**GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it’s TikTok.
+**GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it's TikTok.
 
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
 
@@ -79,10 +79,6 @@ The `.exe` contains everything — no setup needed.
 > 💡 Tunnel will prompt automatically if cloudflared.exe is present
 
 ---
-Got you — here’s the **entire Docker section**, clean and ready to copy-paste as **one single chunk** for your README:
-
-````markdown
----
 
 ### 🐳 Option 3: Docker (Cross-Platform)
 
@@ -118,10 +114,9 @@ Run GhostHub in a Docker container for easy deployment on any platform.
          # - TUNNEL_CHOICE=cloudflare
          # - TUNNEL_CHOICE=pinggy
          # - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
-````
+   ```
 
 3. Build and start the container:
-
    ```bash
    cd docker && docker-compose up
    ```
@@ -132,14 +127,12 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 >
 > 🌐 **Tunneling**: Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
 >
-> 🐳 **Pull from DockerHub** (if you don’t want to build locally):
->
+> 🐳 **Pull from DockerHub** (if you don't want to build locally):
 > ```bash
 > docker pull bleedingxiko/ghosthub:latest
 > ```
 
 #### Docker Commands
-
 ```bash
 # Start the container
 cd docker && docker-compose up
@@ -153,23 +146,17 @@ cd docker && docker-compose logs -f
 # Rebuild the container (after changes)
 cd docker && docker-compose build
 
-# Enable Cloudflare Tunnel
-# Edit docker-compose.yml and set TUNNEL_CHOICE=cloudflare
+# Enable Tunnel
+# Edit docker-compose.yml and set TUNNEL_CHOICE=TUNNEL
 ```
 
 #### Docker Environment Variables
-
 | Variable       | Description                                | Default     |
-| -------------- | ------------------------------------------ | ----------- |
+|----------------|--------------------------------------------|-------------|
 | PORT           | Port to run the server on                  | 5000        |
-| FLASK\_CONFIG  | Flask configuration mode                   | development |
-| TUNNEL\_CHOICE | Tunnel option: none, cloudflare, or pinggy | none        |
-| PINGGY\_TOKEN  | Required if TUNNEL\_CHOICE=pinggy          | —           |
-
-```
-
-Paste that directly over your current Docker section — it’s one solid block, already styled. Want me to update your GitHub README file for you too?
-```
+| FLASK_CONFIG   | Flask configuration mode                   | development |
+| TUNNEL_CHOICE  | Tunnel option: none, cloudflare, or pinggy | none        |
+| PINGGY_TOKEN   | Required if TUNNEL_CHOICE=pinggy           | —           |
 
 ---
 
@@ -225,7 +212,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
 - **Rapid Navigation**: Extremely rapid scrolling through videos (especially on mobile) may occasionally cause temporary UI glitches. Simply pause for a moment to allow the app to catch up. In rare cases, you may need to close and reopen the site.
-- **Sync Button Glitch**: Enabling sync mode while actively viewing a category can cause the category view to glitch.Enable sync mode before entering a category or after backing out to the category view. A fix is on the roadmap.
+- **Sync Button Glitch**: Enabling sync mode while actively viewing a category can cause the category view to glitch. Enable sync mode before entering a category or after backing out to the category view. A fix is on the roadmap.
 
 ## 💬 Final Notes
 
@@ -234,3 +221,4 @@ GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. 
 No setup. No tracking. No trace.
 
 Ghost on, my friend. 👻
+```
