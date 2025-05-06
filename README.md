@@ -1,5 +1,7 @@
 # 👻 GhostHub
 
+[![Live Demo](https://img.shields.io/badge/🌐%20Live%20Demo-ghosthub.net-blue?style=for-the-badge)](https://ghosthub.net)
+
 **GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it’s TikTok.
 
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
