@@ -1,11 +1,13 @@
 
 services:
   ghosthub:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: ghosthub
+    # If you want to build locally instead of pulling:
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
+    image: dhux/ghosthub:latest
     container_name: ghosthub
+    restart: unless-stopped
     ports:
       - "5000:5000"
     volumes:
