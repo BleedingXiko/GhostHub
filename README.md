@@ -80,8 +80,6 @@ The `.exe` contains everything — no setup needed.
 
 ---
 
----
-
 ### 🐳 Option 3: Docker (Cross-Platform)
 
 Run GhostHub in a Docker container for easy deployment on any platform.
