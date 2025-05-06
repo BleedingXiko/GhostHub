@@ -79,9 +79,7 @@ The `.exe` contains everything — no setup needed.
 > 💡 Tunnel will prompt automatically if cloudflared.exe is present
 
 ---
-Got you — here’s the **entire Docker section**, clean and ready to copy-paste as **one single chunk** for your README:
 
-````markdown
 ---
 
 ### 🐳 Option 3: Docker (Cross-Platform)
