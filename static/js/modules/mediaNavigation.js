@@ -250,172 +250,145 @@ function navigateMedia(direction, event) {
  */
 function renderMediaWindow(index) {
     try {
-        // Ensure the delegated click listener is attached early
-        setupThumbnailClickListener();
-
-        // Save the spinner container before clearing
-        const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
-        
-        // Remove all media elements and fullscreen buttons
-        tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
-        tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
-        
-        
-        // Track the render time to prevent fullscreen issues during rapid rendering
-        app.state.lastRenderTime = Date.now();
-        
-        // Remove any loading message if it exists
-        if (app.state.loadingMessage && document.body.contains(app.state.loadingMessage)) {
-            app.state.loadingMessage.remove();
-            app.state.loadingMessage = null;
-        }
-        
-        // Re-add the spinner if it was removed
-        if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
-            tiktokContainer.appendChild(savedSpinner);
-        }
-        
-        // Store the previous index for sync update check
-        const previousIndex = app.state.currentMediaIndex;
-        app.state.currentMediaIndex = index;
-        
-        // Update media info overlay with current file information if available
-        if (app.state.fullMediaList && app.state.fullMediaList.length > index && app.state.fullMediaList[index]) {
-            updateMediaInfoOverlay(app.state.fullMediaList[index]);
-        }
-
-        const startIndex = Math.max(0, index - renderWindowSize);
-        const endIndex = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
-        const preloadStartIndex = Math.max(0, index - 2);
-        const preloadEndIndex = Math.min(app.state.fullMediaList.length - 1, index + 2);
-
-        console.log(`Rendering window: ${startIndex} to ${endIndex} (current: ${index})`);
-        
-        // If sync mode is enabled, we're the host, and the index has changed, send update to server
-        // This handles direct calls to renderMediaWindow (not through navigateMedia)
-        if (app.state.syncModeEnabled && app.state.isHost && previousIndex !== index) {
-            const currentFile = app.state.fullMediaList[index];
-            console.log('Host directly changing media index, sending sync update');
-            
-            // Use the improved sendSyncUpdate function
-            window.appModules.syncManager.sendSyncUpdate({
-                category_id: app.state.currentCategoryId,
-                file_url: currentFile.url,
-                index: index
-            }).then(success => {
-                if (!success) {
-                    console.warn('Sync update for direct index change was not successful');
-                }
-            });
-        }
-
-        // First render the visible media
-        for (let i = startIndex; i <= endIndex; i++) {
-            const file = app.state.fullMediaList[i];
-            if (!file || file.type === 'error') continue;
-
-            let mediaElement;
-            let useCache = false; // Flag to determine if we should use the cached element
-
-            // Check if media is already in cache
-            if (hasInCache(file.url)) {
-                const cachedElement = getFromCache(file.url);
-                // Use cache ONLY if it's NOT just a preloaded thumbnail image for a video file
-                if (!(file.type === 'video' && cachedElement.tagName === 'IMG')) {
-                    mediaElement = cachedElement;
-                    useCache = true;
-                    // Ensure cached videos respect the unmuted state and have loop set
-                    if (mediaElement && mediaElement.tagName === 'VIDEO') {
-                        mediaElement.muted = false; // Will be handled by click/navigate now
-                        mediaElement.loop = true;
-                        mediaElement.setAttribute('loop', 'true');
-                        // Remove explicit autoplay setting from cache retrieval
-                        // if (i === index) {
-                        //     mediaElement.autoplay = true;
-                        //     mediaElement.setAttribute('autoplay', 'true');
-                        // }
-                    }
-                } else {
-                     console.log(`Ignoring cached thumbnail image for video: ${file.name}`);
-                }
+      // Ensure delegated click listener is in place
+      setupThumbnailClickListener();
+  
+      // Save & clear spinner
+      const savedSpinner = spinnerContainer ? spinnerContainer.cloneNode(true) : null;
+      tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
+      tiktokContainer.querySelectorAll('.fullscreen-btn').forEach(el => el.remove());
+  
+      // Track render time & remove leftover loading messages
+      app.state.lastRenderTime = Date.now();
+      if (app.state.loadingMessage && document.body.contains(app.state.loadingMessage)) {
+        app.state.loadingMessage.remove();
+        app.state.loadingMessage = null;
+      }
+  
+      // Re-add spinner if needed
+      if (savedSpinner && !tiktokContainer.querySelector('.spinner-container')) {
+        tiktokContainer.appendChild(savedSpinner);
+      }
+  
+      // Update current index & overlay
+      const previousIndex = app.state.currentMediaIndex;
+      app.state.currentMediaIndex = index;
+      if (app.state.fullMediaList && app.state.fullMediaList[index]) {
+        updateMediaInfoOverlay(app.state.fullMediaList[index]);
+      }
+  
+      // Compute window of items
+      const startIndex = Math.max(0, index - renderWindowSize);
+      const endIndex   = Math.min(app.state.fullMediaList.length - 1, index + renderWindowSize);
+      console.log(`Rendering window: ${startIndex} to ${endIndex} (current: ${index})`);
+  
+      // Sync-host broadcast on direct renders
+      if (app.state.syncModeEnabled && app.state.isHost && previousIndex !== index) {
+        const currentFile = app.state.fullMediaList[index];
+        console.log('Host sending sync update for direct index change');
+        window.appModules.syncManager.sendSyncUpdate({
+          category_id: app.state.currentCategoryId,
+          file_url: currentFile.url,
+          index
+        }).then(success => {
+          if (!success) console.warn('Sync update failed');
+        });
+      }
+  
+      // Render loop
+      for (let i = startIndex; i <= endIndex; i++) {
+        const file = app.state.fullMediaList[i];
+        if (!file || file.type === 'error') continue;
+  
+        let mediaElement;
+        let useCache = false;
+  
+        // Bypass cache for the active index so we always rebuild its thumbnail+play overlay
+        const isActiveVideo = file.type === 'video' && i === index;
+        if (isActiveVideo) {
+          console.log(`Bypassing cache for active video "${file.name}"`);
+        } else if (hasInCache(file.url)) {
+          const cached = getFromCache(file.url);
+          // Only reuse if not a bare <img> thumbnail for a video
+          if (!(file.type === 'video' && cached.tagName === 'IMG')) {
+            mediaElement = cached;
+            useCache     = true;
+            if (mediaElement.tagName === 'VIDEO') {
+              mediaElement.muted = false;
+              mediaElement.loop  = true;
+              mediaElement.setAttribute('loop', 'true');
             }
-
-            // If not using cache (or cache was ignored), create the element
-            if (!useCache) {
-                if (file.type === 'video') {
-                    // Always call createVideoElement for videos if not using a valid cached element
-                    // It will return either the thumbnail container or the actual video element
-                    mediaElement = createVideoElement(file, i === index);
-                } else if (file.type === 'image') {
-                    mediaElement = createImageElement(file);
-                } else {
-                    // Handle unknown file types with a placeholder
-                    mediaElement = createPlaceholderElement(file);
-                }
-                
-                // Store in cache
-                if (mediaElement) {
-                    addToCache(file.url, mediaElement);
-                }
-            }
-
-            if (mediaElement) {
-                // Ensure both base class and specific class (if applicable) are present
-                if (!mediaElement.classList.contains('tiktok-media')) {
-                    mediaElement.classList.add('tiktok-media');
-                }
-                mediaElement.setAttribute('data-index', i);
-
-                // Position elements correctly
-                if (i === index) {
-                    mediaElement.classList.add('active');
-                    mediaElement.style.transform = 'translateY(0)';
-
-                    // Explicitly pause the initial active video right after adding to DOM
-                    // This aims to counteract any browser autoplay triggered by the initial link click
-                    if (mediaElement.tagName === 'VIDEO') {
-                        setTimeout(() => {
-                            if (mediaElement.parentNode) { // Check if still in DOM
-                                mediaElement.pause();
-                                console.log(`Explicitly paused initial video at index ${i}`);
-                            }
-                        }, 0); // Execute immediately after current stack clears
-                    }
-                }
-
-                tiktokContainer.appendChild(mediaElement);
-
-            }
+          } else {
+            console.log(`Ignoring cached <img> thumbnail for video "${file.name}"`);
+          }
         }
-        
-        // Start preloading process
-        preloadNextMedia();
-
-        setupControls(); // Setup controls (now just the back button wrapper)
-        updateSwipeIndicators(index, app.state.fullMediaList.length);
-
-        // Moved setupThumbnailClickListener to the beginning of the try block
-
-        // Ensure fullscreen buttons are added to all active videos
-        // Use a small delay to ensure videos are fully rendered
-        setTimeout(() => {
-            if (window.appModules && window.appModules.fullscreenManager) {
-                window.appModules.fullscreenManager.ensureFullscreenButtons();
+  
+        // If we didn't reuse cache, build new
+        if (!useCache) {
+          if (file.type === 'video') {
+            mediaElement = createVideoElement(file, i === index);
+          } else if (file.type === 'image') {
+            mediaElement = createImageElement(file);
+          } else {
+            mediaElement = createPlaceholderElement(file);
+          }
+  
+          // **Only cache thumbnail containers** (never actual <video> nodes)
+          if (
+            mediaElement &&
+            mediaElement.classList.contains('video-thumbnail-container')
+          ) {
+            addToCache(file.url, mediaElement);
+          }
+        }
+  
+        // Final setup & insertion
+        if (mediaElement) {
+          if (!mediaElement.classList.contains('tiktok-media')) {
+            mediaElement.classList.add('tiktok-media');
+          }
+          mediaElement.setAttribute('data-index', i);
+  
+          if (i === index) {
+            mediaElement.classList.add('active');
+            mediaElement.style.transform = 'translateY(0)';
+  
+            if (mediaElement.tagName === 'VIDEO') {
+              // Immediately pause any unintended autoplay
+              setTimeout(() => {
+                if (mediaElement.parentNode) {
+                  mediaElement.pause();
+                  console.log(`Paused initial video at index ${i}`);
+                }
+              }, 0);
             }
-        }, 100);
-
-        // Spinner is hidden by loadMoreMedia's finally block
-        
-        // Emit state update after successful render
-        emitMyStateUpdate(app.state.currentCategoryId, app.state.currentMediaIndex);
-        
-    } catch (renderError) {
-        console.error("!!! Error inside renderMediaWindow:", renderError);
-        // Ensure spinner is hidden on render error if loadMoreMedia didn't catch it
-        if (spinnerContainer) spinnerContainer.style.display = 'none';
-        throw renderError;
+          }
+  
+          tiktokContainer.appendChild(mediaElement);
+        }
+      }
+  
+      // Post-render chores
+      preloadNextMedia();
+      setupControls();
+      updateSwipeIndicators(index, app.state.fullMediaList.length);
+      setTimeout(() => {
+        if (window.appModules?.fullscreenManager) {
+          window.appModules.fullscreenManager.ensureFullscreenButtons();
+        }
+      }, 100);
+  
+      // Emit final state
+      emitMyStateUpdate(app.state.currentCategoryId, app.state.currentMediaIndex);
+  
+    } catch (err) {
+      console.error("Error in renderMediaWindow:", err);
+      if (spinnerContainer) spinnerContainer.style.display = 'none';
+      throw err;
     }
-}
+  }
+  
+  
 
 
 /**
@@ -463,54 +436,43 @@ function emitMyStateUpdate(categoryId, index) {
 
 
 /**
- * Create a video element or thumbnail container for the given file with optimized loading
- * @param {Object} file - The file object
- * @param {boolean} isActive - Whether this is the active media
- * @returns {HTMLElement} - The created element (video or thumbnail container)
+ * Create a video thumbnail container (with overlay) for the given file.
+ * Always returns a <div class="video-thumbnail-container"> wrapper,
+ * using eager loading for the active item so its thumbnail always appears.
+ *
+ * @param {Object}  file     – The file object (must have file.url, file.name, file.thumbnailUrl)
+ * @param {boolean} isActive – Whether this is the active media (i.e. i === index)
+ * @returns {HTMLElement}     – The thumbnail container with overlay
  */
 function createVideoElement(file, isActive) {
-    // Always create a thumbnail container first if a thumbnail URL exists
-    if (file.thumbnailUrl) {
-        // Create container for thumbnail and play button
-        const containerElement = document.createElement('div');
-        // Add BOTH classes for easier selection and consistent styling/cleanup
-        // Add 'active' class directly if this is the target media item
-        containerElement.className = `tiktok-media video-thumbnail-container${isActive ? ' active' : ''}`;
-        containerElement.setAttribute('data-video-src', file.url);
-        containerElement.setAttribute('data-file-info', JSON.stringify(file)); // Store full file info
-
-        // Create thumbnail image
-        const thumbnailImage = document.createElement('img');
-        thumbnailImage.className = 'video-thumbnail-image';
-        thumbnailImage.src = file.thumbnailUrl;
-        thumbnailImage.alt = file.name;
-        thumbnailImage.loading = 'lazy'; // Lazy load thumbnails
-
-        // Create play button overlay
-        const playOverlay = document.createElement('div');
-        playOverlay.className = 'play-icon-overlay';
-        // You might add an SVG or text for the play icon here via CSS or JS
-
-        // REMOVED: Individual click listener. Will be handled by delegation below.
-
-        // Append elements to container
-        containerElement.appendChild(thumbnailImage);
-        containerElement.appendChild(playOverlay);
-
-        return containerElement; // Return the container with thumbnail
-    } else {
-        // If no thumbnail, create and return the actual video element directly
-        console.log(`No thumbnail for ${file.name}, creating video element directly.`);
-        // Always pass isActive = false here to ensure preload='none' initially
-        const videoElement = createActualVideoElement(file, false);
-        // Ensure the base class is added even when created directly
-        if (!videoElement.classList.contains('tiktok-media')) {
-             videoElement.classList.add('tiktok-media');
-        }
-        return videoElement;
+    const container = document.createElement('div');
+    container.className = `tiktok-media video-thumbnail-container${isActive ? ' active' : ''}`;
+    container.setAttribute('data-video-src', file.url);
+    container.setAttribute('data-file-info', JSON.stringify(file));
+  
+    // thumbnail image
+    const thumbnailImage = document.createElement('img');
+    thumbnailImage.className = 'video-thumbnail-image';
+    thumbnailImage.alt = file.name;
+    // eager load if this is the active index, fallback to lazy for others
+    thumbnailImage.loading = isActive ? 'eager' : 'lazy';
+    thumbnailImage.src     = file.thumbnailUrl;
+  
+    // force decode on active so it paints ASAP
+    if (isActive && thumbnailImage.decode) {
+      thumbnailImage.decode().catch(() => {/* ignore decode errors */});
     }
-}
-
+  
+    // play-button overlay
+    const playOverlay = document.createElement('div');
+    playOverlay.className = 'play-icon-overlay';
+  
+    container.appendChild(thumbnailImage);
+    container.appendChild(playOverlay);
+    return container;
+  }
+  
+  
 /**
  * Create the actual video element (used directly or via thumbnail click)
  * @param {Object} file - The file object

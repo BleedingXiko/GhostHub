@@ -27,176 +27,122 @@ import { setupControls } from './uiController.js';
 
 /**
  * Load and display a media category
- * @param {string} categoryId - Category ID to view
- * @param {string[]|null} [forced_order=null] - Optional array of media URLs to force a specific order
- * @param {number} [startIndex=0] - Optional index to start rendering from
+ * @param {string}         categoryId    – Category ID to view
+ * @param {string[]|null}  [forced_order] – Optional array of media URLs to force a specific order
+ * @param {number}         [startIndex=0] – Optional index to start rendering from
  * @returns {Promise} Resolves when loaded
  */
-function viewCategory(categoryId, forced_order = null, startIndex = 0) {
-    return new Promise(async (resolve, reject) => {
-        console.log(`Starting viewCategory for categoryId: ${categoryId}, Forced Order: ${forced_order ? 'Yes' : 'No'}, StartIndex: ${startIndex}`);
-        
-        // IMPORTANT: Check if we're already viewing this category *unless* a forced order is given or startIndex is different
-        // If startIndex is different, we need to re-render even if categoryId is the same
-        if (!forced_order && app.state.currentCategoryId === categoryId && app.state.currentMediaIndex === startIndex) {
-            console.log(`Already viewing category ${categoryId} at index ${startIndex} (no forced order), resolving immediately`);
-            resolve();
-            return;
+async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
+    console.log(`viewCategory: category=${categoryId}, forced_order=${forced_order ? 'yes' : 'no'}, startIndex=${startIndex}`);
+  
+    // Capture old map in case you want to preserve extra metadata
+    const oldMap = new Map((app.state.fullMediaList || []).map(item => [item.url, item]));
+  
+    // If same cat+idx and no forced_order → nothing to do
+    if (!forced_order &&
+        app.state.currentCategoryId === categoryId &&
+        app.state.currentMediaIndex === startIndex) {
+      console.log('No-op: already at that category/index');
+      return;
+    }
+    // If same category but diff index → just render that index
+    if (!forced_order &&
+        app.state.currentCategoryId === categoryId &&
+        app.state.currentMediaIndex !== startIndex) {
+      console.log(`Jumping to index ${startIndex} on same category`);
+      renderMediaWindow(startIndex);
+      return;
+    }
+  
+    // If host in sync mode, broadcast cat change
+    if (app.state.syncModeEnabled && app.state.isHost) {
+      window.appModules.syncManager.sendSyncUpdate({
+        category_id: categoryId,
+        file_url:    null,
+        index:       0
+      }).then(ok => { if (!ok) console.warn('Sync update failed'); });
+    }
+  
+    // Reset state
+    app.state.currentCategoryId  = categoryId;
+    app.state.currentPage        = 1;
+    app.state.hasMoreMedia       = true;
+    app.state.isLoading          = false;
+    app.state.fullMediaList      = [];
+    app.state.preloadQueue       = [];
+    app.state.isPreloading       = false;
+    app.state.currentMediaIndex  = startIndex;
+  
+    // Clear cache + abort
+    app.mediaCache.clear();
+    if (app.state.currentFetchController) app.state.currentFetchController.abort();
+    app.state.currentFetchController = new AbortController();
+  
+    // Aggressive cleanup of DOM/resources
+    clearResources(true);
+    if (tiktokContainer) {
+      tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
+    }
+  
+    // Show spinner
+    if (spinnerContainer) spinnerContainer.style.display = 'flex';
+  
+    // Decide page size
+    const pageSize = window.innerWidth <= 768 ? 5 : MEDIA_PER_PAGE;
+    const signal   = app.state.currentFetchController.signal;
+  
+    try {
+      // ALWAYS fetch metadata from the server first
+      // Keep loading pages until we have at least forced_order.length items (or no more)
+      if (forced_order) {
+        console.log(`Forced order present (${forced_order.length} URLs) — fetching metadata first`);
+        while (app.state.fullMediaList.length < forced_order.length && app.state.hasMoreMedia) {
+          await loadMoreMedia(pageSize, signal, false);
         }
-        // If category is the same but index is different, just render the new index without full reload
-        if (!forced_order && app.state.currentCategoryId === categoryId && app.state.currentMediaIndex !== startIndex) {
-             console.log(`Same category ${categoryId}, but different index. Rendering index ${startIndex}`);
-             renderMediaWindow(startIndex);
-             resolve();
-             return;
-        }
-        
-        // If sync mode is enabled and we're the host, send update to server
-        // This needs to happen before changing the category to ensure proper sync
-        if (app.state.syncModeEnabled && app.state.isHost) {
-            console.log('Host changing category, sending sync update');
-            
-            // We don't have media info yet, so just send the category ID
-            // The index will be set to 0 when the category loads
-            window.appModules.syncManager.sendSyncUpdate({
-                category_id: categoryId,
-                file_url: null,
-                index: 0
-            }).then(success => {
-                if (!success) {
-                    console.warn('Sync update for category change was not successful');
-                }
-            });
-        }
-    
-        // STEP 1: Reset state variables
-        app.state.currentCategoryId = categoryId;
-        app.state.currentPage = 1;
-        app.state.hasMoreMedia = !forced_order; // No more media if order is forced
-        app.state.isLoading = false;
-        app.state.fullMediaList = [];
-        app.state.preloadQueue = [];
-        app.state.isPreloading = false;
-        // Set currentMediaIndex based on startIndex BEFORE loading/rendering
-        app.state.currentMediaIndex = startIndex; 
-        
-        // STEP 2: Explicitly clear the media cache to prevent stale data
-        app.mediaCache.clear();
-        console.log("Media cache completely cleared for new category");
-        
-        // STEP 3: Abort any ongoing fetch requests from the previous category
-        if (app.state.currentFetchController) {
-            console.log("Aborting previous fetch request...");
-            app.state.currentFetchController.abort();
-        }
-        // Create a new AbortController for this category's requests
-        app.state.currentFetchController = new AbortController();
-
-        // STEP 4: Stop any active media
-        const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
-        if (activeElement && activeElement.tagName === 'VIDEO') {
-            try {
-                activeElement.pause();
-                activeElement.removeAttribute('src'); // Prevent further loading
-                activeElement.load(); // Attempt to release resources
-                console.log("Explicitly stopped active video.");
-            } catch (e) {
-                console.error("Error stopping active video:", e);
-            }
-        }
-        
-        // STEP 5: Clean up resources from previous category - use aggressive cleanup
-        clearResources(true);
-
-        // STEP 6: Explicitly clear previous media elements
-        if (tiktokContainer) {
-            tiktokContainer.querySelectorAll('.tiktok-media').forEach(el => el.remove());
-            console.log("Explicitly removed previous media elements.");
-        }
-        
-        console.log("All state variables reset and resources cleared for new category");
-        
-        // Set a smaller page size on mobile for faster loading
-        const pageSize = window.innerWidth <= 768 ? 5 : 10;
-        
-        // STEP 7: Introduce a small delay to allow the browser to process cleanup before loading
-        setTimeout(async () => {
-            console.log(`Starting load for category ${categoryId} after delay.`);
-            try {
-                // Show spinner before fetching
-                if (spinnerContainer) spinnerContainer.style.display = 'flex';
-
-                if (forced_order) {
-                    console.log("Using forced media order.");
-                    // Reconstruct fullMediaList based on forced_order URLs
-                    // This is a simplified version - assumes URLs are unique identifiers
-                    // A more robust version might need to fetch metadata if objects aren't readily available
-                    
-                    // Try to find existing file objects matching the URLs
-                    const tempMap = new Map();
-                    app.state.fullMediaList.forEach(item => { if (item) tempMap.set(item.url, item); });
-                    
-                    app.state.fullMediaList = forced_order.map(url => {
-                        // Basic reconstruction - assumes URL is enough or we find it in a previous list
-                        // This might need enhancement if full file objects are required immediately
-                        return tempMap.get(url) || { url: url, name: url.split('/').pop(), type: url.match(/\.(jpg|jpeg|png|gif)$/i) ? 'image' : (url.match(/\.(mp4|webm|mov)$/i) ? 'video' : 'unknown') };
-                    });
-                    
-                    app.state.hasMoreMedia = false; // No more pages when using forced order
-                    console.log(`Reconstructed list with ${app.state.fullMediaList.length} items from forced order.`);
-                    if (spinnerContainer) spinnerContainer.style.display = 'none'; // Hide spinner
-                    
-                } else {
-                    // STEP 8: Fetch the first page of media if no forced order
-                    const shouldForceRefresh = false; 
-                    console.log(`Loading category with forceRefresh: ${shouldForceRefresh}`);
-                    await loadMoreMedia(pageSize, app.state.currentFetchController.signal, shouldForceRefresh);
-
-                    // Check if the fetch was aborted
-                    if (app.state.currentFetchController.signal.aborted) {
-                        console.log("Fetch aborted during initial load, stopping viewCategory.");
-                        if (spinnerContainer) spinnerContainer.style.display = 'none';
-                        return; 
-                    }
-                }
-
-                // Proceed if we have media (either from fetch or forced order)
-                if (app.state.fullMediaList && app.state.fullMediaList.length > 0) {
-                    console.log("Showing unified TikTok view.");
-                    categoryView.classList.add('hidden');
-                    mediaView.classList.add('hidden'); 
-                    tiktokContainer.classList.remove('hidden');
-                    
-                    setupMediaNavigation(); 
-                    // Use the startIndex provided to the function
-                    renderMediaWindow(app.state.currentMediaIndex); 
-                    
-                    resolve(); 
-                } else if (!forced_order) {
-                    // Handle no media only if not using forced order
-                    handleNoMediaFiles(categoryId, pageSize, resolve, reject);
-                } else {
-                    // If forced order resulted in empty list (shouldn't happen if parsing works)
-                    console.error("Forced order resulted in an empty media list.");
-                    reject(new Error("Failed to load media from shared order."));
-                }
-            
-
-            } catch (error) {
-                // Handle errors specifically from loadMoreMedia or rendering
-                if (error.name !== 'AbortError') { // Don't alert on aborts
-                    console.error('!!! Error viewing category (main catch block):', error);
-                    alert('Error loading or displaying media files');
-                } else {
-                    console.log("Caught AbortError in viewCategory catch block.");
-                }
-                mediaView.classList.add('hidden');
-                categoryView.classList.remove('hidden');
-                reject(error); // Reject the promise on error
-            } 
-        }, 10); // Small delay (10ms)
-    });
-}
+        // Now reorder based on forced_order
+        const metaMap = new Map(app.state.fullMediaList.map(f => [f.url, f]));
+        app.state.fullMediaList = forced_order.map(url => {
+          const real = metaMap.get(url);
+          if (real) return real;
+          // fallback stub, but now with no-null thumbnail (you could supply your own default)
+          return {
+            url,
+            name: url.split('/').pop(),
+            type: /\.(jpe?g|png|gif)$/i.test(url) ? 'image'
+                 : /\.(mp4|webm|mov)$/i.test(url) ? 'video'
+                 : 'unknown',
+            thumbnailUrl: '/path/to/default-placeholder.png' // <-- put your own default here
+          };
+        });
+        app.state.hasMoreMedia = false;
+      } else {
+        // Normal first-page load
+        await loadMoreMedia(pageSize, signal, false);
+      }
+  
+      // Hide category view, show tiktok view
+      categoryView.classList.add('hidden');
+      mediaView.classList.add('hidden');
+      tiktokContainer.classList.remove('hidden');
+  
+      setupMediaNavigation();
+      renderMediaWindow(app.state.currentMediaIndex);
+  
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('viewCategory error:', err);
+        alert('Error loading media');
+      }
+      categoryView.classList.remove('hidden');
+      mediaView.classList.add('hidden');
+  
+    } finally {
+      if (spinnerContainer) spinnerContainer.style.display = 'none';
+    }
+  }
+  
+  
+  
 
 /**
  * Load additional media items
