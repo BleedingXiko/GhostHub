@@ -79,6 +79,10 @@ The `.exe` contains everything — no setup needed.
 > 💡 Tunnel will prompt automatically if cloudflared.exe is present
 
 ---
+Got you — here’s the **entire Docker section**, clean and ready to copy-paste as **one single chunk** for your README:
+
+````markdown
+---
 
 ### 🐳 Option 3: Docker (Cross-Platform)
 
@@ -88,33 +92,51 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 2. Add your media directories to `docker/docker-compose.yml`:
    ```yaml
-   volumes:
-     - ../instance:/app/instance
-     - ../media:/media
-     # Windows paths (Docker Desktop):
-     - C:/Users/username/Pictures:/media/pictures
-     - C:/Users/username/Videos:/media/videos
-     # Linux/macOS paths:
-     # - /home/user/Pictures:/media/pictures
-     # - /home/user/Videos:/media/videos
-   ```
+   services:
+     ghosthub:
+       build:
+         context: ..
+         dockerfile: docker/Dockerfile
+       image: ghosthub
+       container_name: ghosthub
+       ports:
+         - "5000:5000"
+       volumes:
+         - ../instance:/app/instance
+         - ../media:/media
+         # Windows paths (Docker Desktop):
+         - C:/Users/username/Pictures:/media/pictures
+         - C:/Users/username/Videos:/media/videos
+         # Linux/macOS paths:
+         # - /home/user/Pictures:/media/pictures
+         # - /home/user/Videos:/media/videos
+       environment:
+         - PORT=5000
+         - FLASK_CONFIG=production
+         - DOCKER_ENV=true
+         - TUNNEL_CHOICE=none
+         # - TUNNEL_CHOICE=cloudflare
+         # - TUNNEL_CHOICE=pinggy
+         # - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
+````
 
 3. Build and start the container:
+
    ```bash
    cd docker && docker-compose up
    ```
 
 4. Open your browser to: [http://localhost:5000](http://localhost:5000)
 
-> 📌 **Automatic Media Categories**: The Docker container automatically creates media categories for all directories mounted under `/media`. No need to manually add them in the UI!
+> 📌 **Automatic Media Categories**: The container auto-generates categories for anything mounted under `/media`.
 >
-> 📂 **Media Organization**: Mount your media directories as subdirectories of `/media` (e.g., `/media/pictures`, `/media/videos`) for better organization.
+> 🌐 **Tunneling**: Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
 >
-> 🌐 **Cloudflare Tunnel** is fully supported in the Docker container.
+> 🐳 **Pull from DockerHub** (if you don’t want to build locally):
 >
-> ⚠️ **Windows Path Format**: When using Docker on Windows, make sure to use the correct path format:
->   - Docker Desktop: `C:/Users/username/path:/media/category`
->   - WSL2/Git Bash: `/c/Users/username/path:/media/category`
+> ```bash
+> docker pull bleedingxiko/ghosthub:latest
+> ```
 
 #### Docker Commands
 
@@ -132,16 +154,22 @@ cd docker && docker-compose logs -f
 cd docker && docker-compose build
 
 # Enable Cloudflare Tunnel
-# Edit docker/docker-compose.yml and set USE_CLOUDFLARE_TUNNEL=y
+# Edit docker-compose.yml and set TUNNEL_CHOICE=cloudflare
 ```
 
 #### Docker Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| PORT | Port to run the server on | 5000 |
-| FLASK_CONFIG | Flask configuration (development/production) | development |
-| USE_CLOUDFLARE_TUNNEL | Enable Cloudflare Tunnel (y/n) | n |
+| Variable       | Description                                | Default     |
+| -------------- | ------------------------------------------ | ----------- |
+| PORT           | Port to run the server on                  | 5000        |
+| FLASK\_CONFIG  | Flask configuration mode                   | development |
+| TUNNEL\_CHOICE | Tunnel option: none, cloudflare, or pinggy | none        |
+| PINGGY\_TOKEN  | Required if TUNNEL\_CHOICE=pinggy          | —           |
+
+```
+
+Paste that directly over your current Docker section — it’s one solid block, already styled. Want me to update your GitHub README file for you too?
+```
 
 ---
 
