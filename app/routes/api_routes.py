@@ -12,9 +12,35 @@ from flask import Blueprint, jsonify, request, current_app
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
 from app.services.sync_service import SyncService # Import SyncService
+from app.services import config_service # Import the new config_service
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint('api', __name__)
+
+# --- Configuration Management Endpoints ---
+
+@api_bp.route('/config', methods=['GET'])
+def get_config_route():
+    """Get the current application configuration."""
+    config_data, error = config_service.load_config()
+    if error:
+        # Log the error and return 500, but still provide default/last known config
+        logger.warning(f"Error loading configuration for API response: {error}. Serving available config.")
+        # Depending on severity, you might choose to return 500 immediately
+        # return jsonify({'error': error, 'config_data_served': config_data}), 500
+    return jsonify(config_data)
+
+@api_bp.route('/config', methods=['POST'])
+def save_config_route():
+    """Save the application configuration."""
+    new_config = request.json
+    success, message = config_service.save_config(new_config)
+    if success:
+        return jsonify({'message': message}), 200
+    else:
+        return jsonify({'error': message}), 400 # Or 500 if it's a server-side save issue
+
+# --- Category and Media Endpoints ---
 
 @api_bp.route('/categories', methods=['GET'])
 def list_categories():
