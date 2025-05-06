@@ -221,4 +221,3 @@ GhostHub is meant to be light, fast, and ephemeral — like a digital campfire. 
 No setup. No tracking. No trace.
 
 Ghost on, my friend. 👻
-```
