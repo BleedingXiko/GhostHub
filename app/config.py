@@ -25,7 +25,7 @@ def get_application_root():
             return os.path.dirname(sys.executable)
     else:
         # Running as a script
-        # The root is the directory containing media_server.py
+        # The root is the directory containing ghosthub.py
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Config:
@@ -124,10 +124,12 @@ class Config:
 
 class DevelopmentConfig(Config):
     """Development configuration with debug mode enabled."""
+    ENV = 'development'
     DEBUG = True
 
 class ProductionConfig(Config):
     """Production configuration with debug mode disabled."""
+    ENV = 'production'
     DEBUG = False
     # Add any production-specific settings here
 

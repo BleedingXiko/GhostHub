@@ -12,7 +12,7 @@ import uuid
 import logging
 import traceback
 from flask import current_app, session, request
-from app.utils.media_utils import is_media_file, get_media_type
+from app.utils.media_utils import is_media_file, get_media_type, get_thumbnail_url, process_category_thumbnails
 from app.services.category_service import CategoryService
 from app.services.indexing_service import IndexingService
 from app.utils.file_utils import load_index, save_index, is_large_directory
@@ -196,6 +196,18 @@ class MediaService:
                         category['name'],
                         force_refresh
                     )
+                else:
+                    # Process thumbnails synchronously for smaller directories
+                    try:
+                        image_count, video_count, thumbnails_generated = process_category_thumbnails(
+                            category_path, all_files_metadata, force_refresh
+                        )
+                        logger.info(f"Processed thumbnails synchronously for '{category['name']}': {thumbnails_generated} generated/updated "
+                                   f"({video_count} videos, {image_count} images)")
+                    except Exception as thumb_error:
+                        logger.error(f"Error processing thumbnails synchronously for '{category['name']}': {thumb_error}")
+                        logger.debug(traceback.format_exc())
+                        # Continue even if thumbnail processing fails
 
             except PermissionError:
                 logger.error(f"Permission denied accessing directory: {category_path}")
@@ -335,6 +347,10 @@ class MediaService:
                     'url': f'/media/{category_id}/{quote(filename)}' # URL encode filename
                     # 'mtime': file_meta.get('mtime') # Optionally include mtime
                 }
+                
+                # Add thumbnail URL for video files
+                if file_type == 'video':
+                    info['thumbnailUrl'] = get_thumbnail_url(category_id, filename)
                 paginated_media_info.append(info)
             except Exception as file_proc_error:
                 logger.error(f"Error preparing response data for file '{filename}' in category '{category['name']}': {file_proc_error}")
@@ -529,6 +545,10 @@ class MediaService:
                         'size': file_meta.get('size', 0),
                         'url': f'/media/{category_id}/{quote(filename)}'
                     }
+                    
+                    # Add thumbnail URL for video files
+                    if file_type == 'video':
+                        info['thumbnailUrl'] = get_thumbnail_url(category_id, filename)
                     paginated_media_info.append(info)
                 
                 # Create pagination details

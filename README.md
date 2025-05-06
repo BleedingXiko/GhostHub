@@ -65,7 +65,7 @@ The `.exe` contains everything — no setup needed.
 
 4. Start the server:
    ```bash
-   python media_server.py
+   python ghosthub.py
    ```
    Or use the helper:
    ```bash

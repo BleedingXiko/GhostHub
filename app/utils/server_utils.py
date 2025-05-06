@@ -10,6 +10,7 @@ import sys
 import logging
 import socket
 import subprocess
+import shutil # For finding gunicorn executable
 import threading
 import re
 import pyperclip
@@ -155,6 +156,63 @@ def start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='n'):
         
     return tunnel_process
 
+def start_pinggy_tunnel(port, token):
+    """
+    Start Pinggy Tunnel using SSH.
+
+    Args:
+        port (int): The local port the server is running on.
+        token (str): The Pinggy authentication token.
+
+    Returns:
+        subprocess.Popen: The tunnel process object or None if failed.
+    """
+    tunnel_process = None
+    if not token:
+        print("[!] Pinggy token is required.")
+        return None
+
+    try:
+        print("Starting Pinggy Tunnel...")
+        command = [
+            "ssh", "-p", "443",
+            f"-R0:127.0.0.1:{port}", # Tunnel remote port 0 (random) to local port
+            "-L4300:127.0.0.1:4300", # Optional: Local forward for accessing something else? Keeping as per user request.
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ServerAliveInterval=30",
+            f"{token}@pro.pinggy.io"
+        ]
+        app_logger.info(f"Executing Pinggy command: {' '.join(command)}") # Log the command without token for security if needed, but token is visible here. Be careful in production logs.
+
+        # Start tunnel process, capturing stdout and stderr
+        # Consider adding creationflags=subprocess.CREATE_NO_WINDOW on Windows if the SSH window is undesirable
+        tunnel_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1
+
+        )
+
+        # Removed the capture_pinggy_url function and the thread
+
+        print("\n[+] Pinggy Tunnel process started successfully.")
+        print("[!] Please use your permanent Pinggy URL to access the server.")
+        # Optionally, print the known permanent URL if provided
+        # print(f"[!] Access via: YOUR_PERMANENT_PINGGY_URL")
+
+    except FileNotFoundError:
+        print("[!] Error starting Pinggy Tunnel: 'ssh' command not found. Make sure SSH client is installed and in your PATH.")
+        tunnel_process = None # Ensure it's None if ssh isn't found
+    except Exception as e:
+        print(f"[!] Error starting Pinggy Tunnel: {e}")
+        if tunnel_process:
+            tunnel_process.kill() # Ensure process is killed if Popen succeeded but something else failed
+            tunnel_process = None
+
+    return tunnel_process
+
+
 def configure_socket_options():
     """Configure socket options for connection stability."""
     # Configure socket options for better stability
@@ -209,51 +267,108 @@ def apply_socket_options(socket_options):
         finally:
             test_socket.close()
 
-def run_server(app, port, debug=False):
-    """Run Flask application with SocketIO using gevent."""
+def run_server(app, port):
+    """
+    Run Flask application with SocketIO.
+    Uses Gunicorn (found via PATH after pip install) with geventwebsocket worker
+    on Linux/macOS for production.
+    Uses gevent directly via socketio.run() on Windows for production and
+    all platforms for development.
+    """
+    config_env = app.config.get('ENV', 'development') # Get environment from Flask config
+    is_production = config_env == 'production'
+    is_debug = not is_production
+
     try:
-        # Configure and apply socket options
+        # Configure and apply socket options (still relevant for direct gevent use)
         socket_options = configure_socket_options()
         apply_socket_options(socket_options)
 
-        # Run the app with SocketIO using gevent for WebSockets
-        # Check if we're running in Docker environment
-        in_docker = os.environ.get('DOCKER_ENV', 'false').lower() == 'true'
-        
-        # Different parameters for Docker vs non-Docker environments
-        if in_docker:
-            # Docker environment - don't use allow_unsafe_werkzeug
-            socketio.run(
-                app,
-                host='0.0.0.0', # Listen on all interfaces
-                port=port,
-                debug=debug,
-                use_reloader=False,  # Disable reloader for production
-                log_output=False     # Disable default logging for cleaner output
-            )
+        if is_production:
+            app_logger.info(f"Starting server in PRODUCTION mode on port {port}")
+            print(f"Starting server in PRODUCTION mode on port {port}")
+            if sys.platform.startswith('linux') or sys.platform == 'darwin':
+                # Use Gunicorn on Linux/macOS (requires 'pip install gunicorn gevent-websocket')
+                gunicorn_path = shutil.which('gunicorn')
+                if gunicorn_path:
+                    app_logger.info("Found gunicorn executable in PATH. Attempting to start with geventwebsocket worker...")
+                    print("Found gunicorn executable in PATH. Attempting to start with geventwebsocket worker...")
+                    # Recommended worker count: (2 * num_cores) + 1
+                    # Defaulting to 1 for simplicity, can be configured via env var later if needed
+                    workers = os.getenv('GUNICORN_WORKERS', '1')
+                    bind_address = f'0.0.0.0:{port}'
+                    # Use os.execvp to replace the current Python process with Gunicorn
+                    # This is standard practice for process managers.
+                    args = [
+                        gunicorn_path,
+                        '-k', 'geventwebsocket.gunicorn.workers.GeventWebSocketWorker', # Specify the gevent worker for SocketIO
+                        '-w', workers,
+                        '--bind', bind_address,
+                        '--log-level', 'info', # Adjust log level as needed
+                        'wsgi:app' # Point to the app instance in wsgi.py
+                    ]
+                    app_logger.info(f"Executing Gunicorn: {' '.join(args)}")
+                    print(f"Executing Gunicorn: {' '.join(args)}")
+                    try:
+                        # Replace the current process with Gunicorn
+                        os.execvp(gunicorn_path, args)
+                        # If execvp returns, it means it failed (e.g., wsgi:app not found, worker class invalid)
+                        app_logger.error("os.execvp failed to start Gunicorn. Check Gunicorn logs or configuration.")
+                        print("[!] CRITICAL: os.execvp failed to start Gunicorn. Check Gunicorn logs or configuration.")
+                        # Fallback to gevent if execvp fails unexpectedly
+                        print("[!] Gunicorn failed, falling back to gevent server...")
+                        socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=False)
+                    except Exception as exec_err:
+                        app_logger.error(f"Failed to execute Gunicorn via os.execvp: {exec_err}")
+                        print(f"[!] CRITICAL: Failed to execute Gunicorn via os.execvp: {exec_err}")
+                        print("[!] Falling back to gevent server...")
+                        socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=False)
+
+                else:
+                    app_logger.warning("Gunicorn command not found in PATH. Falling back to gevent server for production.")
+                    print("[!] WARNING: 'gunicorn' command not found in PATH. Ensure Gunicorn and gevent-websocket are installed ('pip install gunicorn gevent-websocket'). Falling back to gevent server for production.")
+                    # Fallback for Linux/macOS if Gunicorn isn't installed or found
+                    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=False)
+            else:
+                # Use gevent directly on Windows or other non-Linux/macOS platforms for production
+                app_logger.info("Running production server directly with gevent (OS is not Linux or macOS)")
+                print("Running production server directly with gevent (OS is not Linux or macOS)")
+                socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=False)
         else:
-            # Non-Docker environment - can use allow_unsafe_werkzeug
+            # Development mode - use Werkzeug reloader via socketio.run
+            app_logger.info(f"Starting server in DEVELOPMENT mode on port {port} with reloader")
+            print(f"Starting server in DEVELOPMENT mode on port {port} with reloader")
+            # Check if running in Docker environment for allow_unsafe_werkzeug
+            in_docker = os.environ.get('DOCKER_ENV', 'false').lower() == 'true'
+            allow_unsafe = not in_docker # Only allow unsafe outside Docker
+
             socketio.run(
                 app,
-                host='0.0.0.0', # Listen on all interfaces
+                host='0.0.0.0',
                 port=port,
-                debug=debug,
-                use_reloader=False,  # Disable reloader for production
-                log_output=False,    # Disable default logging for cleaner output
-                allow_unsafe_werkzeug=True  # Allow unsafe Werkzeug options for better performance
+                debug=True,
+                use_reloader=True,
+                log_output=False, # Keep logging clean
+                allow_unsafe_werkzeug=allow_unsafe
             )
+
     except Exception as server_err:
-         app_logger.error(f"Failed to start server: {server_err}")
-         print(f"[!] Failed to start server: {server_err}")
+        app_logger.error(f"Failed to start server: {server_err}")
+        print(f"[!] Failed to start server: {server_err}")
 
 def cleanup_tunnel(tunnel_process):
-    """Terminate Cloudflare Tunnel process gracefully."""
+    """Terminate the active tunnel process (Cloudflare or Pinggy) gracefully."""
     if tunnel_process:
-        print("Terminating Cloudflare Tunnel process...")
+        print("Terminating tunnel process...")
         tunnel_process.terminate()
         try:
-            tunnel_process.wait(timeout=5) # Wait briefly for termination
+            # Wait briefly for graceful termination
+            tunnel_process.wait(timeout=5)
+            print("Tunnel process terminated.")
         except subprocess.TimeoutExpired:
-            print("Tunnel process did not terminate quickly, killing...")
+            print("Tunnel process did not terminate gracefully, killing...")
             tunnel_process.kill()
-        print("Cloudflare Tunnel process stopped.")
+            print("Tunnel process killed.")
+        except Exception as e:
+            # Catch potential errors during wait/kill
+            print(f"[!] Error during tunnel cleanup: {e}")

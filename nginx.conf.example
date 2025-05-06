@@ -1,0 +1,73 @@
+# Example Nginx configuration for GhostHub with Gunicorn + Socket.IO
+#
+# Place this file (or include it) in your Nginx configuration directory
+# (e.g., /etc/nginx/sites-available/ghosthub.conf) and create a symlink
+# in /etc/nginx/sites-enabled/.
+#
+# Remember to replace 'your_domain.com' with your actual domain name or IP address.
+# Adjust 'proxy_pass' if Gunicorn runs on a different port than 5000.
+
+# Upstream server definition for Gunicorn
+upstream ghosthub_server {
+    # Gunicorn running on localhost, port 5000 (adjust if needed)
+    server 127.0.0.1:5000;
+}
+
+server {
+    listen 80; # Listen on port 80 for HTTP
+    # listen 443 ssl http2; # Uncomment for HTTPS (requires SSL certificate setup)
+    server_name your_domain.com www.your_domain.com; # Replace with your domain
+
+    # SSL Configuration (Uncomment and configure if using HTTPS)
+    # ssl_certificate /path/to/your/fullchain.pem;
+    # ssl_certificate_key /path/to/your/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf; # Recommended Let's Encrypt options
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # Recommended Let's Encrypt options
+
+    # Redirect HTTP to HTTPS (Uncomment if using HTTPS)
+    # if ($scheme != "https") {
+    #     return 301 https://$host$request_uri;
+    # }
+
+    # Location for general application access
+    location / {
+        proxy_pass http://ghosthub_server; # Pass requests to the Gunicorn upstream
+
+        # Standard proxy headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Increase buffer sizes for potentially large media uploads/downloads
+        proxy_buffers 8 16k;
+        proxy_buffer_size 32k;
+        client_max_body_size 100M; # Adjust max upload size as needed
+    }
+
+    # Location specific for Socket.IO connections
+    # This ensures WebSocket upgrade headers are handled correctly
+    location /socket.io {
+        proxy_pass http://ghosthub_server/socket.io; # Pass Socket.IO requests
+
+        # Headers required for WebSocket proxying
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Increase timeout for long-polling fallback (if needed)
+        proxy_read_timeout 86400; # 24 hours, adjust as necessary
+    }
+
+    # Optional: Serve static files directly via Nginx for better performance
+    # Adjust '/path/to/your/GhostHub/static' to the actual path
+    # location /static {
+    #     alias /path/to/your/GhostHub/static;
+    #     expires 1d; # Cache static files for 1 day
+    #     access_log off; # Optional: disable access logging for static files
+    # }
+}

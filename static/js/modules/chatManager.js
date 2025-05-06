@@ -636,33 +636,16 @@ function displayClickableCommandMessage(data) {
             }
             
             // Navigate directly to the category and index, potentially with a forced order
-            displayLocalSystemMessage(`Navigating to shared view (Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
+            displayLocalSystemMessage(`Navigating to shared view (Category: ${categoryId}, Index: ${index}, Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
             
-            // Call viewCategory with the forced order if available
-            window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder) // Pass mediaOrder
-                .then(() => {
-                    // After category is potentially loaded with forced order, navigate to index
-                    // Ensure the index is valid within the potentially updated list
-                    if (index < app.state.fullMediaList.length) {
-                        window.appModules.mediaNavigation.renderMediaWindow(index);
-                    } else {
-                        // If the index is still out of bounds (shouldn't happen often with forced order)
-                        console.warn(`Index ${index} out of bounds after loading category ${categoryId} with forced order.`);
-                        // Attempt to load more (though less likely to succeed with forced order)
-                        ensureMediaLoadedForIndex(index)
-                            .then(() => {
-                                window.appModules.mediaNavigation.renderMediaWindow(index);
-                            })
-                            .catch(err => {
-                                console.error('Error loading media for index after forced order:', err);
-                                displayLocalSystemMessage(`Error: Could not load the specific item in the shared view.`);
-                            });
-                    }
-                })
+            // Call viewCategory with the forced order AND the target index
+            window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder, index) // Pass mediaOrder and index
                 .catch(err => {
-                    console.error('Error loading category with forced order:', err);
-                    displayLocalSystemMessage(`Error: Could not load the shared category view.`);
+                    // Handle potential errors from viewCategory itself
+                    console.error('Error loading category/view:', err);
+                    displayLocalSystemMessage(`Error: Could not load the shared view.`);
                 });
+            // Removed the .then() block that called renderMediaWindow again
         });
     }
     
@@ -908,27 +891,16 @@ function addMessageToDOM(data, saveToState = true) {
                     }
                 }
                 
-                displayLocalSystemMessage(`Navigating to shared view (Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
+                displayLocalSystemMessage(`Navigating to shared view (Category: ${categoryId}, Index: ${index}, Order: ${mediaOrder ? 'Forced' : 'Default'})...`);
                 
-                window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder)
-                    .then(() => {
-                        if (index < app.state.fullMediaList.length) {
-                            window.appModules.mediaNavigation.renderMediaWindow(index);
-                        } else {
-                            ensureMediaLoadedForIndex(index)
-                                .then(() => {
-                                    window.appModules.mediaNavigation.renderMediaWindow(index);
-                                })
-                                .catch(err => {
-                                    console.error('Error loading media for index:', err);
-                                    displayLocalSystemMessage(`Error: Could not load the specific item in the shared view.`);
-                                });
-                        }
-                    })
+                // Call viewCategory with the forced order AND the target index
+                window.appModules.mediaLoader.viewCategory(categoryId, mediaOrder, index) // Pass mediaOrder and index
                     .catch(err => {
-                        console.error('Error loading category:', err);
-                        displayLocalSystemMessage(`Error: Could not load the shared category view.`);
+                        // Handle potential errors from viewCategory itself
+                        console.error('Error loading category/view:', err);
+                        displayLocalSystemMessage(`Error: Could not load the shared view.`);
                     });
+                // Removed the .then() block that called renderMediaWindow again
             });
         }
     } else {
