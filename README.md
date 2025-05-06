@@ -211,8 +211,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 ## ⚠️ Known Issues
 
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
-- **Rapid Navigation**: Extremely rapid scrolling through videos (especially on mobile) may occasionally cause temporary UI glitches. Simply pause for a moment to allow the app to catch up. In rare cases, you may need to close and reopen the site.
-- **Sync Button Glitch**: Enabling sync mode while actively viewing a category can cause the category view to glitch. Enable sync mode before entering a category or after backing out to the category view. A fix is on the roadmap.
+
 
 ## 💬 Final Notes
 
