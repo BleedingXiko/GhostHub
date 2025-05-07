@@ -110,10 +110,6 @@ Run GhostHub in a Docker container for easy deployment on any platform.
          - PORT=5000
          - FLASK_CONFIG=production
          - DOCKER_ENV=true
-         - TUNNEL_CHOICE=none
-         # - TUNNEL_CHOICE=cloudflare
-         # - TUNNEL_CHOICE=pinggy
-         # - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
    ```
 
 3. Build and start the container:
@@ -125,11 +121,11 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 > 📌 **Automatic Media Categories**: The container auto-generates categories for anything mounted under `/media`.
 >
-> 🌐 **Tunneling**: Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
+> 🌐 **Tunneling**: Tunnels are now managed through the web UI. Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
 >
 > 🐳 **Pull from DockerHub** (if you don't want to build locally):
 > ```bash
-> docker pull bleedingxiko/ghosthub:latest
+> docker pull dhux/ghosthub:latest
 > ```
 
 #### Docker Commands
@@ -146,8 +142,7 @@ cd docker && docker-compose logs -f
 # Rebuild the container (after changes)
 cd docker && docker-compose build
 
-# Enable Tunnel
-# Edit docker-compose.yml and set TUNNEL_CHOICE=TUNNEL
+# Tunnel management is available through the web UI
 ```
 
 #### Docker Environment Variables
@@ -155,8 +150,6 @@ cd docker && docker-compose build
 |----------------|--------------------------------------------|-------------|
 | PORT           | Port to run the server on                  | 5000        |
 | FLASK_CONFIG   | Flask configuration mode                   | development |
-| TUNNEL_CHOICE  | Tunnel option: none, cloudflare, or pinggy | none        |
-| PINGGY_TOKEN   | Required if TUNNEL_CHOICE=pinggy           | —           |
 
 ---
 
@@ -198,7 +191,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 ## 🧪 Troubleshooting
 
 - Media not loading? Check your paths and file types
-- Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
+- Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode). For Docker, tunnels are managed through the web UI.
 - Chat or sync buggy? Refresh — GhostHub is resilient and stateless
 - Crashes? Run from terminal for logs:
   ```bash

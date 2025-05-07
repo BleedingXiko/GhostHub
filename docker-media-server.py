@@ -8,7 +8,6 @@ Supports automatic media detection from mounted volumes.
 Environment Variables:
 - FLASK_CONFIG: 'development' (default) or 'production'
 - PORT: Server port number (default: 5000)
-- USE_CLOUDFLARE_TUNNEL: 'y' or 'n' (default: 'n')
 """
 
 import os
@@ -22,10 +21,10 @@ from app.utils.server_utils import (
     initialize_app,
     display_server_info,
     find_cloudflared_path,
-    start_cloudflare_tunnel,
-    start_pinggy_tunnel,  # Import the new function
+    # start_cloudflare_tunnel, # No longer called directly at startup
+    # start_pinggy_tunnel,    # No longer called directly at startup
     run_server,
-    cleanup_tunnel
+    stop_active_tunnel # Ensures any active tunnel is stopped on exit
 )
 
 # Get configuration from environment variables
@@ -40,44 +39,20 @@ if __name__ == '__main__':
     # Display server information
     display_server_info(config_name, port)
     
-    # Find cloudflared executable
-    cloudflared_path = find_cloudflared_path()
-    
-    # Determine tunnel choice from environment variables
-    tunnel_process = None
-    tunnel_choice = os.getenv('TUNNEL_CHOICE', 'none').lower()
-    pinggy_token = os.getenv('PINGGY_TOKEN') # Will be None if not set
+    # Find cloudflared executable path (needed for API calls, not direct CLI start)
+    # This call doesn't start anything, just finds the path if it exists.
+    find_cloudflared_path()
 
-    print("\n--- Tunnel Configuration (Docker) ---")
-    print(f"TUNNEL_CHOICE set to: {tunnel_choice}")
-
-    # Start the selected tunnel
-    try:
-        if tunnel_choice == 'cloudflare':
-            if cloudflared_path:
-                # Use 'y' to trigger the existing logic in start_cloudflare_tunnel
-                tunnel_process = start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='y')
-            else:
-                print("[!] Cloudflared executable not found in container. Cannot start Cloudflare Tunnel.")
-        elif tunnel_choice == 'pinggy':
-            if pinggy_token:
-                print("PINGGY_TOKEN found.")
-                tunnel_process = start_pinggy_tunnel(port, pinggy_token)
-            else:
-                print("[!] WARNING: TUNNEL_CHOICE is 'pinggy' but PINGGY_TOKEN is not set. Tunnel will not start.")
-        elif tunnel_choice == 'none':
-            print("Skipping tunneling as per TUNNEL_CHOICE=none.")
-        else:
-            print(f"Invalid TUNNEL_CHOICE '{tunnel_choice}'. Skipping tunneling.")
-
-    except Exception as e:
-        print(f"[!] Error setting up tunnel: {e}")
+    # CLI tunnel selection logic has been removed.
+    # Tunnels will be managed via the UI.
 
     print("\n--- Starting Server ---")
+    print("Tunnel management is now available via the web UI.")
     try:
         # Run the server (blocking call)
         # The run_server function now determines debug/production mode internally
         run_server(app, port)
     finally:
-        # Clean up tunnel process if it exists
-        cleanup_tunnel(tunnel_process)
+        # Clean up any active tunnel using the new global state function
+        print("\n--- Server Shutting Down ---")
+        stop_active_tunnel()
