@@ -248,7 +248,6 @@ def start_pinggy_tunnel(port, token):
             f"-R0:127.0.0.1:{port}",
             "-o", "StrictHostKeyChecking=no",
             "-o", "ServerAliveInterval=30", # Changed from 60
-            "-o", "ExitOnForwardFailure=yes",
             f"{token}@pro.pinggy.io" # Changed from a.pinggy.io
         ]
         app_logger.info(f"Executing Pinggy command: {' '.join(command)}")
@@ -265,7 +264,9 @@ def start_pinggy_tunnel(port, token):
         
         # Monitor Pinggy's output for success/failure indicators
         # Timeout after ~7 seconds if no clear indicator is found but process is running
-        success_indicators = ["Tunnel established", "Authenticated.", "URL:", "tcp.pinggy.io", "http.pinggy.io"]
+        # Expanded success indicators to catch more possible success messages
+        success_indicators = ["Tunnel established", "Authenticated.", "URL:", "tcp.pinggy.io", "http.pinggy.io", 
+                             "Remote forwarding", "Entering interactive session", "debug1: Connection established"]
         # More specific error patterns from SSH/Pinggy
         error_patterns = [
             "Permission denied", "Connection refused", "Could not resolve hostname",
