@@ -7,6 +7,7 @@ from app.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Path to the main JSON configuration file stored in the instance folder.
 CONFIG_FILE_PATH = os.path.join(Config.INSTANCE_FOLDER_PATH, 'ghosthub_config.json')
 
 def get_default_config():
@@ -21,7 +22,8 @@ def get_default_config():
             "WS_RECONNECT_DELAY": 1000,
             "WS_RECONNECT_FACTOR": 1.5,
             "MEMORY_CLEANUP_INTERVAL": 60000,
-            "MAX_CACHE_SIZE": 50
+            "MAX_CACHE_SIZE": 50,
+            "SESSION_PASSWORD": ""
         },
         "javascript_config": {
             "main": {

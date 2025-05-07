@@ -13,8 +13,13 @@ const swipeThreshold = 50;
 let lastTap = 0;
 const doubleTapDelay = 300; // ms
 
+// Mouse wheel debounce variables
+let wheelDebounceTimeout;
+const WHEEL_DEBOUNCE_DELAY = 300; // ms
+
 // Event handler functions
 let handleTouchStart, handleTouchMove, handleTouchEnd, handleKeyDown;
+// No need to declare handleMouseWheel here if it's a direct function definition
 
 /**
  * Setup swipe and keyboard navigation for media
@@ -25,6 +30,11 @@ function setupMediaNavigation() {
     document.body.removeEventListener('touchmove', handleTouchMove);
     document.body.removeEventListener('touchend', handleTouchEnd);
     document.removeEventListener('keydown', handleKeyDown);
+
+    const tiktokViewerElement = document.getElementById('tiktok-container');
+    if (tiktokViewerElement) {
+        tiktokViewerElement.removeEventListener('wheel', handleMouseWheel);
+    }
 
     // Define touch start handler
     handleTouchStart = function(e) {
@@ -173,10 +183,45 @@ function setupMediaNavigation() {
     };
 
     // Add new event listeners
-    document.body.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.body.addEventListener('touchstart', handleTouchStart, { passive: false }); // passive:false because preventDefault is used
     document.body.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.body.addEventListener('touchend', handleTouchEnd);
     document.addEventListener('keydown', handleKeyDown);
+
+    if (tiktokViewerElement) {
+        tiktokViewerElement.addEventListener('wheel', handleMouseWheel, { passive: false });
+    }
+}
+
+// Debounce function for media navigation via wheel
+function debouncedNavigateMedia(direction, event) {
+    clearTimeout(wheelDebounceTimeout);
+    wheelDebounceTimeout = setTimeout(() => {
+        navigateMedia(direction, event);
+    }, WHEEL_DEBOUNCE_DELAY);
+}
+
+// Mouse wheel event handler
+function handleMouseWheel(e) {
+    const tiktokViewer = document.getElementById('tiktok-container'); // Get fresh reference
+    if (!tiktokViewer || tiktokViewer.classList.contains('hidden')) {
+        return; // Only act if media viewer is active
+    }
+
+    // Prevent default page scrolling behavior
+    e.preventDefault();
+
+    // Respect navigationDisabled state
+    if (app.state.navigationDisabled) {
+        console.log('Mouse wheel navigation ignored: navigation is disabled.');
+        return;
+    }
+    
+    if (e.deltaY > 0) { // Scrolling down
+        debouncedNavigateMedia('next', e);
+    } else if (e.deltaY < 0) { // Scrolling up
+        debouncedNavigateMedia('prev', e);
+    }
 }
 
 // Export the event handlers and setup function
@@ -186,4 +231,5 @@ export {
     handleTouchMove,
     handleTouchEnd,
     handleKeyDown
+    // handleMouseWheel is used internally by the event listener setup
 };

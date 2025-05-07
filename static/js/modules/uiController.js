@@ -258,47 +258,51 @@ function createConfigInput(key, value, pathPrefix = '') {
     let input;
     const inputWrapper = document.createElement('div'); // Wrapper for input and its description
     inputWrapper.className = 'input-wrapper';
+    const fullPathKey = `${pathPrefix}${key}`; // Use this for checks and dataset
 
     if (typeof value === 'boolean') {
         input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = value;
         input.className = 'config-input-checkbox';
-        const checkboxLabel = document.createElement('span'); // Use a separate span for the text part of checkbox label
+        const checkboxLabel = document.createElement('span');
         checkboxLabel.className = 'checkbox-label-text';
-        checkboxLabel.textContent = ` ${labelText}`; // Use the original formatted label text
+        checkboxLabel.textContent = ` ${labelText}`;
         
-        // The main label element will now only contain the help icon for checkboxes
         label.textContent = ''; 
         label.appendChild(helpIcon);
 
         inputWrapper.appendChild(input);
-        inputWrapper.appendChild(checkboxLabel); // Add text label next to checkbox
-        inputWrapper.appendChild(descriptionDiv); // Description below checkbox and its text label
-        formGroup.appendChild(label); // Label with help icon
-        formGroup.appendChild(inputWrapper); // Wrapper with checkbox, text, and description
-    } else { // For number and text inputs
-        if (typeof value === 'number') {
-            input = document.createElement('input');
+        inputWrapper.appendChild(checkboxLabel);
+        inputWrapper.appendChild(descriptionDiv);
+        formGroup.appendChild(label);
+        formGroup.appendChild(inputWrapper);
+    } else { // For number, text, and password inputs
+        input = document.createElement('input');
+        if (fullPathKey === 'python_config.SESSION_PASSWORD') {
+            input.type = 'password';
+            input.value = ''; // Always clear password field for security
+            input.placeholder = 'Leave blank for no password';
+        } else if (typeof value === 'number') {
             input.type = 'number';
             input.value = value;
             if (key.includes('FACTOR')) {
                 input.step = '0.1';
             }
-        } else { // Treat as string
-            input = document.createElement('input');
+        } else { // Treat as string (default)
             input.type = 'text';
             input.value = value;
         }
         inputWrapper.appendChild(input);
-        inputWrapper.appendChild(descriptionDiv); // Description below input
-        formGroup.appendChild(label); // Label with help icon
-        formGroup.appendChild(inputWrapper); // Wrapper with input and description
+        inputWrapper.appendChild(descriptionDiv);
+        formGroup.appendChild(label);
+        formGroup.appendChild(inputWrapper);
     }
     
     if (input) {
-      input.id = `config-${pathPrefix}${key}`;
-      input.dataset.path = `${pathPrefix}${key}`;
+      // Generate a valid ID by replacing dots with hyphens
+      input.id = `config-${fullPathKey.replace(/\./g, '-')}`;
+      input.dataset.path = fullPathKey; // Store the original dot-separated path
     }
 
     return formGroup;
@@ -315,30 +319,41 @@ function populateConfigModal() {
 
     configModalBody.innerHTML = ''; // Clear previous content
 
-    // Iterate over python_config
-    if (window.appConfig.python_config) {
-        const pythonHeader = document.createElement('h3');
-        pythonHeader.className = 'config-section-header collapsed'; // Collapsed by default
-        pythonHeader.textContent = 'Server Settings (Python)';
-        configModalBody.appendChild(pythonHeader);
+    // --- Python Config Section ---
+    const pythonHeader = document.createElement('h3');
+    pythonHeader.className = 'config-section-header collapsed';
+    pythonHeader.textContent = 'Server Settings (Python)';
+    configModalBody.appendChild(pythonHeader);
 
-        const pythonSettingsContainer = document.createElement('div');
-        pythonSettingsContainer.className = 'config-section-settings collapsed'; // Collapsed by default
-        const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
-        for (const [key, value] of Object.entries(window.appConfig.python_config)) {
-            if (!tunnelConfigKeys.includes(key)) { // Only add if not a tunnel-specific key
-                pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+    const pythonSettingsContainer = document.createElement('div');
+    pythonSettingsContainer.className = 'config-section-settings collapsed';
+    
+    const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
+
+    // Iterate over CONFIG_DESCRIPTIONS for python_config keys to ensure all described fields are attempted
+    for (const fullKey in CONFIG_DESCRIPTIONS) {
+        if (fullKey.startsWith('python_config.')) {
+            const key = fullKey.substring('python_config.'.length);
+            if (!tunnelConfigKeys.includes(key)) { // Exclude tunnel-specific keys handled elsewhere
+                // Get value from window.appConfig, default to empty string if not found (e.g., for new SESSION_PASSWORD)
+                const value = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty(key))
+                              ? window.appConfig.python_config[key]
+                              : (key === 'SESSION_PASSWORD' ? '' : undefined); // Default SESSION_PASSWORD to ""
+
+                if (value !== undefined) { // Only create input if a value or default is determined
+                    pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+                }
             }
         }
-        configModalBody.appendChild(pythonSettingsContainer);
-        pythonHeader.addEventListener('click', () => {
-            pythonSettingsContainer.classList.toggle('collapsed');
-            pythonHeader.classList.toggle('collapsed');
-        });
     }
+    configModalBody.appendChild(pythonSettingsContainer);
+    pythonHeader.addEventListener('click', () => {
+        pythonSettingsContainer.classList.toggle('collapsed');
+        pythonHeader.classList.toggle('collapsed');
+    });
 
-    // Iterate over javascript_config sections
-    if (window.appConfig.javascript_config) {
+    // --- JavaScript Config Sections ---
+    if (window.appConfig && window.appConfig.javascript_config) {
         for (const [sectionKey, sectionValue] of Object.entries(window.appConfig.javascript_config)) {
             const sectionHeader = document.createElement('h3');
             sectionHeader.className = 'config-section-header collapsed'; // Collapsed by default

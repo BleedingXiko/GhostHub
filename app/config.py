@@ -8,6 +8,9 @@ Supports both script and executable modes with environment variable overrides.
 import os
 import sys
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_application_root():
     """
@@ -54,6 +57,7 @@ class Config:
     TUNNEL_PROVIDER = "none"  # "none", "pinggy", "cloudflare"
     PINGGY_ACCESS_TOKEN = ""
     TUNNEL_LOCAL_PORT = 5000
+    SESSION_PASSWORD = ""  # Password for session access, empty means no password
     
     # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
@@ -131,9 +135,9 @@ _python_config_from_json = {}
 if not os.path.exists(Config.INSTANCE_FOLDER_PATH):
     try:
         os.makedirs(Config.INSTANCE_FOLDER_PATH)
-        print(f"Created instance folder: {Config.INSTANCE_FOLDER_PATH}")
+        logger.info(f"Created instance folder: {Config.INSTANCE_FOLDER_PATH}")
     except OSError as e:
-        print(f"Error creating instance folder {Config.INSTANCE_FOLDER_PATH}: {e}")
+        logger.error(f"Error creating instance folder {Config.INSTANCE_FOLDER_PATH}: {e}")
 
 if os.path.exists(_config_json_path):
     try:
@@ -142,13 +146,13 @@ if os.path.exists(_config_json_path):
             _python_config_from_json = _loaded_json.get('python_config', {})
     except FileNotFoundError:
         # This case should ideally not be hit if os.path.exists is true, but as a safeguard:
-        print(f"Warning: Config file disappeared between check and open: {_config_json_path}. Using defaults.")
+        logger.warning(f"Config file disappeared between check and open: {_config_json_path}. Using defaults.")
     except json.JSONDecodeError:
-        print(f"Warning: Error decoding JSON from {_config_json_path}. Using defaults and environment variables.")
+        logger.warning(f"Error decoding JSON from {_config_json_path}. Using defaults and environment variables.")
     except Exception as e:
-        print(f"Warning: An unexpected error occurred while reading {_config_json_path}: {e}. Using defaults and environment variables.")
+        logger.warning(f"An unexpected error occurred while reading {_config_json_path}: {e}. Using defaults and environment variables.")
 else:
-    print(f"Info: Configuration file {_config_json_path} not found. Using defaults and environment variables. A default config will be created if settings are saved via UI.")
+    logger.info(f"Configuration file {_config_json_path} not found. Using defaults and environment variables. A default config will be created if settings are saved via UI.")
 
 _configurable_keys_info = {
     'CACHE_EXPIRY': int,
@@ -162,7 +166,8 @@ _configurable_keys_info = {
     'MAX_CACHE_SIZE': int,
     'TUNNEL_PROVIDER': str,
     'PINGGY_ACCESS_TOKEN': str,
-    'TUNNEL_LOCAL_PORT': int
+    'TUNNEL_LOCAL_PORT': int,
+    'SESSION_PASSWORD': str
 }
 
 for key, type_converter in _configurable_keys_info.items():
@@ -174,7 +179,7 @@ for key, type_converter in _configurable_keys_info.items():
             json_val = _python_config_from_json[key]
             setattr(Config, key, type_converter(json_val))
         except (ValueError, TypeError) as e:
-            print(f"Warning: Invalid value for '{key}' in config.json: '{_python_config_from_json[key]}'. Error: {e}. Using previous value.")
+            logger.warning(f"Invalid value for '{key}' in config.json: '{_python_config_from_json[key]}'. Error: {e}. Using previous value.")
             # Value remains as hardcoded default or previously set env var if this is a re-load
             
     # 3. Apply Environment variable if present (overrides JSON and hardcoded default)
@@ -183,7 +188,7 @@ for key, type_converter in _configurable_keys_info.items():
         try:
             setattr(Config, key, type_converter(env_value))
         except (ValueError, TypeError) as e:
-            print(f"Warning: Invalid value for environment variable '{key}': '{env_value}'. Error: {e}. Using previous value.")
+            logger.warning(f"Invalid value for environment variable '{key}': '{env_value}'. Error: {e}. Using previous value.")
             # Value remains as hardcoded default or JSON value
 
 

@@ -14,6 +14,7 @@ export const CONFIG_DESCRIPTIONS = {
     "python_config.WS_RECONNECT_FACTOR": "WebSocket Reconnect Factor (Server): Multiplier for WebSocket reconnection delay increase after each failed attempt. Default: 1.5.",
     "python_config.MEMORY_CLEANUP_INTERVAL": "Memory Cleanup Interval (ms, Server): How often the server performs certain memory cleanup tasks. Default: 60000.",
     "python_config.MAX_CACHE_SIZE": "Max Cache Size (Server/Client): Maximum number of items for certain server-side caches. This value is also passed to the client to guide its media element cache size. Default: 50.",
+    "python_config.SESSION_PASSWORD": "Session Password: Set a password to protect access to categories. Leave blank to disable. Takes effect immediately.",
 
     // JavaScript Config - main
     "javascript_config.main.socket_reconnectionAttempts": "Main Socket Reconnect Attempts (Client): Max reconnection attempts for the primary client-side WebSocket (used for chat/general events). Default: 5.",

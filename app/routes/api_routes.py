@@ -29,6 +29,9 @@ def get_config_route():
         logger.warning(f"Error loading configuration for API response: {error}. Serving available config.")
         # Depending on severity, you might choose to return 500 immediately
         # return jsonify({'error': error, 'config_data_served': config_data}), 500
+    
+    # Add password protection status
+    config_data['isPasswordProtectionActive'] = current_app.config.get('SESSION_PASSWORD', '') != ''
     return jsonify(config_data)
 
 @api_bp.route('/config', methods=['POST'])
@@ -37,9 +40,32 @@ def save_config_route():
     new_config = request.json
     success, message = config_service.save_config(new_config)
     if success:
-        return jsonify({'message': message}), 200
+        # Update the live application config for SESSION_PASSWORD
+        if 'python_config' in new_config and 'SESSION_PASSWORD' in new_config['python_config']:
+            current_app.config['SESSION_PASSWORD'] = new_config['python_config']['SESSION_PASSWORD']
+            logger.info(f"Live SESSION_PASSWORD updated in app config.")
+        
+        response_data = {
+            'message': message,
+            'isPasswordProtectionActive': current_app.config.get('SESSION_PASSWORD', '') != ''
+        }
+        return jsonify(response_data), 200
     else:
         return jsonify({'error': message}), 400 # Or 500 if it's a server-side save issue
+
+@api_bp.route('/validate_session_password', methods=['POST'])
+def validate_session_password():
+    """Validate the submitted session password."""
+    submitted_password = request.json.get('password')
+    actual_password = current_app.config.get('SESSION_PASSWORD', '')
+
+    if not actual_password: # If no password is set in config, access is always granted
+        return jsonify({"valid": True, "message": "No password protection active."})
+
+    if submitted_password == actual_password:
+        return jsonify({"valid": True})
+    else:
+        return jsonify({"valid": False, "message": "Incorrect password."})
 
 # --- Category and Media Endpoints ---
 

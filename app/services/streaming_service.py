@@ -51,6 +51,44 @@ ULTRA_FAST_CHUNK_SIZE = 32 * 1024  # 32KB for immediate response
 SOCKET_ERRORS = (ConnectionError, ConnectionResetError, ConnectionAbortedError, 
                 BrokenPipeError, socket.timeout, socket.error)
 
+def _set_common_response_headers(response, filepath, mime_type, file_size, etag, is_video, is_range_request=False, range_start=None, range_end=None):
+    """Helper function to set common headers for streaming responses."""
+    response.headers['Content-Length'] = file_size if not is_range_request else (range_end - range_start + 1)
+    response.headers['Cache-Control'] = 'public, max-age=86400'  # Cache for 1 day
+    if etag:
+        response.headers['ETag'] = etag
+    
+    filename = os.path.basename(filepath)
+    response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+    response.headers['Connection'] = 'keep-alive'
+
+    if is_video:
+        response.headers['Accept-Ranges'] = 'bytes'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Play-Immediately'] = 'true'
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept'
+        response.headers['Cache-Control'] = 'public, max-age=86400, immutable' # More specific for videos
+
+        if mime_type == 'video/mp4':
+            response.headers['Content-Type'] = f'{mime_type}; codecs="avc1.42E01E, mp4a.40.2"'
+        elif mime_type == 'video/quicktime':
+            response.headers['Content-Type'] = mime_type # Keep original
+            response.headers['X-Video-Codec'] = 'h264' # Hint codec
+        # else, Content-Type is already set by mimetype in Response constructor
+    else:
+        response.headers['Accept-Ranges'] = 'none'
+
+    if is_range_request:
+        response.status_code = 206  # Partial Content
+        response.headers['Content-Range'] = f'bytes {range_start}-{range_end}/{file_size}'
+    
+    # For non-range requests that are videos, ensure Content-Type is set correctly if not already modified
+    elif is_video and mime_type not in ['video/mp4', 'video/quicktime']:
+         response.headers['Content-Type'] = mime_type
+
+
 def serve_small_file(filepath, mime_type, etag, is_video=False):
     """
     Serve small files from memory cache with optimized headers.
@@ -76,43 +114,15 @@ def serve_small_file(filepath, mime_type, etag, is_video=False):
     # Create response
     response = Response(
         file_data,
-        mimetype=mime_type
+        mimetype=mime_type # Initial mimetype
     )
     
-    # Add optimized headers
-    response.headers['Content-Length'] = file_size
-    response.headers['Cache-Control'] = 'public, max-age=86400'  # Cache for 1 day
-    response.headers['ETag'] = etag
+    _set_common_response_headers(response, filepath, mime_type, file_size, etag, is_video)
     
-    # Add special headers for video files
+    # Specific logging for small video files
     if is_video:
-        logger.info(f"Applying video optimizations for small video: {filepath}")
-        # Tell browser it can start playing as soon as possible
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        # Hint to browser to start playing ASAP
-        response.headers['X-Play-Immediately'] = 'true'
-        # Suggest inline display rather than download
-        filename = os.path.basename(filepath)
-        response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
-        
-        # Add additional headers to help with browser compatibility
-        response.headers['Access-Control-Allow-Origin'] = '*'  # Allow cross-origin requests
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept'
-        
-        # Add cache control headers for better browser caching
-        response.headers['Cache-Control'] = 'public, max-age=86400, immutable'  # Cache for 1 day
-        
-        # Add content type parameters to help browsers
-        if mime_type == 'video/mp4':
-            response.headers['Content-Type'] = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
-        elif mime_type == 'video/quicktime':
-            # For MOV files, provide alternative MIME types that browsers might recognize better
-            response.headers['Content-Type'] = 'video/quicktime'
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            # Add a hint that this is H.264 video (common in MOV files)
-            response.headers['X-Video-Codec'] = 'h264'
-    
+        logger.info(f"Serving small video with optimized headers: {filepath}")
+
     return response
 
 def is_video_file(filename):
@@ -405,56 +415,15 @@ def serve_large_file_non_blocking(filepath, mime_type, file_size, etag, is_video
     # Create streaming response
     response = Response(
         generate(),
-        mimetype=mime_type,
-        direct_passthrough=True  # Don't buffer in Flask
+        mimetype=mime_type, # Initial mimetype
+        direct_passthrough=True
     )
     
-    # Add optimized headers
-    response.headers['Content-Length'] = content_length
-    response.headers['Cache-Control'] = 'public, max-age=86400'  # Cache for 1 day
-    response.headers['ETag'] = etag
-    
-    # Enable Range requests for videos to improve browser compatibility
-    if is_video:
-        response.headers['Accept-Ranges'] = 'bytes'
-    else:
-        response.headers['Accept-Ranges'] = 'none'
-    
-    # Set status code and additional headers for range requests
-    if is_range_request:
-        response.status_code = 206  # Partial Content
-        response.headers['Content-Range'] = f'bytes {range_start}-{range_end}/{file_size}'
-    
-    # Add performance headers
-    response.headers['X-Accel-Buffering'] = 'no'  # Disable proxy buffering
-    response.headers['Connection'] = 'keep-alive'  # Keep connection open
-    
-    # Add special headers for video files
-    if is_video:
-        # Tell browser it can start playing as soon as possible
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        # Hint to browser to start playing ASAP
-        response.headers['X-Play-Immediately'] = 'true'
-        # Suggest inline display rather than download
-        filename = os.path.basename(filepath)
-        response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
-        
-        # Add additional headers to help with browser compatibility
-        response.headers['Access-Control-Allow-Origin'] = '*'  # Allow cross-origin requests
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept'
-        
-        # Add cache control headers for better browser caching
-        response.headers['Cache-Control'] = 'public, max-age=86400, immutable'  # Cache for 1 day
-        
-        # Add content type parameters to help browsers
-        if mime_type == 'video/mp4':
-            response.headers['Content-Type'] = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
-        elif mime_type == 'video/quicktime':
-            # For MOV files, provide alternative MIME types that browsers might recognize better
-            response.headers['Content-Type'] = 'video/quicktime'
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            # Add a hint that this is H.264 video (common in MOV files)
-            response.headers['X-Video-Codec'] = 'h264'
+    _set_common_response_headers(response, filepath, mime_type, file_size, etag, is_video, is_range_request, range_start, range_end)
+    response.headers['X-Accel-Buffering'] = 'no' # Specific to this function for proxy interaction
+
+    # Ensure status code is set correctly by helper or here
+    if not is_range_request:
+        response.status_code = 200
     
     return response

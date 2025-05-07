@@ -21,6 +21,8 @@ async function fetchAndApplyConfig() {
         window.appConfig = currentConfig; // Make it globally accessible
         initialConfigFetched = true;
         console.log('Application configuration loaded:', currentConfig);
+        // Log the password protection status using getConfigValue for consistency
+        console.log('Password protection active:', getConfigValue('isPasswordProtectionActive', false));
         return currentConfig;
     } catch (error) {
         console.error('Error fetching application configuration:', error);
@@ -73,9 +75,14 @@ async function saveConfig(newConfigData) {
         }
         const result = await response.json();
         // Update local config cache on successful save
-        currentConfig = { ...newConfigData }; // Assume newConfigData is the full, correct structure
-        window.appConfig = currentConfig;
+        // newConfigData is what was sent. The result from server contains the message and potentially updated flags.
+        currentConfig = { ...newConfigData }; 
+        if (result.isPasswordProtectionActive !== undefined) {
+            currentConfig.isPasswordProtectionActive = result.isPasswordProtectionActive;
+        }
+        window.appConfig = currentConfig; // Update global reference
         console.log('Configuration saved successfully:', result.message);
+        console.log('Password protection now active:', getConfigValue('isPasswordProtectionActive', false));
         return result;
     } catch (error) {
         console.error('Error saving application configuration:', error);
