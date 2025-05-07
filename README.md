@@ -129,7 +129,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 >
 > 🐳 **Pull from DockerHub** (if you don't want to build locally):
 > ```bash
-> docker pull bleedingxiko/ghosthub:latest
+> docker pull dhux/ghosthub:latest
 > ```
 
 #### Docker Commands
