@@ -10,6 +10,7 @@ import logging
 from flask import Flask, request
 from flask_socketio import SocketIO
 from .config import config_by_name
+from .utils.log_utils import LogObfuscationFilter # Import the filter
 
 # Logging configuration
 logging.basicConfig(
@@ -17,7 +18,20 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger(__name__)
+
+# Apply the obfuscation filter
+obfuscation_filter = LogObfuscationFilter()
+
+# Add filter to the root logger itself
+root_logger = logging.getLogger()
+root_logger.addFilter(obfuscation_filter)
+
+# Also, add filter to all handlers of the root logger
+# This is important because basicConfig adds a handler to the root logger.
+for handler in root_logger.handlers:
+    handler.addFilter(obfuscation_filter)
+
+logger = logging.getLogger(__name__) # Get a logger for this module AFTER filter is applied
 
 # SocketIO initialization with optimized settings
 socketio = SocketIO(

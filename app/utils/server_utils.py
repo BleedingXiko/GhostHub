@@ -204,13 +204,52 @@ def start_pinggy_tunnel(port, token):
     try:
         app_logger.info(f"Attempting to start Pinggy Tunnel for port {port}")
         print(f"Starting Pinggy Tunnel for port {port}...")
+
+        # Attempt to run ssh-keygen as requested by user
+        try:
+            # Define the path for the key, making it specific to this application
+            # os.path.expanduser will resolve ~ to the user's home directory
+            ssh_key_path = os.path.expanduser("~/.ssh/id_rsa_gh_pinggy")
+            
+            # Ensure the .ssh directory exists, creating it if necessary
+            ssh_dir = os.path.dirname(ssh_key_path)
+            if not os.path.exists(ssh_dir):
+                os.makedirs(ssh_dir, exist_ok=True)
+                # On Unix-like systems, .ssh directory should have 0700 permissions
+                if sys.platform != 'win32': 
+                    os.chmod(ssh_dir, 0o700) 
+            
+            # Run ssh-keygen only if the specific key does not already exist.
+            # ssh-keygen options: -t type, -b bits, -N new_passphrase, -f output_keyfile
+            if not os.path.exists(ssh_key_path):
+                keygen_command = ["ssh-keygen", "-t", "rsa", "-b", "2048", "-N", "", "-f", ssh_key_path]
+                app_logger.info(f"Executing ssh-keygen command: {' '.join(keygen_command)}")
+                
+                creation_flags_keygen = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0 
+                
+                keygen_process = subprocess.run(keygen_command, capture_output=True, text=True, check=False, creationflags=creation_flags_keygen)
+                if keygen_process.returncode == 0:
+                    app_logger.info(f"ssh-keygen created new key successfully: {ssh_key_path}")
+                    # Set permissions for the newly created key files on Unix-like systems
+                    if sys.platform != 'win32':
+                        os.chmod(ssh_key_path, 0o600)
+                        if os.path.exists(ssh_key_path + ".pub"):
+                             os.chmod(ssh_key_path + ".pub", 0o644)
+                else:
+                    app_logger.warning(f"ssh-keygen command failed for new key generation. stdout: {keygen_process.stdout}, stderr: {keygen_process.stderr}")
+            else:
+                app_logger.info(f"SSH key {ssh_key_path} already exists. Skipping ssh-keygen generation.")
+
+        except Exception as e_kg:
+            app_logger.error(f"Failed to execute or prepare for ssh-keygen: {e_kg}")
+
         command = [
             "ssh", "-p", "443",
             f"-R0:127.0.0.1:{port}",
             "-o", "StrictHostKeyChecking=no",
-            "-o", "ServerAliveInterval=60", # Increased for stability
+            "-o", "ServerAliveInterval=30", # Changed from 60
             "-o", "ExitOnForwardFailure=yes",
-            f"{token}@a.pinggy.io" # Using 'a.pinggy.io' as per common examples, adjust if 'pro' is specific
+            f"{token}@pro.pinggy.io" # Changed from a.pinggy.io
         ]
         app_logger.info(f"Executing Pinggy command: {' '.join(command)}")
 
