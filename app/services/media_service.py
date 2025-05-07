@@ -36,6 +36,200 @@ class MediaService:
     """Service for managing media files, listings, and viewing sessions."""
 
     @staticmethod
+    def _load_or_rebuild_index(category_path, category_name, category_id, force_refresh, cache_expiry):
+        """
+        Loads a media index from cache or rebuilds it from the directory.
+        Handles index validation, saving, and triggers async indexing or sync thumbnail processing.
+        Returns all_files_metadata list or None if path is invalid.
+        """
+        current_time = time.time()
+        all_files_metadata = None
+
+        # 1. Try loading the index
+        index_data = load_index(category_path) if not force_refresh else None
+
+        # 2. Validate the loaded index
+        if index_data and 'timestamp' in index_data and 'files' in index_data:
+            if current_time - index_data['timestamp'] <= cache_expiry:
+                all_files_metadata = index_data['files']
+                logger.info(f"Using valid index file for '{category_name}' ({len(all_files_metadata)} files)")
+            else:
+                logger.info(f"Index file expired for '{category_name}'")
+                index_data = None  # Treat expired index as invalid
+
+        # 3. If index is invalid, missing, or force_refresh is true, scan directory and rebuild index
+        if all_files_metadata is None:
+            if force_refresh:
+                logger.info(f"Forcing index refresh for '{category_name}'")
+            elif index_data:
+                logger.info(f"Rebuilding expired index for '{category_name}'")
+            else:
+                logger.info(f"Index not found or invalid, building index for '{category_name}'")
+
+            if not os.path.exists(category_path):
+                logger.error(f"Category path does not exist: {category_path}")
+                return None # Indicates error to caller
+            if not os.path.isdir(category_path):
+                logger.error(f"Category path is not a directory: {category_path}")
+                return None # Indicates error to caller
+
+            try:
+                logger.info(f"Scanning all files for '{category_name}' to create index")
+                current_files_metadata = []
+                for filename in os.listdir(category_path):
+                    if is_media_file(filename):
+                        try:
+                            filepath = os.path.join(category_path, filename)
+                            stats = os.stat(filepath)
+                            current_files_metadata.append({
+                                'name': filename,
+                                'size': stats.st_size,
+                                'mtime': stats.st_mtime
+                            })
+                        except FileNotFoundError:
+                            logger.warning(f"File disappeared during indexing: {filepath}")
+                        except Exception as stat_error:
+                            logger.warning(f"Could not get stats for file {filepath}: {stat_error}")
+                
+                all_files_metadata = current_files_metadata # Assign scanned files
+                
+                new_index_data = {'timestamp': time.time(), 'files': all_files_metadata}
+                try:
+                    index_saved = save_index(category_path, new_index_data)
+                    if index_saved:
+                        logger.info(f"Successfully saved index for '{category_name}' with {len(all_files_metadata)} files")
+                    else:
+                        logger.error(f"Failed to save index for '{category_name}'")
+                except Exception as save_error:
+                    logger.error(f"Error saving index for '{category_name}': {save_error}")
+                
+                if is_large_directory(category_path, IndexingService.LARGE_DIRECTORY_THRESHOLD):
+                    logger.info(f"Large directory detected for '{category_name}', starting async indexing")
+                    IndexingService.start_async_indexing(
+                        category_id, 
+                        category_path, 
+                        category_name,
+                        force_refresh # Pass force_refresh to async task as well
+                    )
+                else:
+                    try:
+                        image_count, video_count, thumbnails_generated = process_category_thumbnails(
+                            category_path, all_files_metadata, force_refresh
+                        )
+                        logger.info(f"Processed thumbnails synchronously for '{category_name}': {thumbnails_generated} generated/updated "
+                                   f"({video_count} videos, {image_count} images)")
+                    except Exception as thumb_error:
+                        logger.error(f"Error processing thumbnails synchronously for '{category_name}': {thumb_error}")
+                        logger.debug(traceback.format_exc())
+            except PermissionError:
+                logger.error(f"Permission denied accessing directory: {category_path}")
+                return None # Indicates error to caller
+            except Exception as e:
+                logger.error(f"Error scanning directory or building index for {category_path}: {str(e)}")
+                logger.debug(traceback.format_exc())
+                return None # Indicates error to caller
+        
+        return all_files_metadata
+
+    @staticmethod
+    def _determine_file_order(all_files_metadata, category_id, session_id, shuffle_preference, force_refresh, category_name):
+        """
+        Determines the order of media files based on shuffle preference, sync state, and session data.
+        Returns a list of filenames in the determined order.
+        """
+        from .sync_service import SyncService # Local import due to potential circularity
+        global seen_files_tracker, sync_mode_order
+
+        all_filenames = [f_meta['name'] for f_meta in all_files_metadata]
+        total_files_in_directory = len(all_filenames)
+
+        current_time = time.time()
+        if category_id not in seen_files_tracker:
+            seen_files_tracker[category_id] = {}
+        if session_id not in seen_files_tracker[category_id]:
+            seen_files_tracker[category_id][session_id] = {
+                "seen": set(), 
+                "order": [],
+                "last_access": current_time
+            }
+        else:
+            seen_files_tracker[category_id][session_id]["last_access"] = current_time
+
+        session_data = seen_files_tracker[category_id][session_id]
+        
+        # Check if we should use the sync session order
+        sync_active_order = None
+        if SyncService.is_sync_enabled():
+            sync_active_order = SyncService.get_sync_order(category_id)
+            if sync_active_order:
+                logger.info(f"Using active sync session order for category {category_id} with {len(sync_active_order)} items")
+                # Clear session-specific shuffle data when using an active sync order
+                if session_data["order"] or session_data["seen"]:
+                    session_data["order"] = []
+                    session_data["seen"].clear()
+                    logger.debug(f"Cleared session shuffle data for session {session_id} in category {category_id} due to active sync.")
+                return sync_active_order # Return the active sync order directly
+
+        # If not in active sync or no specific sync order, proceed with shuffle/sort logic
+        if shuffle_preference:
+            ordered_files_from_session = session_data["order"]
+            seen_files_from_session = session_data["seen"]
+            if not ordered_files_from_session or force_refresh or len(seen_files_from_session) >= total_files_in_directory:
+                if len(seen_files_from_session) >= total_files_in_directory:
+                    logger.info(f"All files seen for session {session_id} in '{category_name}', reshuffling.")
+                    seen_files_from_session.clear()
+
+                files_to_shuffle = all_filenames.copy()
+                random.shuffle(files_to_shuffle)
+                session_data["order"] = files_to_shuffle
+                logger.info(f"Generated new shuffled order ({len(files_to_shuffle)} files) for session {session_id} in '{category_name}'")
+            return session_data["order"]
+        else: # Not shuffling (e.g., default for sync mode if no active sync order, or if shuffle=False passed)
+            if force_refresh or category_id not in sync_mode_order:
+                sync_mode_order[category_id] = sorted(all_filenames)
+                log_message = "Refreshed" if force_refresh else "Generated"
+                logger.info(f"{log_message} consistent sorted order for non-shuffle/sync mode in category '{category_name}' ({len(sync_mode_order[category_id])} files)")
+            
+            # Clear session-specific shuffle data if we are falling back to sorted order
+            if session_data["order"] or session_data["seen"]:
+                 session_data["order"] = []
+                 session_data["seen"].clear()
+                 logger.debug(f"Cleared session shuffle data for session {session_id} in category {category_id} due to non-shuffle mode.")
+            return sync_mode_order[category_id]
+
+    @staticmethod
+    def _prepare_paginated_response_data(paginated_filenames, category_id, all_files_metadata_lookup):
+        """
+        Prepares the detailed media information for a list of paginated filenames.
+        """
+        from urllib.parse import quote # Local import due to potential circularity
+        paginated_media_info = []
+        for filename in paginated_filenames:
+            try:
+                file_meta = all_files_metadata_lookup.get(filename)
+                if not file_meta:
+                    logger.warning(f"Metadata not found in index for file: {filename}. Skipping.")
+                    continue
+
+                file_type = get_media_type(filename)
+                info = {
+                    'name': filename,
+                    'type': file_type,
+                    'size': file_meta.get('size', 0),
+                    'url': f'/media/{category_id}/{quote(filename)}'
+                }
+                if file_type == 'video':
+                    info['thumbnailUrl'] = get_thumbnail_url(category_id, filename)
+                paginated_media_info.append(info)
+            except Exception as file_proc_error:
+                logger.error(f"Error preparing response data for file '{filename}' in category '{category_id}': {file_proc_error}")
+                paginated_media_info.append({
+                    'name': filename, 'type': 'error', 'size': 0, 'url': None,
+                    'error': f"Failed to process file: {str(file_proc_error)}"
+                })
+        return paginated_media_info
+
+    @staticmethod
     def clean_sessions():
         """Remove inactive sessions and enforce session limits."""
         global last_session_cleanup
@@ -106,7 +300,7 @@ class MediaService:
         Returns (media_list, pagination_info, error_message) tuple.
         """
         from .sync_service import SyncService
-        MediaService.clean_sessions() # Keep session cleanup
+        MediaService.clean_sessions()
 
         limit = limit or current_app.config['DEFAULT_PAGE_SIZE']
         if page < 1:
@@ -120,254 +314,64 @@ class MediaService:
             return None, None, "Category not found."
 
         category_path = category['path']
-        current_time = time.time()
-        cache_expiry = current_app.config.get('CACHE_EXPIRY', 300) # Use same expiry for index
+        category_name = category['name']
+        cache_expiry = current_app.config.get('CACHE_EXPIRY', 300)
 
-        # --- File Listing using Index Cache ---
-        all_files_metadata = None # Will store list of dicts: {'name': ..., 'size': ..., 'mtime': ...}
+        all_files_metadata = MediaService._load_or_rebuild_index(
+            category_path, category_name, category_id, force_refresh, cache_expiry
+        )
 
-        # 1. Try loading the index
-        index_data = load_index(category_path) if not force_refresh else None
+        if all_files_metadata is None: # Error occurred in _load_or_rebuild_index
+            # Specific error messages are logged in the helper
+            return None, None, f"Failed to load or build index for category '{category_name}'."
 
-        # 2. Validate the loaded index
-        if index_data and 'timestamp' in index_data and 'files' in index_data:
-            if current_time - index_data['timestamp'] <= cache_expiry:
-                all_files_metadata = index_data['files']
-                logger.info(f"Using valid index file for '{category['name']}' ({len(all_files_metadata)} files)")
-            else:
-                logger.info(f"Index file expired for '{category['name']}'")
-                index_data = None # Treat expired index as invalid
+        if not all_files_metadata: # No files found
+            logger.info(f"No media files found in category '{category_name}'")
+            return [], {'page': page, 'limit': limit, 'total': 0, 'hasMore': False}, None
+        
+        total_files_in_directory = len(all_files_metadata)
+        logger.info(f"Total files indexed for '{category_name}': {total_files_in_directory}")
 
-        # 3. If index is invalid, missing, or force_refresh is true, scan directory and rebuild index
-        if all_files_metadata is None:
-            if force_refresh:
-                logger.info(f"Forcing index refresh for '{category['name']}'")
-            elif index_data:
-                 logger.info(f"Rebuilding expired index for '{category['name']}'")
-            else:
-                logger.info(f"Index not found or invalid, building index for '{category['name']}'")
-
-            if not os.path.exists(category_path):
-                logger.error(f"Category path does not exist: {category_path}")
-                return None, None, f"Category path does not exist: {category_path}"
-            if not os.path.isdir(category_path):
-                logger.error(f"Category path is not a directory: {category_path}")
-                return None, None, f"Category path is not a directory: {category_path}"
-
-            try:
-                # Always scan all files and create the index
-                logger.info(f"Scanning all files for '{category['name']}' to create index")
-                all_files_metadata = []
-                for filename in os.listdir(category_path):
-                    if is_media_file(filename):
-                        try:
-                            filepath = os.path.join(category_path, filename)
-                            stats = os.stat(filepath)
-                            all_files_metadata.append({
-                                'name': filename,
-                                'size': stats.st_size,
-                                'mtime': stats.st_mtime
-                            })
-                        except FileNotFoundError:
-                             logger.warning(f"File disappeared during indexing: {filepath}")
-                        except Exception as stat_error:
-                             logger.warning(f"Could not get stats for file {filepath}: {stat_error}")
-                
-                # Always save the index file - use a direct approach
-                new_index_data = {'timestamp': current_time, 'files': all_files_metadata}
-                
-                # Save the index using the utility function
-                try:
-                    index_saved = save_index(category_path, new_index_data)
-                    if index_saved:
-                        logger.info(f"Successfully saved index for '{category['name']}' with {len(all_files_metadata)} files")
-                    else:
-                        logger.error(f"Failed to save index for '{category['name']}'")
-                except Exception as save_error:
-                    logger.error(f"Error saving index for '{category['name']}': {save_error}")
-                
-                # Check if this is a large directory that should use async indexing
-                if is_large_directory(category_path, IndexingService.LARGE_DIRECTORY_THRESHOLD):
-                    logger.info(f"Large directory detected for '{category['name']}', starting async indexing")
-                    # Start async indexing in the background using IndexingService
-                    IndexingService.start_async_indexing(
-                        category_id, 
-                        category_path, 
-                        category['name'],
-                        force_refresh
-                    )
-                else:
-                    # Process thumbnails synchronously for smaller directories
-                    try:
-                        image_count, video_count, thumbnails_generated = process_category_thumbnails(
-                            category_path, all_files_metadata, force_refresh
-                        )
-                        logger.info(f"Processed thumbnails synchronously for '{category['name']}': {thumbnails_generated} generated/updated "
-                                   f"({video_count} videos, {image_count} images)")
-                    except Exception as thumb_error:
-                        logger.error(f"Error processing thumbnails synchronously for '{category['name']}': {thumb_error}")
-                        logger.debug(traceback.format_exc())
-                        # Continue even if thumbnail processing fails
-
-            except PermissionError:
-                logger.error(f"Permission denied accessing directory: {category_path}")
-                return None, None, f"Permission denied accessing directory: {category_path}"
-            except Exception as e:
-                logger.error(f"Error scanning directory or building index for {category_path}: {str(e)}")
-                logger.debug(traceback.format_exc())
-                return None, None, f"Error scanning directory: {str(e)}"
-
-        # Extract just the filenames for subsequent logic (shuffling, pagination)
-        # Ensure metadata list is not None before proceeding
-        if all_files_metadata is None:
-             logger.error(f"Failed to load or build index for category '{category['name']}'. Cannot proceed.")
-             return None, None, "Failed to load or build media index."
-
-        all_files = [f_meta['name'] for f_meta in all_files_metadata]
-        total_files_in_directory = len(all_files)
-        logger.info(f"Total files indexed for '{category['name']}': {total_files_in_directory}")
-
-        if total_files_in_directory == 0:
-             logger.info(f"No media files found in category '{category['name']}'")
-             return [], {'page': page, 'limit': limit, 'total': 0, 'hasMore': False}, None
-
-
-        # --- Session Tracking & Shuffling ---
         session_id = request.cookies.get('session_id')
         if not session_id:
-            # This should ideally be set by a middleware or @app.after_request
-            # For now, generate one if missing, but this isn't persistent across requests without setting cookie
-            session_id = str(uuid.uuid4())
-            logger.warning("Session ID cookie not found, generated temporary ID.")
+            session_id = str(uuid.uuid4()) # Temporary ID if cookie not present
+            logger.warning("Session ID cookie not found, generated temporary ID for ordering.")
 
-        current_time = time.time()
-        if category_id not in seen_files_tracker:
-            seen_files_tracker[category_id] = {}
-        if session_id not in seen_files_tracker[category_id]:
-            seen_files_tracker[category_id][session_id] = {
-                "seen": set(), 
-                "order": [],
-                "last_access": current_time
-            }
-        else:
-            # Update last access time
-            seen_files_tracker[category_id][session_id]["last_access"] = current_time
-
-        session_data = seen_files_tracker[category_id][session_id]
-        seen_files = session_data["seen"]
-        ordered_files = session_data["order"]
-
-        # Determine file order (shuffled, sorted, or sync order)
-        should_shuffle = shuffle # Default to shuffle unless overridden
+        files_to_paginate = MediaService._determine_file_order(
+            all_files_metadata, category_id, session_id, shuffle, force_refresh, category_name
+        )
         
-        # Check if we should use the sync session order
-        sync_order = None
-        if SyncService.is_sync_enabled():
-            sync_order = SyncService.get_sync_order(category_id)
-            if sync_order:
-                logger.info(f"Using sync session order for category {category_id} with {len(sync_order)} items")
-                should_shuffle = False # Override shuffle when using sync order
-
-        if sync_order:
-            files_to_paginate = sync_order
-        elif should_shuffle:
-            # Regenerate order if it's empty, forced, or all files seen
-            if not ordered_files or force_refresh or len(seen_files) >= total_files_in_directory:
-                if len(seen_files) >= total_files_in_directory:
-                    logger.info(f"All files seen for session {session_id} in '{category['name']}', reshuffling.")
-                    seen_files.clear() # Reset seen files
-
-                files_to_shuffle = all_files.copy()
-                random.shuffle(files_to_shuffle)
-                ordered_files = files_to_shuffle
-                session_data["order"] = ordered_files
-                logger.info(f"Generated new shuffled order ({len(ordered_files)} files) for session {session_id} in '{category['name']}'")
-            files_to_paginate = ordered_files
-        else: # Logic for shuffle=False (Sync Mode)
-            global sync_mode_order
-            
-            # Check if a consistent order needs to be generated or refreshed
-            # Regenerate if forced OR if the order doesn't exist for this category yet.
-            # We rely on `all_files` being up-to-date from the cache/listing logic above.
-            if force_refresh or category_id not in sync_mode_order:
-                # Create and store the definitive sorted order for this sync session
-                sync_mode_order[category_id] = sorted(all_files)
-                log_message = "Refreshed" if force_refresh else "Generated"
-                logger.info(f"{log_message} consistent sorted order for sync mode in category '{category['name']}' ({len(sync_mode_order[category_id])} files)")
-            
-            # Always use the stored consistent order for pagination in sync mode
-            files_to_paginate = sync_mode_order[category_id]
-            logger.info(f"Using consistent sync mode order for category '{category['name']}' ({len(files_to_paginate)} files)")
-            
-            # Ensure session-specific shuffle data is cleared when using sync order
-            if session_data["order"] or session_data["seen"]:
-                 session_data["order"] = []
-                 session_data["seen"].clear()
-                 logger.debug(f"Cleared session shuffle data for session {session_id} in category {category_id} due to sync mode.")
-
         # --- Pagination ---
         start_index = (page - 1) * limit
-        end_index = min(start_index + limit, len(files_to_paginate))
-
         # Handle invalid page number (page beyond available files)
         if start_index >= len(files_to_paginate) and len(files_to_paginate) > 0:
             logger.warning(f"Requested page {page} exceeds available files ({len(files_to_paginate)}). Returning last page.")
             total_pages = (len(files_to_paginate) + limit - 1) // limit
             page = total_pages # Go to the last valid page
             start_index = (page - 1) * limit
-            end_index = min(start_index + limit, len(files_to_paginate))
-
+        
+        end_index = min(start_index + limit, len(files_to_paginate))
         paginated_filenames = files_to_paginate[start_index:end_index] if start_index < len(files_to_paginate) else []
 
-        # Mark files in the current page as seen (only if shuffling)
-        if should_shuffle:
-            for filename in paginated_filenames:
-                seen_files.add(filename)
-
+        # Mark files in the current page as seen (only if shuffling and not in active sync)
+        # The _determine_file_order handles sync_active_order, so if shuffle is true here, it's not overridden by active sync.
+        if shuffle: 
+            session_data = seen_files_tracker.get(category_id, {}).get(session_id)
+            if session_data:
+                for filename in paginated_filenames:
+                    session_data["seen"].add(filename)
+        
         # --- Prepare Response Data ---
-        paginated_media_info = []
-        from urllib.parse import quote # Local import to avoid circular dependency if moved
-
-        # Create a lookup for metadata from the index for efficiency
-        metadata_lookup = {f_meta['name']: f_meta for f_meta in all_files_metadata}
-
-        for filename in paginated_filenames:
-            try:
-                # Get metadata from lookup
-                file_meta = metadata_lookup.get(filename)
-                if not file_meta:
-                     logger.warning(f"Metadata not found in index for file: {filename}. Skipping.")
-                     continue # Skip if metadata is missing for some reason
-
-                file_type = get_media_type(filename)
-                info = {
-                    'name': filename,
-                    'type': file_type,
-                    'size': file_meta.get('size', 0), # Use size from index
-                    'url': f'/media/{category_id}/{quote(filename)}' # URL encode filename
-                    # 'mtime': file_meta.get('mtime') # Optionally include mtime
-                }
-                
-                # Add thumbnail URL for video files
-                if file_type == 'video':
-                    info['thumbnailUrl'] = get_thumbnail_url(category_id, filename)
-                paginated_media_info.append(info)
-            except Exception as file_proc_error:
-                logger.error(f"Error preparing response data for file '{filename}' in category '{category['name']}': {file_proc_error}")
-                # Optionally add an error placeholder to the list
-                paginated_media_info.append({
-                    'name': filename,
-                    'type': 'error',
-                    'size': 0,
-                    'url': None,
-                    'error': f"Failed to process file: {str(file_proc_error)}"
-                })
+        all_files_metadata_lookup = {f_meta['name']: f_meta for f_meta in all_files_metadata}
+        paginated_media_info = MediaService._prepare_paginated_response_data(
+            paginated_filenames, category_id, all_files_metadata_lookup
+        )
 
         pagination_details = {
             'page': page,
             'limit': limit,
-            'total': total_files_in_directory, # Total files in the directory
-            'hasMore': (page * limit) < len(files_to_paginate) # Based on the ordered list length
+            'total': total_files_in_directory,
+            'hasMore': (page * limit) < len(files_to_paginate)
         }
 
         return paginated_media_info, pagination_details, None

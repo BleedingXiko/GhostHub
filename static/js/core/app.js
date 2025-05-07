@@ -3,6 +3,8 @@
  * Main application state, DOM references, and configuration constants.
  */
 
+import { getConfigValue } from '../utils/configManager.js';
+
 // DOM element references
 const categoryView = document.getElementById('categoryView');
 const mediaView = document.getElementById('mediaView');
@@ -13,41 +15,56 @@ const syncToggleBtn = document.getElementById('sync-toggle-btn');
 
 // Configuration constants
 const MOBILE_DEVICE = window.innerWidth <= 768; // Detect if we're on a mobile device
-const MEDIA_PER_PAGE = MOBILE_DEVICE ? 3 : 5; // Load fewer items per page on mobile
-const LOAD_MORE_THRESHOLD = MOBILE_DEVICE ? 2 : 3; // Load more sooner on mobile
-const renderWindowSize = 0; // Only render the current item to save memory
 
-// Mobile optimization settings
-const MOBILE_CLEANUP_INTERVAL = 60000; // 1 minute in ms
-const MOBILE_FETCH_TIMEOUT = 15000; // 15 seconds in ms
+// Load configuration values using getConfigValue, with original values as fallbacks
+const MEDIA_PER_PAGE_DESKTOP_DEFAULT = 5;
+const MEDIA_PER_PAGE_MOBILE_DEFAULT = 3;
+const LOAD_MORE_THRESHOLD_DESKTOP_DEFAULT = 3;
+const LOAD_MORE_THRESHOLD_MOBILE_DEFAULT = 2;
+const RENDER_WINDOW_SIZE_DEFAULT = 0;
+const MOBILE_CLEANUP_INTERVAL_DEFAULT = 60000;
+const MOBILE_FETCH_TIMEOUT_DEFAULT = 15000;
+const MAX_CACHE_SIZE_PYTHON_DEFAULT = 50; // Default from python_config if not passed via window.appConfig
+const MAX_CACHE_SIZE_MOBILE_DEFAULT = 10;
+const MAX_CACHE_SIZE_DESKTOP_DEFAULT = 50;
+
+
+const MEDIA_PER_PAGE = MOBILE_DEVICE ? 
+    getConfigValue('javascript_config.core_app.media_per_page_mobile', MEDIA_PER_PAGE_MOBILE_DEFAULT) :
+    getConfigValue('javascript_config.core_app.media_per_page_desktop', MEDIA_PER_PAGE_DESKTOP_DEFAULT);
+
+const LOAD_MORE_THRESHOLD = MOBILE_DEVICE ?
+    getConfigValue('javascript_config.core_app.load_more_threshold_mobile', LOAD_MORE_THRESHOLD_MOBILE_DEFAULT) :
+    getConfigValue('javascript_config.core_app.load_more_threshold_desktop', LOAD_MORE_THRESHOLD_DESKTOP_DEFAULT);
+
+const renderWindowSize = getConfigValue('javascript_config.core_app.render_window_size', RENDER_WINDOW_SIZE_DEFAULT);
+
+// Mobile optimization settings from config
+const MOBILE_CLEANUP_INTERVAL = getConfigValue('javascript_config.core_app.mobile_cleanup_interval', MOBILE_CLEANUP_INTERVAL_DEFAULT);
+const MOBILE_FETCH_TIMEOUT = getConfigValue('javascript_config.core_app.mobile_fetch_timeout', MOBILE_FETCH_TIMEOUT_DEFAULT);
 
 // Cache size configuration
 const MAX_CACHE_SIZE = (function() {
-    // Try to get the value from a global config object that might be set by the server
-    if (window.serverConfig && typeof window.serverConfig.MAX_CACHE_SIZE === 'number') {
-        return window.serverConfig.MAX_CACHE_SIZE;
+    // 1. Try to get from window.appConfig (set by configManager.js from /api/config)
+    let cacheSize = getConfigValue('python_config.MAX_CACHE_SIZE', null);
+    if (cacheSize !== null && typeof cacheSize === 'number') {
+        console.log(`Using MAX_CACHE_SIZE from appConfig (python_config): ${cacheSize}`);
+        return cacheSize;
     }
-    // Otherwise use device-specific defaults
-    // Start with device-specific defaults
-    let defaultCacheSize = MOBILE_DEVICE ? 10 : 50;
 
-    // Try to use navigator.deviceMemory as a hint (if available and not overridden by server)
-    if (!window.serverConfig?.MAX_CACHE_SIZE && navigator.deviceMemory) {
+    // 2. Fallback to device-specific defaults (original logic, slightly adapted)
+    let defaultCacheSize = MOBILE_DEVICE ? MAX_CACHE_SIZE_MOBILE_DEFAULT : MAX_CACHE_SIZE_DESKTOP_DEFAULT;
+
+    if (navigator.deviceMemory) {
         console.log(`Device memory reported: ${navigator.deviceMemory} GB`);
-        // Adjust cache size based on memory (example thresholds)
         if (navigator.deviceMemory >= 8) {
-            defaultCacheSize = MOBILE_DEVICE ? 20 : 100; // More memory, larger cache
+            defaultCacheSize = MOBILE_DEVICE ? 20 : 100;
         } else if (navigator.deviceMemory >= 4) {
             defaultCacheSize = MOBILE_DEVICE ? 15 : 75;
-        } else {
-            defaultCacheSize = MOBILE_DEVICE ? 10 : 50; // Default for lower memory
         }
         console.log(`Adjusted MAX_CACHE_SIZE based on device memory: ${defaultCacheSize}`);
-    } else if (window.serverConfig?.MAX_CACHE_SIZE) {
-         console.log(`Using MAX_CACHE_SIZE from server config: ${window.serverConfig.MAX_CACHE_SIZE}`);
-         return window.serverConfig.MAX_CACHE_SIZE;
     } else {
-         console.log(`Using default MAX_CACHE_SIZE: ${defaultCacheSize}`);
+         console.log(`Using default MAX_CACHE_SIZE (no deviceMemory API or python_config): ${defaultCacheSize}`);
     }
     return defaultCacheSize;
 })();
@@ -118,11 +135,11 @@ const app = {
 // Global app reference
 window.appInstance = app;
 
-// Mobile-specific memory management
+    // Mobile-specific memory management
 if (MOBILE_DEVICE) {
     console.log('Mobile device detected: Setting up aggressive memory management');
     
-    // Periodic memory cleanup
+    // Periodic memory cleanup using configured interval
     app.state.cleanupInterval = setInterval(() => {
         console.log('Mobile device: performing periodic cleanup');
         
@@ -164,12 +181,13 @@ if (MOBILE_DEVICE) {
         }
     }, MOBILE_CLEANUP_INTERVAL);
     
-    // Ensure fullscreen controls remain available
+    // Ensure fullscreen controls remain available using configured interval
+    const fullscreenCheckInterval = getConfigValue('javascript_config.core_app.fullscreen_check_interval', 2000);
     app.state.fullscreenCheckInterval = setInterval(() => {
         if (window.appModules && window.appModules.fullscreenManager) {
             window.appModules.fullscreenManager.ensureFullscreenButtons();
         }
-    }, 2000); // Check every 2 seconds
+    }, fullscreenCheckInterval);
     
     // Cleanup on page unload
     window.addEventListener('beforeunload', () => {

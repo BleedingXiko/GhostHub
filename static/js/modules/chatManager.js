@@ -6,7 +6,6 @@
 import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 import { initCommandHandler } from './commandHandler.js';
-import { ensureMediaLoadedForIndex } from './syncManager.js'; // Import directly
 
 
 // Session storage keys
@@ -98,7 +97,7 @@ function initChat(socketInstance) {
     // Set up draggable functionality
     setupDraggable();
     
-    // Load chat history from localStorage
+    // Load chat history from sessionStorage
     loadChatHistory();
 
     // Remove the beforeunload handler as sessionStorage handles clearing automatically
@@ -128,7 +127,7 @@ function setupBeforeUnloadHandler() {
  */
 function loadChatHistory() {
     try {
-        const savedMessages = sessionStorage.getItem(STORAGE_KEY); // Use sessionStorage
+        const savedMessages = sessionStorage.getItem(STORAGE_KEY);
         if (savedMessages) {
             const parsedMessages = JSON.parse(savedMessages);
             
@@ -968,11 +967,11 @@ function addNotificationToDOM(data, saveToState = true) {
  * @param {Object} data - The message data
  */
 function addMessage(data) {
-    // Add message to DOM
+        // Add message to DOM
     addMessageToDOM(data);
     
-    // Skip updating latest message display for command messages
-    if (!data.isCommandMessage) {
+    // Update latest message display (unless it's a command message that shouldn't override)
+    if (!data.isCommandMessage) { // Check if it's not a command message
         updateLatestMessage(data.message);
     }
     

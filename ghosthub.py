@@ -21,10 +21,12 @@ from app.utils.server_utils import (
     initialize_app,
     display_server_info,
     find_cloudflared_path,
-    start_cloudflare_tunnel,
-    start_pinggy_tunnel,  # Import the new function
+    # start_cloudflare_tunnel, # No longer called directly at startup
+    # start_pinggy_tunnel,    # No longer called directly at startup
     run_server,
-    cleanup_tunnel
+    stop_active_tunnel, # Ensures any active tunnel is stopped on exit
+    # get_active_tunnel_status # No longer needed at startup
+    find_cloudflared_path # Still needed for the API to find the executable
 )
 
 # Get configuration from environment variables
@@ -39,45 +41,18 @@ if __name__ == '__main__':
     # Display server information
     display_server_info(config_name, port)
     
-    # Find cloudflared executable
-    cloudflared_path = find_cloudflared_path()
+    # Find cloudflared executable path (needed for API calls, not direct CLI start)
+    # This call doesn't start anything, just finds the path if it exists.
+    find_cloudflared_path() 
 
-    # Prompt for tunnel choice
-    tunnel_process = None
-    print("\n--- Tunnel Selection ---")
-    print("Choose a tunneling service to expose the server publicly:")
-    print("1: Cloudflare Tunnel (requires cloudflared)")
-    print("2: Pinggy Tunnel (requires SSH and a token)")
-    print("3: None (run locally only)")
-
-    tunnel_choice = input("Enter your choice (1, 2, or 3): ").strip()
-
-    try:
-        if tunnel_choice == '1':
-            if cloudflared_path:
-                # Use 'y' to trigger the existing logic in start_cloudflare_tunnel
-                tunnel_process = start_cloudflare_tunnel(cloudflared_path, port, use_tunnel='y')
-            else:
-                print("[!] Cloudflared executable not found. Cannot start Cloudflare Tunnel.")
-        elif tunnel_choice == '2':
-            pinggy_token = input("Enter your Pinggy token: ").strip()
-            if pinggy_token:
-                tunnel_process = start_pinggy_tunnel(port, pinggy_token)
-            else:
-                print("[!] Pinggy token not provided. Skipping Pinggy Tunnel.")
-        elif tunnel_choice == '3':
-            print("Skipping tunneling. Server will run locally.")
-        else:
-            print("Invalid choice. Skipping tunneling.")
-
-    except Exception as e:
-        print(f"[!] Error setting up tunnel: {e}")
+    # CLI tunnel selection logic has been removed.
+    # Tunnels will be managed via the UI.
 
     print("\n--- Starting Server ---")
+    print("Tunnel management is now available via the web UI.")
     try:
-        # Run the server (blocking call)
-        # The run_server function now determines debug/production mode internally
         run_server(app, port)
     finally:
-        # Clean up tunnel process if it exists
-        cleanup_tunnel(tunnel_process)
+        # Clean up any active tunnel using the new global state function
+        print("\n--- Server Shutting Down ---")
+        stop_active_tunnel()

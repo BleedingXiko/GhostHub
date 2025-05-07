@@ -33,7 +33,6 @@ LARGE_DIRECTORY_THRESHOLD = 50  # Number of files that triggers async indexing
 class IndexingService:
     """Service for asynchronous indexing of media directories."""
     
-    # Make the constant accessible as a class attribute
     LARGE_DIRECTORY_THRESHOLD = LARGE_DIRECTORY_THRESHOLD
     
     @staticmethod
@@ -139,9 +138,10 @@ class IndexingService:
                             try:
                                 index_data = load_index(category_path)
                                 if index_data and 'timestamp' in index_data and 'files' in index_data:
-                                    cache_expiry = 300  # Default to 5 minutes if config not available
+                                    # Use app config for cache expiry if available, otherwise default
+                                    cache_expiry = current_app.config.get('CACHE_EXPIRY', 300)
                                     if time.time() - index_data['timestamp'] <= cache_expiry:
-                                        logger.info(f"Using existing index for async indexing of '{category_name}'")
+                                        logger.info(f"Using existing index for async indexing of '{category_name}' (cache valid for {cache_expiry}s)")
                                         async_index_status[category_id]['status'] = 'complete'
                                         async_index_status[category_id]['files'] = index_data['files']
                                         async_index_status[category_id]['progress'] = 100

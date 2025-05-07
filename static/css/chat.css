@@ -119,18 +119,23 @@ html.is-fullscreen .chat-container {
 .chat-toggle.has-unread::after {
     content: attr(data-count);
     position: absolute;
-    top: -5px;
-    right: -5px;
-    background-color: var(--accent-color);
-    color: var(--text-primary);
-    border-radius: var(--radius-circle);
-    width: 18px;
+    top: -6px; /* Adjusted for better visibility */
+    right: -6px; /* Adjusted for better visibility */
+    min-width: 18px; /* Ensure minimum width */
     height: 18px;
-    font-size: 0.75rem;
+    padding: 0 4px; /* Add some horizontal padding for multi-digit numbers */
+    background-color: #FF3B30; /* Bright red, non-variable */
+    color: white; /* White text, non-variable */
+    border-radius: 9px; /* Make it pill-shaped / circular */
+    font-size: 11px; /* Slightly larger font */
+    font-weight: bold;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3); /* Slightly more pronounced shadow */
+    z-index: 10; /* Ensure it's above other button content */
+    line-height: 1; /* Ensure text is centered vertically */
+    box-sizing: border-box; /* Ensure padding doesn't increase overall size beyond intent */
 }
 
 .chat-body {

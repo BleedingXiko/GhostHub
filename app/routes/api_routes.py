@@ -12,9 +12,62 @@ from flask import Blueprint, jsonify, request, current_app
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
 from app.services.sync_service import SyncService # Import SyncService
+from app.services import config_service # Import the new config_service
+from app.utils import server_utils # For tunnel management
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint('api', __name__)
+
+# --- Configuration Management Endpoints ---
+
+@api_bp.route('/config', methods=['GET'])
+def get_config_route():
+    """Get the current application configuration."""
+    config_data, error = config_service.load_config()
+    if error:
+        # Log the error and return 500, but still provide default/last known config
+        logger.warning(f"Error loading configuration for API response: {error}. Serving available config.")
+        # Depending on severity, you might choose to return 500 immediately
+        # return jsonify({'error': error, 'config_data_served': config_data}), 500
+    
+    # Add password protection status
+    config_data['isPasswordProtectionActive'] = current_app.config.get('SESSION_PASSWORD', '') != ''
+    return jsonify(config_data)
+
+@api_bp.route('/config', methods=['POST'])
+def save_config_route():
+    """Save the application configuration."""
+    new_config = request.json
+    success, message = config_service.save_config(new_config)
+    if success:
+        # Update the live application config for SESSION_PASSWORD
+        if 'python_config' in new_config and 'SESSION_PASSWORD' in new_config['python_config']:
+            current_app.config['SESSION_PASSWORD'] = new_config['python_config']['SESSION_PASSWORD']
+            logger.info(f"Live SESSION_PASSWORD updated in app config.")
+        
+        response_data = {
+            'message': message,
+            'isPasswordProtectionActive': current_app.config.get('SESSION_PASSWORD', '') != ''
+        }
+        return jsonify(response_data), 200
+    else:
+        return jsonify({'error': message}), 400 # Or 500 if it's a server-side save issue
+
+@api_bp.route('/validate_session_password', methods=['POST'])
+def validate_session_password():
+    """Validate the submitted session password."""
+    submitted_password = request.json.get('password')
+    actual_password = current_app.config.get('SESSION_PASSWORD', '')
+
+    if not actual_password: # If no password is set in config, access is always granted
+        return jsonify({"valid": True, "message": "No password protection active."})
+
+    if submitted_password == actual_password:
+        return jsonify({"valid": True})
+    else:
+        return jsonify({"valid": False, "message": "Incorrect password."})
+
+# --- Category and Media Endpoints ---
 
 @api_bp.route('/categories', methods=['GET'])
 def list_categories():
@@ -185,6 +238,66 @@ def browse_folders():
         logger.error(f"Unexpected error opening folder browser: {str(e)}")
         logger.debug(traceback.format_exc())
         return jsonify({'error': f'Failed to open folder browser: {str(e)}'}), 500
+
+# --- Tunnel Management Endpoints ---
+
+@api_bp.route('/tunnel/start', methods=['POST'])
+def start_tunnel_route():
+    """Start a tunnel based on provided parameters."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'status': 'error', 'message': 'Request body is missing.'}), 400
+
+        provider = data.get('provider')
+        local_port = data.get('local_port', current_app.config.get('TUNNEL_LOCAL_PORT', 5000)) # Use from request or fallback
+        
+        if not provider or provider == 'none':
+            return jsonify({'status': 'error', 'message': 'No tunnel provider specified.'}), 400
+
+        if provider == 'cloudflare':
+            cloudflared_exe_path = server_utils.find_cloudflared_path()
+            if not cloudflared_exe_path:
+                return jsonify({'status': 'error', 'message': 'cloudflared executable not found.'}), 500
+            result = server_utils.start_cloudflare_tunnel(cloudflared_exe_path, int(local_port))
+        elif provider == 'pinggy':
+            token = data.get('pinggy_token', current_app.config.get('PINGGY_ACCESS_TOKEN')) # Use from request or fallback
+            if not token:
+                return jsonify({'status': 'error', 'message': 'Pinggy access token not provided or configured.'}), 400
+            result = server_utils.start_pinggy_tunnel(int(local_port), token)
+        else:
+            return jsonify({'status': 'error', 'message': f"Unsupported tunnel provider: {provider}"}), 400
+        
+        return jsonify(result)
+    except ValueError:
+        logger.error(f"Error in start_tunnel_route: Invalid port number provided.")
+        return jsonify({'status': 'error', 'message': 'Invalid port number provided.'}), 400
+    except Exception as e:
+        logger.error(f"Error in start_tunnel_route: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'status': 'error', 'message': f'An unexpected error occurred: {str(e)}'}), 500
+
+@api_bp.route('/tunnel/stop', methods=['POST'])
+def stop_tunnel_route():
+    """Stop the currently active tunnel."""
+    try:
+        result = server_utils.stop_active_tunnel()
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in stop_tunnel_route: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'status': 'error', 'message': f'An unexpected error occurred: {str(e)}'}), 500
+
+@api_bp.route('/tunnel/status', methods=['GET'])
+def tunnel_status_route():
+    """Get the status of the currently active tunnel."""
+    try:
+        status = server_utils.get_active_tunnel_status()
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error in tunnel_status_route: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'status': 'error', 'message': f'An unexpected error occurred: {str(e)}'}), 500
 
 # API error handlers
 @api_bp.app_errorhandler(404)
