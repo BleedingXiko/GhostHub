@@ -5,10 +5,117 @@
 
 import { categoryList } from '../core/app.js';
 
+let categoryStatusPollers = {}; // To store setInterval IDs for polling
+
+/**
+ * Clears all active category status pollers.
+ * Call this when navigating away or reloading the category list.
+ */
+function clearAllCategoryPollers() {
+    for (const categoryId in categoryStatusPollers) {
+        if (categoryStatusPollers.hasOwnProperty(categoryId)) {
+            clearInterval(categoryStatusPollers[categoryId]);
+            delete categoryStatusPollers[categoryId];
+        }
+    }
+    console.log("Cleared all category status pollers.");
+}
+
+
+/**
+ * Updates the display of a category item with its indexing/transcoding status.
+ * @param {HTMLElement} categoryElement - The DOM element for the category.
+ * @param {string} categoryId - The ID of the category.
+ */
+async function updateCategoryStatusDisplay(categoryElement, categoryId) {
+    try {
+        const response = await fetch(`/api/categories/${categoryId}/index_status`);
+        if (!response.ok) {
+            console.error(`Error fetching status for category ${categoryId}: ${response.status}`);
+            // Optionally stop polling on certain errors or show error in UI
+            if (response.status === 404 && categoryStatusPollers[categoryId]) { // Category might have been deleted
+                clearInterval(categoryStatusPollers[categoryId]);
+                delete categoryStatusPollers[categoryId];
+            }
+            return;
+        }
+        const statusData = await response.json();
+
+        let progressIndicator = categoryElement.querySelector('.category-progress-indicator');
+        if (!progressIndicator) {
+            progressIndicator = document.createElement('div');
+            progressIndicator.className = 'category-progress-indicator';
+            // Insert it before the button group or at a suitable place
+            const buttonGroup = categoryElement.querySelector('.button-group');
+            if (buttonGroup) {
+                categoryElement.insertBefore(progressIndicator, buttonGroup);
+            } else {
+                categoryElement.appendChild(progressIndicator);
+            }
+        }
+
+        if (statusData && statusData.status === 'running') {
+            let statusText = `Indexing: ${statusData.progress || 0}%`;
+            if (statusData.is_transcoding_enabled_for_category && statusData.videos_total_for_transcoding > 0) {
+                statusText += `<br>Transcoding: ${statusData.videos_processed_for_transcoding || 0}/${statusData.videos_total_for_transcoding || 0} videos.`;
+                if (statusData.current_transcoding_filename) {
+                    statusText += `<br>Current: ${statusData.current_transcoding_filename}`;
+                }
+            }
+            progressIndicator.innerHTML = statusText;
+            progressIndicator.style.display = 'block'; // Make sure it's visible
+            categoryElement.classList.add('category-item--processing'); // Add processing class
+
+            // Ensure polling continues
+            if (!categoryStatusPollers[categoryId]) {
+                categoryStatusPollers[categoryId] = setInterval(() => {
+                    updateCategoryStatusDisplay(categoryElement, categoryId);
+                }, 5000); // Poll every 5 seconds
+            }
+        } else if (statusData && (statusData.status === 'complete' || statusData.status === 'error')) {
+            progressIndicator.innerHTML = ''; // Clear content first
+            progressIndicator.style.display = 'none'; // Hide progress
+            categoryElement.classList.remove('category-item--processing'); // Remove processing class
+
+            if (categoryStatusPollers[categoryId]) {
+                clearInterval(categoryStatusPollers[categoryId]);
+                delete categoryStatusPollers[categoryId];
+                console.log(`Stopped polling for category ${categoryId} (status: ${statusData.status})`);
+            }
+            if (statusData.status === 'error') {
+                progressIndicator.innerHTML = `Error: ${statusData.error || 'Indexing failed'}`;
+                progressIndicator.style.display = 'block'; // Show error
+                progressIndicator.style.color = 'red'; // Style error
+                // Keep category as 'processing' visually if error state should also lock it,
+                // or remove 'category-item--processing' if errors should unlock it.
+                // For now, errors will unlock it as per current class removal logic above.
+            }
+        } else {
+            // No status or unknown status, hide indicator and stop polling if any
+            progressIndicator.style.display = 'none';
+            categoryElement.classList.remove('category-item--processing');
+            if (categoryStatusPollers[categoryId]) {
+                clearInterval(categoryStatusPollers[categoryId]);
+                delete categoryStatusPollers[categoryId];
+            }
+        }
+
+    } catch (error) {
+        console.error(`Error in updateCategoryStatusDisplay for ${categoryId}:`, error);
+        // Stop polling on unexpected error to prevent loops
+        if (categoryStatusPollers[categoryId]) {
+            clearInterval(categoryStatusPollers[categoryId]);
+            delete categoryStatusPollers[categoryId];
+        }
+    }
+}
+
+
 /**
  * Main function to load categories
  */
 async function loadCategories() {
+    clearAllCategoryPollers(); // Clear existing pollers before loading new list
     try {
         const response = await fetch('/api/categories');
         const categories = await response.json();
@@ -22,6 +129,7 @@ async function loadCategories() {
         categories.forEach(category => {
             const categoryElement = document.createElement('div');
             categoryElement.className = 'category-item';
+            categoryElement.dataset.categoryId = category.id; // Add categoryId for easy selection
 
             // Thumbnail with lazy loading
             const thumbnail = document.createElement('img');
@@ -81,6 +189,14 @@ async function loadCategories() {
 
             // Make the entire card clickable
             categoryElement.addEventListener('click', (e) => {
+                if (categoryElement.classList.contains('category-item--processing')) {
+                    e.preventDefault();
+                    e.stopPropagation(); // Prevent further actions
+                    // Optionally, provide feedback like an alert or a temporary message
+                    // alert("This category is currently being processed. Please wait.");
+                    console.log(`Category ${category.id} is processing. Click prevented.`);
+                    return;
+                }
                 // Only trigger if not clicking on the delete button
                 if (!e.target.closest('.delete-btn')) {
                     viewCategory(category.id);
@@ -88,13 +204,23 @@ async function loadCategories() {
             });
             
             categoryList.appendChild(categoryElement);
+            
+            // Fetch and display initial status, start polling if needed
+            updateCategoryStatusDisplay(categoryElement, category.id);
         });
 
         // Add event listeners to delete buttons
         document.querySelectorAll('.delete-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation(); // Prevent triggering the card click
-                deleteCategory(e.target.dataset.id);
+                const categoryId = e.target.dataset.id;
+                deleteCategory(categoryId).then(() => {
+                    // Stop polling for the deleted category
+                    if (categoryStatusPollers[categoryId]) {
+                        clearInterval(categoryStatusPollers[categoryId]);
+                        delete categoryStatusPollers[categoryId];
+                    }
+                });
             });
         });
 

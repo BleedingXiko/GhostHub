@@ -315,27 +315,109 @@ function populateConfigModal() {
 
     configModalBody.innerHTML = ''; // Clear previous content
 
-    // Iterate over python_config
-    if (window.appConfig.python_config) {
-        const pythonHeader = document.createElement('h3');
-        pythonHeader.className = 'config-section-header collapsed'; // Collapsed by default
-        pythonHeader.textContent = 'Server Settings (Python)';
-        configModalBody.appendChild(pythonHeader);
+    const pythonConfig = window.appConfig.python_config || {};
+    const jsConfig = window.appConfig.javascript_config || {};
 
-        const pythonSettingsContainer = document.createElement('div');
-        pythonSettingsContainer.className = 'config-section-settings collapsed'; // Collapsed by default
-        const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
-        for (const [key, value] of Object.entries(window.appConfig.python_config)) {
-            if (!tunnelConfigKeys.includes(key)) { // Only add if not a tunnel-specific key
-                pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
-            }
+    // --- On-the-fly Transcoding Settings Section (Python) ---
+    const onTheFlyTranscodingConfigKeys = [
+        'TRANSCODE_ON_THE_FLY_STREAMING',
+        'TRANSCODE_ON_THE_FLY_TARGET_HEIGHT',
+        'TRANSCODE_ON_THE_FLY_VIDEO_BITRATE',
+        'TRANSCODE_ON_THE_FLY_AUDIO_BITRATE',
+        'TRANSCODE_ON_THE_FLY_CRF',
+        'TRANSCODE_ON_THE_FLY_TUNE',
+        'TRANSCODE_ON_THE_FLY_VIDEO_CODEC',
+        'TRANSCODE_ON_THE_FLY_AUDIO_CODEC',
+        'TRANSCODE_ON_THE_FLY_PRESET'
+    ];
+
+    const onTheFlyTranscodingHeader = document.createElement('h3');
+    onTheFlyTranscodingHeader.className = 'config-section-header collapsed';
+    onTheFlyTranscodingHeader.textContent = 'On-the-fly Transcoding Settings (Server)';
+    configModalBody.appendChild(onTheFlyTranscodingHeader);
+
+    const onTheFlyTranscodingSettingsContainer = document.createElement('div');
+    onTheFlyTranscodingSettingsContainer.className = 'config-section-settings collapsed';
+    let hasOnTheFlyTranscodingSettings = false;
+    for (const key of onTheFlyTranscodingConfigKeys) {
+        if (pythonConfig.hasOwnProperty(key)) {
+            onTheFlyTranscodingSettingsContainer.appendChild(createConfigInput(key, pythonConfig[key], 'python_config.'));
+            hasOnTheFlyTranscodingSettings = true;
         }
-        configModalBody.appendChild(pythonSettingsContainer);
-        pythonHeader.addEventListener('click', () => {
-            pythonSettingsContainer.classList.toggle('collapsed');
-            pythonHeader.classList.toggle('collapsed');
-        });
     }
+    if (hasOnTheFlyTranscodingSettings) {
+        configModalBody.appendChild(onTheFlyTranscodingSettingsContainer);
+        onTheFlyTranscodingHeader.addEventListener('click', () => {
+            onTheFlyTranscodingSettingsContainer.classList.toggle('collapsed');
+            onTheFlyTranscodingHeader.classList.toggle('collapsed');
+        });
+    } else {
+        onTheFlyTranscodingHeader.remove(); 
+    }
+
+    // --- Pre-Transcoding Settings Section (Python) ---
+    const preTranscodingConfigKeys = [
+        'DEFAULT_TRANSCODE_VIDEO_CODEC',
+        'DEFAULT_TRANSCODE_AUDIO_CODEC',
+        'DEFAULT_TRANSCODE_PRESET',
+        'DEFAULT_TRANSCODE_CRF',
+        'DEFAULT_TRANSCODE_VIDEO_BITRATE',
+        'DEFAULT_TRANSCODE_AUDIO_BITRATE',
+        'DEFAULT_TRANSCODE_TARGET_FORMAT' 
+    ];
+
+    const preTranscodingHeader = document.createElement('h3');
+    preTranscodingHeader.className = 'config-section-header collapsed';
+    preTranscodingHeader.textContent = 'Pre-Transcoding Settings (Server)';
+    configModalBody.appendChild(preTranscodingHeader);
+
+    const preTranscodingSettingsContainer = document.createElement('div');
+    preTranscodingSettingsContainer.className = 'config-section-settings collapsed';
+    let hasPreTranscodingSettings = false;
+    for (const key of preTranscodingConfigKeys) {
+        if (pythonConfig.hasOwnProperty(key)) {
+            preTranscodingSettingsContainer.appendChild(createConfigInput(key, pythonConfig[key], 'python_config.'));
+            hasPreTranscodingSettings = true;
+        }
+    }
+    if (hasPreTranscodingSettings) {
+        configModalBody.appendChild(preTranscodingSettingsContainer);
+        preTranscodingHeader.addEventListener('click', () => {
+            preTranscodingSettingsContainer.classList.toggle('collapsed');
+            preTranscodingHeader.classList.toggle('collapsed');
+        });
+    } else {
+        preTranscodingHeader.remove(); 
+    }
+
+    // --- Other Server Settings (Python) ---
+    const otherPythonHeader = document.createElement('h3');
+    otherPythonHeader.className = 'config-section-header collapsed';
+    otherPythonHeader.textContent = 'Other Server Settings (Python)';
+    configModalBody.appendChild(otherPythonHeader);
+    
+    const otherPythonSettingsContainer = document.createElement('div');
+    otherPythonSettingsContainer.className = 'config-section-settings collapsed';
+    const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
+    const allTranscodingKeys = [...onTheFlyTranscodingConfigKeys, ...preTranscodingConfigKeys];
+    let hasOtherPythonSettings = false;
+    for (const [key, value] of Object.entries(pythonConfig)) {
+        if (!tunnelConfigKeys.includes(key) && !allTranscodingKeys.includes(key)) {
+            otherPythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+            hasOtherPythonSettings = true;
+        }
+    }
+
+    if (hasOtherPythonSettings) {
+        configModalBody.appendChild(otherPythonSettingsContainer);
+        otherPythonHeader.addEventListener('click', () => {
+            otherPythonSettingsContainer.classList.toggle('collapsed');
+            otherPythonHeader.classList.toggle('collapsed');
+        });
+    } else {
+        otherPythonHeader.remove(); // Remove header if no other python settings
+    }
+
 
     // Iterate over javascript_config sections
     if (window.appConfig.javascript_config) {

@@ -14,6 +14,25 @@ export const CONFIG_DESCRIPTIONS = {
     "python_config.WS_RECONNECT_FACTOR": "WebSocket Reconnect Factor (Server): Multiplier for WebSocket reconnection delay increase after each failed attempt. Default: 1.5.",
     "python_config.MEMORY_CLEANUP_INTERVAL": "Memory Cleanup Interval (ms, Server): How often the server performs certain memory cleanup tasks. Default: 60000.",
     "python_config.MAX_CACHE_SIZE": "Max Cache Size (Server/Client): Maximum number of items for certain server-side caches. This value is also passed to the client to guide its media element cache size. Default: 50.",
+    "python_config.TRANSCODE_ON_THE_FLY_STREAMING": "Transcode on-the-fly (boolean): If true, videos requiring transcoding will start streaming to the client immediately as FFmpeg processes them, without waiting for the entire file to be saved first. This allows faster playback start but means the video is re-transcoded for each request (no caching of the on-the-fly stream). If false (default), videos are fully transcoded and saved before playback begins, enabling caching for subsequent requests. Default: false. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_TARGET_HEIGHT": "On-the-fly Transcode Target Height (pixels): Target video height for on-the-fly transcoding (e.g., 720 for 720p). Aspect ratio is maintained. Default: 720. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_VIDEO_BITRATE": "On-the-fly Transcode Video Bitrate (e.g., 2000k, 2M): Target video bitrate for on-the-fly transcoding. Higher values mean better quality but more data. Default: '2000k'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_AUDIO_BITRATE": "On-the-fly Transcode Audio Bitrate (e.g., 128k, 192k): Target audio bitrate for on-the-fly transcoding. Default: '128k'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_CRF": "On-the-fly Transcode CRF (0-51): Constant Rate Factor for video. Lower values mean better quality. Used when Video Bitrate is not strictly controlling. For libx264 with 'ultrafast' preset, 24-30 is common. Default: 26. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_TUNE": "On-the-fly Transcode Tune (libx264): FFmpeg 'tune' parameter for libx264, optimizes for certain content or goals (e.g., 'film', 'animation', 'zerolatency', 'fastdecode'). Default: 'fastdecode'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_H264_LEVEL": "On-the-fly Transcode H.264 Level (e.g., 3.1, 4.0): H.264 level for on-the-fly transcoding. Affects compatibility, especially with mobile devices. Lower levels like 3.1 (for 720p) are broadly compatible. Default: '3.1'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_VIDEO_CODEC": "On-the-fly Transcode Video Codec: Video codec for on-the-fly transcoding (e.g., 'libx264', 'libx265'). Default: 'libx264'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_AUDIO_CODEC": "On-the-fly Transcode Audio Codec: Audio codec for on-the-fly transcoding (e.g., 'aac', 'opus'). Default: 'aac'. Restart required.",
+    "python_config.TRANSCODE_ON_THE_FLY_PRESET": "On-the-fly Transcode Preset: FFmpeg preset for on-the-fly transcoding. Faster presets use less CPU but offer less compression (e.g., 'ultrafast', 'superfast'). Default: 'superfast'. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_TARGET_FORMAT": "Default Transcode Target Format (e.g., mp4, webm): The container format used for both pre-transcoded files and on-the-fly transcoded streams. This also determines the MIME type. 'mp4' is broadly compatible. Default: 'mp4'. Restart required.",
+
+    // --- Pre-Transcoding Settings (for saved transcoded files) ---
+    "python_config.DEFAULT_TRANSCODE_VIDEO_CODEC": "Pre-transcode Video Codec: Video codec for pre-transcoding files (e.g., 'libx264', 'libx265'). Default: 'libx264'. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_AUDIO_CODEC": "Pre-transcode Audio Codec: Audio codec for pre-transcoding files (e.g., 'aac', 'opus'). Default: 'aac'. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_PRESET": "Pre-transcode Preset: FFmpeg preset for pre-transcoding. Slower presets offer better compression but take more time (e.g., 'fast', 'medium', 'slow'). Default: 'fast'. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_CRF": "Pre-transcode CRF (0-51): Constant Rate Factor for video quality. Lower is better quality, higher is smaller file. For libx264, 18-28 is common. Default: 23. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_VIDEO_BITRATE": "Pre-transcode Video Bitrate (e.g., 1000k, ''): Optional. Target video bitrate. If set, may override CRF or work with it depending on codec. Empty means CRF is primary. Default: ''. Restart required.",
+    "python_config.DEFAULT_TRANSCODE_AUDIO_BITRATE": "Pre-transcode Audio Bitrate (e.g., 96k, 128k): Target audio bitrate for pre-transcoded files. Default: '128k'. Restart required.",
 
     // JavaScript Config - main
     "javascript_config.main.socket_reconnectionAttempts": "Main Socket Reconnect Attempts (Client): Max reconnection attempts for the primary client-side WebSocket (used for chat/general events). Default: 5.",

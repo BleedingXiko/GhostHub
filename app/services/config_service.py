@@ -21,7 +21,23 @@ def get_default_config():
             "WS_RECONNECT_DELAY": 1000,
             "WS_RECONNECT_FACTOR": 1.5,
             "MEMORY_CLEANUP_INTERVAL": 60000,
-            "MAX_CACHE_SIZE": 50
+            "MAX_CACHE_SIZE": 50,
+            "TRANSCODE_ON_THE_FLY_STREAMING": True,
+            "TRANSCODE_ON_THE_FLY_TARGET_HEIGHT": 720,
+            "TRANSCODE_ON_THE_FLY_VIDEO_BITRATE": "2000k",
+            "TRANSCODE_ON_THE_FLY_AUDIO_BITRATE": "128k",
+            "TRANSCODE_ON_THE_FLY_CRF": 24, # Adjusted default
+            "TRANSCODE_ON_THE_FLY_TUNE": "zerolatency",
+            "TRANSCODE_ON_THE_FLY_VIDEO_CODEC": "libx264",
+            "TRANSCODE_ON_THE_FLY_AUDIO_CODEC": "aac",
+            "TRANSCODE_ON_THE_FLY_PRESET": "fast",
+            "DEFAULT_TRANSCODE_VIDEO_CODEC": "libx264",
+            "DEFAULT_TRANSCODE_AUDIO_CODEC": "aac",
+            "DEFAULT_TRANSCODE_PRESET": "fast",
+            "DEFAULT_TRANSCODE_CRF": 23,
+            "DEFAULT_TRANSCODE_VIDEO_BITRATE": "",
+            "DEFAULT_TRANSCODE_AUDIO_BITRATE": "128k",
+            "DEFAULT_TRANSCODE_TARGET_FORMAT": "mp4"
         },
         "javascript_config": {
             "main": {

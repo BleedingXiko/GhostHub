@@ -56,7 +56,7 @@ def get_mime_type(filename):
 
 # Thumbnail Generation Constants
 
-THUMBNAIL_DIR_NAME = ".thumbnails"
+# THUMBNAIL_DIR_NAME is now THUMBNAIL_SUBDIR_NAME in config, used relative to .ghosthub
 THUMBNAIL_SIZE = (256, 256)
 THUMBNAIL_FORMAT = "JPEG" # Use JPEG for good compression/quality balance
 
@@ -200,6 +200,7 @@ def get_thumbnail_url(category_id, original_filename):
     """
     thumbnail_filename = original_filename + '.' + THUMBNAIL_FORMAT.lower()
     encoded_thumbnail_filename = quote(thumbnail_filename)
+    # The URL structure remains the same; the route handler will resolve the new disk path.
     return f"/thumbnails/{category_id}/{encoded_thumbnail_filename}"
 
 def process_category_thumbnails(category_path, all_files_metadata, force_refresh=False):
@@ -226,9 +227,11 @@ def process_category_thumbnails(category_path, all_files_metadata, force_refresh
         logger.warning(f"No files to process thumbnails for in {category_path}")
         return 0, 0, 0
     
-    # Ensure thumbnail directory exists
-    thumbnail_dir = os.path.join(category_path, THUMBNAIL_DIR_NAME)
+    # Ensure thumbnail directory exists inside .ghosthub
+    base_ghosthub_dir = os.path.join(category_path, current_app.config['GHOSTHUB_SUBDIR_NAME'])
+    thumbnail_dir = os.path.join(base_ghosthub_dir, current_app.config['THUMBNAIL_SUBDIR_NAME'])
     os.makedirs(thumbnail_dir, exist_ok=True)
+    logger.info(f"Ensured thumbnail directory exists at: {thumbnail_dir}")
     
     # Count image and video files
     image_count = 0
@@ -299,7 +302,7 @@ def find_thumbnail(category_path, category_id, category_name):
     
     Returns (media_count, thumbnail_url, contains_video) tuple.
     """
-    thumbnail_url = None
+    thumbnail_url = None # Initialize thumbnail_url
     media_count = 0
     contains_video = False # Initialize contains_video flag
 
@@ -360,9 +363,11 @@ def find_thumbnail(category_path, category_id, category_name):
                         logger.warning(f"Original file {original_file_path} not accessible, skipping.")
                         continue
 
-                    # Determine thumbnail path and filename
+                    # Determine thumbnail path and filename (inside .ghosthub/.thumbnails)
                     thumbnail_filename = original_filename + '.' + THUMBNAIL_FORMAT.lower()
-                    thumbnail_save_path = os.path.join(category_path, THUMBNAIL_DIR_NAME, thumbnail_filename)
+                    base_ghosthub_dir = os.path.join(category_path, current_app.config['GHOSTHUB_SUBDIR_NAME'])
+                    thumbnail_disk_dir = os.path.join(base_ghosthub_dir, current_app.config['THUMBNAIL_SUBDIR_NAME'])
+                    thumbnail_save_path = os.path.join(thumbnail_disk_dir, thumbnail_filename)
 
                     # Check if thumbnail exists or generate it
                     thumbnail_exists = os.path.exists(thumbnail_save_path)

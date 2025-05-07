@@ -7,6 +7,7 @@ Handles asynchronous indexing of media directories.
 import os
 import time
 import logging
+from app.services.transcoding_service import TranscodingService # Added
 import traceback
 import threading
 from queue import Queue, Empty
@@ -61,11 +62,15 @@ class IndexingService:
         current_time = time.time()
         status_info = {
             'status': 'running',
-            'progress': 0,
-            'files': [],  # Will be populated incrementally
+            'progress': 0, # Overall indexing progress
+            'files': [],
             'timestamp': current_time,
-            'total_files': 0,  # Will be updated as we discover files
-            'processed_files': 0
+            'total_files': 0, # Total media files for indexing
+            'processed_files': 0, # Media files processed for indexing (metadata)
+            'is_transcoding_enabled_for_category': False, # Will be set by worker
+            'videos_total_for_transcoding': 0,
+            'videos_processed_for_transcoding': 0,
+            'current_transcoding_filename': ''
         }
         async_index_status[category_id] = status_info
         
@@ -154,60 +159,106 @@ class IndexingService:
                                 # Continue with rebuilding the index
                         
                         # Get total file count for progress tracking (approximate)
-                        total_files = 0
-                        try:
-                            total_files = sum(1 for f in os.listdir(category_path) if is_media_file(f))
-                            async_index_status[category_id]['total_files'] = total_files
-                            logger.info(f"Found {total_files} media files in '{category_name}' for indexing")
-                        except Exception as count_error:
-                            logger.error(f"Error counting files in {category_path}: {count_error}")
-                            # Continue with unknown total
+                        media_filenames_in_dir = [f for f in os.listdir(category_path) if is_media_file(f)]
+                        total_media_files = len(media_filenames_in_dir)
+                        async_index_status[category_id]['total_files'] = total_media_files
+                        logger.info(f"Found {total_media_files} media files in '{category_name}' for indexing")
+
+                        # Determine if transcoding is active for this category and count videos
+                        transcoding_is_active_for_this_task = not current_app.config.get('TRANSCODE_ON_THE_FLY_STREAMING', False)
+                        async_index_status[category_id]['is_transcoding_enabled_for_category'] = transcoding_is_active_for_this_task
+                        
+                        if transcoding_is_active_for_this_task:
+                            video_files_in_dir = [
+                                f for f in media_filenames_in_dir 
+                                if os.path.splitext(f)[1].lower() in current_app.config.get('VIDEO_EXTENSIONS', [])
+                            ]
+                            async_index_status[category_id]['videos_total_for_transcoding'] = len(video_files_in_dir)
+                            logger.info(f"Transcoding active for '{category_name}': {len(video_files_in_dir)} videos to potentially transcode.")
                         
                         # Process files in chunks
-                        processed = 0
+                        processed_for_indexing = 0 # Renamed to be specific
                         chunk_size = 10  # Process files in smaller chunks for more frequent updates
                         
                         # Create a list to store metadata
                         all_files_metadata = []
                         
                         # Process each file in the directory
-                        for filename in os.listdir(category_path):
-                            if is_media_file(filename):
-                                try:
-                                    filepath = os.path.join(category_path, filename)
-                                    stats = os.stat(filepath)
-                                    file_meta = {
-                                        'name': filename,
-                                        'size': stats.st_size,
-                                        'mtime': stats.st_mtime
-                                    }
-                                    all_files_metadata.append(file_meta)
-                                    
-                                    # Update status
-                                    processed += 1
-                                    async_index_status[category_id]['processed_files'] = processed
-                                    
-                                    # Update progress percentage
-                                    if total_files > 0:
-                                        progress = min(int((processed / total_files) * 100), 99)  # Cap at 99% until complete
-                                    else:
-                                        progress = 50  # Unknown total, show 50%
-                                    
-                                    async_index_status[category_id]['progress'] = progress
-                                    
-                                    # Update files list in chunks to avoid excessive memory usage
-                                    if processed % chunk_size == 0:
-                                        async_index_status[category_id]['files'] = all_files_metadata.copy()
-                                        logger.info(f"Processed {processed} files for '{category_name}' ({progress}%)")
-                                    
-                                except FileNotFoundError:
-                                    logger.warning(f"File disappeared during async indexing: {filename}")
-                                except Exception as file_error:
-                                    logger.warning(f"Error processing file {filename} during async indexing: {file_error}")
+                        for filename in media_filenames_in_dir: # Iterate over pre-filtered list
+                            # No need to call is_media_file(filename) again
+                            try:
+                                filepath = os.path.join(category_path, filename)
+                                stats = os.stat(filepath)
+                                file_meta = {
+                                    'name': filename,
+                                    'size': stats.st_size,
+                                    'mtime': stats.st_mtime
+                                }
+                                all_files_metadata.append(file_meta)
+                                
+                                # Update indexing status
+                                processed_for_indexing += 1
+                                async_index_status[category_id]['processed_files'] = processed_for_indexing
+                                
+                                # Update overall progress percentage (based on file indexing for now)
+                                if total_media_files > 0:
+                                    progress = min(int((processed_for_indexing / total_media_files) * 100), 99)
+                                else:
+                                    progress = 50
+                                async_index_status[category_id]['progress'] = progress
+                                
+                                # Update files list in chunks
+                                if processed_for_indexing % chunk_size == 0:
+                                    async_index_status[category_id]['files'] = all_files_metadata.copy()
+                                    logger.info(f"Indexed {processed_for_indexing}/{total_media_files} files for '{category_name}' ({progress}%)")
+
+                                # --- Transcoding Logic ---
+                                file_extension = os.path.splitext(filename)[1].lower()
+                                is_video = file_extension in current_app.config.get('VIDEO_EXTENSIONS', [])
+                                
+                                if is_video and async_index_status[category_id]['is_transcoding_enabled_for_category']:
+                                    async_index_status[category_id]['current_transcoding_filename'] = filename
+                                    logger.info(f"Pre-transcoding video: {filename} for category '{category_name}'")
+                                    try:
+                                        transcoded_path = TranscodingService.get_or_create_transcoded_video(filepath, category_path)
+                                        if transcoded_path and transcoded_path != filepath:
+                                            logger.info(f"Successfully pre-transcoded/found: {filename} -> {transcoded_path}")
+                                        elif transcoded_path == filepath:
+                                            logger.info(f"Pre-transcoding not needed/skipped for {filename}")
+                                        else:
+                                            logger.warning(f"Pre-transcoding failed/returned None for {filename}")
+                                    except Exception as e_transcode:
+                                        logger.error(f"Error during pre-transcoding call for {filepath}: {e_transcode}")
+                                        logger.debug(traceback.format_exc())
+                                    finally:
+                                        async_index_status[category_id]['videos_processed_for_transcoding'] += 1
+                                        async_index_status[category_id]['current_transcoding_filename'] = ""
+                                # --- End Transcoding Logic ---
+                                
+                            except FileNotFoundError:
+                                logger.warning(f"File disappeared during async indexing: {filename}")
+                                file_extension = os.path.splitext(filename)[1].lower() # Re-check extension if needed
+                                is_video = file_extension in current_app.config.get('VIDEO_EXTENSIONS', [])
+                                if is_video and async_index_status[category_id]['is_transcoding_enabled_for_category']:
+                                    # If it was a video slated for transcoding, count it as "processed" to not hang progress
+                                    async_index_status[category_id]['videos_processed_for_transcoding'] += 1
+                                    async_index_status[category_id]['current_transcoding_filename'] = ""
+                            except Exception as file_error:
+                                logger.warning(f"Error processing file {filename} during async indexing: {file_error}")
+                                file_extension = os.path.splitext(filename)[1].lower() # Re-check extension
+                                is_video = file_extension in current_app.config.get('VIDEO_EXTENSIONS', [])
+                                if is_video and async_index_status[category_id]['is_transcoding_enabled_for_category'] and \
+                                   async_index_status[category_id]['current_transcoding_filename'] == filename:
+                                    # If error happened during transcoding of this file
+                                        async_index_status[category_id]['videos_processed_for_transcoding'] += 1
+                                        async_index_status[category_id]['current_transcoding_filename'] = ""
                         
                         # Always update the files list at the end
                         async_index_status[category_id]['files'] = all_files_metadata
-                        logger.info(f"Finished processing all {processed} files for '{category_name}'")
+                        async_index_status[category_id]['current_transcoding_filename'] = "" # Ensure cleared
+                        logger.info(f"Finished processing all {processed_for_indexing} files for '{category_name}' metadata.")
+                        if async_index_status[category_id]['is_transcoding_enabled_for_category']:
+                            logger.info(f"Transcoding attempts: {async_index_status[category_id]['videos_processed_for_transcoding']}/{async_index_status[category_id]['videos_total_for_transcoding']} videos for '{category_name}'.")
                         
                         # Process thumbnails for all videos and one image (for category preview)
                         try:
@@ -241,7 +292,7 @@ class IndexingService:
                         async_index_status[category_id]['progress'] = 100
                         async_index_status[category_id]['timestamp'] = current_time
                         
-                        logger.info(f"Completed async indexing for '{category_name}': {processed} files indexed, index saved: {save_success}")
+                        logger.info(f"Completed async indexing for '{category_name}': {processed_for_indexing} files indexed, index saved: {save_success}")
                         
                     except Exception as task_error:
                         logger.error(f"Error during async indexing of '{category_name}': {task_error}")

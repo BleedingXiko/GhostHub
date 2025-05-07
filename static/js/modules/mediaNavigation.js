@@ -82,16 +82,35 @@ function setupThumbnailClickListener() {
                     // Start loading and playing the video AFTER it's in the DOM
                     setTimeout(() => {
                         videoElement.preload = 'auto'; // Now set preload to auto
-                        videoElement.muted = false;   // Unmute before playing
-                        videoElement.play().then(() => {
-                            console.log(`Video playback started for index: ${currentDataIndex}`);
-                        }).catch(err => {
-                            console.error(`Error playing video after click for index ${currentDataIndex}:`, err);
-                            // If unmuted play fails, try muted as a fallback (though less likely needed now)
+                        
+                        // For iOS, try playing muted first, then unmute
+                        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+                        if (isIOS) {
+                            // iOS requires muted playback to start automatically
                             videoElement.muted = true;
-                            videoElement.play().catch(e2 => console.error(`Muted playback also failed for index ${currentDataIndex}:`, e2));
-                        });
-                    }, 50); // Small delay to ensure DOM is ready
+                            videoElement.play().then(() => {
+                                console.log(`iOS: Muted video playback started for index: ${currentDataIndex}`);
+                                // After successful muted play, try to unmute
+                                setTimeout(() => {
+                                    videoElement.muted = false;
+                                    console.log(`iOS: Attempting to unmute video for index: ${currentDataIndex}`);
+                                }, 500);
+                            }).catch(err => {
+                                console.error(`iOS: Error playing muted video for index ${currentDataIndex}:`, err);
+                            });
+                        } else {
+                            // Non-iOS devices can try unmuted playback directly
+                            videoElement.muted = false;
+                            videoElement.play().then(() => {
+                                console.log(`Video playback started for index: ${currentDataIndex}`);
+                            }).catch(err => {
+                                console.error(`Error playing video after click for index ${currentDataIndex}:`, err);
+                                // If unmuted play fails, try muted as a fallback
+                                videoElement.muted = true;
+                                videoElement.play().catch(e2 => console.error(`Muted playback also failed for index ${currentDataIndex}:`, e2));
+                            });
+                        }
+                    }, 100); // Increased delay to ensure DOM is ready
                 } else {
                     console.error("Cannot replace thumbnail container - no parent node found.");
                     thumbnailContainer.classList.remove('loading-video'); // Remove loading lock if replacement fails
@@ -489,8 +508,17 @@ function createActualVideoElement(file, isActive) {
     // ALWAYS create muted initially. Playback is handled by click or navigation.
     mediaElement.muted = true;
 
-    // Set preload to 'none' initially for ALL videos. It will be set to 'auto' in the click handler.
-    mediaElement.preload = 'none';
+    // Set preload to 'auto' for better mobile compatibility
+    mediaElement.preload = 'auto';
+    
+    // Add crossorigin attribute for better CORS handling on iOS
+    mediaElement.crossOrigin = 'anonymous';
+    
+    // Add additional attributes for better mobile compatibility
+    mediaElement.setAttribute('x-webkit-airplay', 'allow');
+    mediaElement.setAttribute('playsinline', 'true');
+    mediaElement.setAttribute('webkit-playsinline', 'true');
+    mediaElement.setAttribute('x-playsinline', 'true');
 
     // Explicitly remove autoplay attribute - playback is controlled manually
     mediaElement.removeAttribute('autoplay');

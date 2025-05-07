@@ -92,7 +92,9 @@ def backup_corrupted_file(filepath):
 
 def get_index_filepath(category_path):
     """Get the absolute path to the index file for a given category path."""
-    return os.path.join(category_path, INDEX_FILENAME)
+    # Index file is now inside the .ghosthub subdirectory
+    ghosthub_dir = os.path.join(category_path, current_app.config['GHOSTHUB_SUBDIR_NAME'])
+    return os.path.join(ghosthub_dir, INDEX_FILENAME)
 
 def load_index(category_path):
     """
@@ -131,14 +133,18 @@ def save_index(category_path, index_data):
     Returns:
         bool: True if successful, False otherwise.
     """
-    # Use a direct path to the index file in the category directory
-    filepath = os.path.join(category_path, INDEX_FILENAME)
+    filepath = get_index_filepath(category_path) # Use the updated path
     
     try:
+        # Ensure the .ghosthub directory exists
+        ghosthub_dir = os.path.dirname(filepath)
+        os.makedirs(ghosthub_dir, exist_ok=True)
+        logger.info(f"Ensured .ghosthub directory exists at: {ghosthub_dir}")
+
         file_count = len(index_data.get('files', []))
         
         # Log more details about the file we're trying to save
-        logger.info(f"Attempting to save index directly to {filepath} with {file_count} files")
+        logger.info(f"Attempting to save index to {filepath} with {file_count} files")
         
         # Write the file with explicit encoding - use a simpler approach
         with open(filepath, 'w', encoding='utf-8') as f:

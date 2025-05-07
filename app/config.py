@@ -50,6 +50,16 @@ class Config:
     MEMORY_CLEANUP_INTERVAL = 60000  # ms
     MAX_CACHE_SIZE = 50
 
+    # Transcoding settings (related to on-the-fly)
+    TRANSCODE_ON_THE_FLY_STREAMING = True  # If true, stream directly from FFMPEG, no saving.
+    TRANSCODE_ON_THE_FLY_TARGET_FORMAT = "mp4"
+    TRANSCODE_ON_THE_FLY_TARGET_HEIGHT = 720 # Target video height (e.g., 720 for 720p)
+    TRANSCODE_ON_THE_FLY_VIDEO_BITRATE = "2000k" # Target video bitrate (e.g., "2000k", "2M")
+    TRANSCODE_ON_THE_FLY_AUDIO_BITRATE = "128k"  # Target audio bitrate
+    TRANSCODE_ON_THE_FLY_CRF = 24 # Constant Rate Factor (0-51, lower is better quality, 23-24 is good for "fast" preset) - Adjusted default
+    TRANSCODE_ON_THE_FLY_TUNE = "zerolatency" # FFmpeg tune options for x264 - Changed to optimize for streaming
+    TRANSCODE_ON_THE_FLY_H264_LEVEL = "3.1" # H.264 level for on-the-fly transcoding (e.g., "3.1", "4.0", "4.1") - New
+
     # Tunneling settings
     TUNNEL_PROVIDER = "none"  # "none", "pinggy", "cloudflare"
     PINGGY_ACCESS_TOKEN = ""
@@ -124,6 +134,33 @@ class Config:
     VIDEO_EXTENSIONS = MEDIA_TYPES['video']['extensions']
     MEDIA_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 
+    # GhostHub specific directory names (within each category folder)
+    GHOSTHUB_SUBDIR_NAME = ".ghosthub"
+    THUMBNAIL_SUBDIR_NAME = ".thumbnails"  # Nested under GHOSTHUB_SUBDIR_NAME
+    TRANSCODED_SUBDIR_NAME = ".transcoded" # Nested under GHOSTHUB_SUBDIR_NAME
+
+    # FFMPEG and Transcoding settings
+    FFMPEG_PATH = "ffmpeg"  # Assumes ffmpeg is in system PATH
+    VIDEO_FORMATS_REQUIRING_TRANSCODING = ['.mp4', '.mkv', '.avi', '.wmv', '.flv', '.mov', '.mpg', '.mpeg', '.m4v', '.ts', '.mts', '.m2ts', '.vob', '.ogv'] # Added .mp4
+    DEFAULT_TRANSCODE_TARGET_FORMAT = "mp4" # Target container format for pre-transcoding
+
+    # --- Settings for Pre-Transcoding (get_or_create_transcoded_video) ---
+    DEFAULT_TRANSCODE_VIDEO_CODEC = "libx264"   # e.g., libx264, libx265, vp9
+    DEFAULT_TRANSCODE_AUDIO_CODEC = "aac"       # e.g., aac, opus, mp3
+    DEFAULT_TRANSCODE_PRESET = "fast"           # e.g., ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+    DEFAULT_TRANSCODE_CRF = 23                  # Constant Rate Factor for video (libx264: 0-51, lower is better; libx265: 0-51)
+    DEFAULT_TRANSCODE_VIDEO_BITRATE = ""        # Optional: Target video bitrate (e.g., "1000k"). If set, CRF might be ignored or work differently. Empty means CRF is primary.
+    DEFAULT_TRANSCODE_AUDIO_BITRATE = "128k"    # Target audio bitrate (e.g., "96k", "128k", "192k")
+    
+    TRANSCODED_FILE_SUFFIX = ".gh_transcoded" # e.g., original.mkv.gh_transcoded.mp4
+
+    # --- Settings for On-The-Fly Streaming (stream_transcoded_video_on_the_fly) ---
+    # These are already partially defined above, adding specific ones for on-the-fly if different defaults are needed
+    TRANSCODE_ON_THE_FLY_VIDEO_CODEC = "libx264" # Default for on-the-fly, can be overridden
+    TRANSCODE_ON_THE_FLY_AUDIO_CODEC = "aac"     # Default for on-the-fly, can be overridden
+    TRANSCODE_ON_THE_FLY_PRESET = "fast"    # Preset for on-the-fly (balance between speed and quality) - Changed default
+    # TRANSCODE_ON_THE_FLY_TARGET_HEIGHT, _VIDEO_BITRATE, _AUDIO_BITRATE, _CRF, _TUNE are already defined earlier
+
 # Load configurations from JSON and environment variables after Config class definition
 _config_json_path = os.path.join(Config.INSTANCE_FOLDER_PATH, 'ghosthub_config.json')
 _python_config_from_json = {}
@@ -162,7 +199,28 @@ _configurable_keys_info = {
     'MAX_CACHE_SIZE': int,
     'TUNNEL_PROVIDER': str,
     'PINGGY_ACCESS_TOKEN': str,
-    'TUNNEL_LOCAL_PORT': int
+    'TUNNEL_LOCAL_PORT': int,
+    'TRANSCODE_ON_THE_FLY_STREAMING': lambda v: str(v).lower() == 'true',
+    'TRANSCODE_ON_THE_FLY_TARGET_HEIGHT': int,
+    'TRANSCODE_ON_THE_FLY_VIDEO_BITRATE': str,
+    'TRANSCODE_ON_THE_FLY_AUDIO_BITRATE': str,
+    'TRANSCODE_ON_THE_FLY_CRF': int,
+    'TRANSCODE_ON_THE_FLY_TUNE': str,
+    'TRANSCODE_ON_THE_FLY_H264_LEVEL': str, # New
+    'DEFAULT_TRANSCODE_TARGET_FORMAT': str, # Make configurable
+
+    # --- For Pre-Transcoding ---
+    'DEFAULT_TRANSCODE_VIDEO_CODEC': str,
+    'DEFAULT_TRANSCODE_AUDIO_CODEC': str,
+    'DEFAULT_TRANSCODE_PRESET': str,
+    'DEFAULT_TRANSCODE_CRF': int,
+    'DEFAULT_TRANSCODE_VIDEO_BITRATE': str,
+    'DEFAULT_TRANSCODE_AUDIO_BITRATE': str,
+
+    # --- For On-The-Fly Streaming (additional/overrides) ---
+    'TRANSCODE_ON_THE_FLY_VIDEO_CODEC': str,
+    'TRANSCODE_ON_THE_FLY_AUDIO_CODEC': str,
+    'TRANSCODE_ON_THE_FLY_PRESET': str
 }
 
 for key, type_converter in _configurable_keys_info.items():

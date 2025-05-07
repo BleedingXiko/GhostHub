@@ -555,11 +555,8 @@ function preloadNextMedia() {
             
             document.body.appendChild(mediaElement);
             
-            // Add source with type for better loading
-            const source = document.createElement('source');
-            source.src = file.url;
-            source.type = 'video/mp4'; // Assume MP4 for better browser compatibility
-            mediaElement.appendChild(source);
+            // Set src directly, let browser infer type from Content-Type header or extension
+            mediaElement.src = file.url;
             
             // Force load metadata only
             mediaElement.load();
