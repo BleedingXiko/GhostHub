@@ -4,7 +4,7 @@
 
 **GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it's TikTok.
 
-**⚠️ Warning:** Please review [Known Issues](#known-issues) regarding security before use.
+**⚠️ Warning:** Please review [Known Issues](#-known-issues) regarding security before use.
 
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
 
