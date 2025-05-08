@@ -4,6 +4,8 @@
 
 **GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it's TikTok.
 
+**Warning:** Please review [Known Issues](#known-issues) regarding security before use.
+
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
@@ -205,6 +207,8 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 ## ⚠️ Known Issues
 
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
+- **Password Field**: Setting a password does not visually update the input field to reflect that a password has been set, but the password is still active and enforced.
+- **Security Concern - Sync Bypass**: Using the sync feature currently bypasses password protection. This is a major security concern if you intend to use passwords.
 
 
 ## 💬 Final Notes
