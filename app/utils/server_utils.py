@@ -26,7 +26,6 @@ _active_tunnel_info = {
     "process": None,   # subprocess.Popen object
     "local_port": None 
 }
-# --- End Global Tunnel State ---
 
 def initialize_app(config_name='development', port=5000):
     """

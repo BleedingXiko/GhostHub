@@ -28,6 +28,9 @@ const pinggyAccessTokenInput = document.getElementById('pinggy-access-token-inpu
 const tunnelLocalPortInput = document.getElementById('tunnel-local-port-input');
 const tunnelStatusDisplay = document.getElementById('tunnel-status-display');
 
+// Variable to track the tunnel status polling interval
+let tunnelStatusPollingInterval = null;
+
 /**
  * Setup controls for media viewing - with mobile-specific handling
  */
@@ -496,6 +499,13 @@ function openTunnelModal() {
  */
 function closeTunnelModal() {
     if (tunnelModal) tunnelModal.classList.add('hidden');
+    
+    // Clear any active polling interval when the modal is closed
+    if (tunnelStatusPollingInterval) {
+        clearInterval(tunnelStatusPollingInterval);
+        tunnelStatusPollingInterval = null;
+        console.log('Tunnel status polling stopped due to modal close');
+    }
 }
 
 /**
@@ -515,23 +525,9 @@ async function updateTunnelStatusDisplay() {
                 let displayText = `Status: Running (${data.provider || 'Unknown'}) on port ${data.local_port || 'N/A'}`;
                 if (data.url) {
                     if (data.provider === 'cloudflare' && data.url.includes('trycloudflare.com')) {
-                        displayText += ` - URL: <a href="${data.url}" target="_blank">${data.url}</a>`;
-                        // Add copy button for Cloudflare URL
-                        const copyButton = document.createElement('button');
-                        copyButton.textContent = 'Copy URL';
-                        copyButton.className = 'btn btn-secondary btn-sm tunnel-copy-btn'; // Add classes for styling
-                        copyButton.style.marginLeft = '10px';
-                        copyButton.onclick = () => {
-                            navigator.clipboard.writeText(data.url).then(() => {
-                                alert('Cloudflare URL copied to clipboard!');
-                            }).catch(err => {
-                                console.error('Failed to copy Cloudflare URL: ', err);
-                                alert('Failed to copy URL. See console for details.');
-                            });
-                        };
-                        // The display text will be set via innerHTML, so we append the button after setting text.
-                        // For now, let's build the HTML string.
-                        displayText += ` <button class="btn btn-secondary btn-sm tunnel-copy-btn" data-url="${data.url}">Copy URL</button>`;
+                        // Just display the URL as a clickable link without a copy button
+                        // Make it more prominent so it's easier to select manually
+                        displayText += ` - URL: <a href="${data.url}" target="_blank" style="font-weight: bold;">${data.url}</a>`;
                     } else if (data.provider === 'pinggy') {
                         displayText += ` - Reminder: Use your permanent Pinggy URL.`;
                     } else if (data.url) { 
@@ -539,26 +535,6 @@ async function updateTunnelStatusDisplay() {
                     }
                 }
                 tunnelStatusDisplay.innerHTML = displayText;
-                // Add event listener for dynamically created copy buttons
-                // Ensure this runs *after* innerHTML is set
-                const copyButtons = tunnelStatusDisplay.querySelectorAll('.tunnel-copy-btn');
-                copyButtons.forEach(button => {
-                    // Remove old listener to prevent duplicates if any
-                    const newButton = button.cloneNode(true);
-                    button.parentNode.replaceChild(newButton, button);
-                    
-                    newButton.addEventListener('click', (e) => {
-                        const urlToCopy = e.target.dataset.url;
-                        if (urlToCopy) {
-                            navigator.clipboard.writeText(urlToCopy).then(() => {
-                                alert('URL copied to clipboard!');
-                            }).catch(err => {
-                                console.error('Failed to copy URL: ', err);
-                                alert('Failed to copy URL. See console for details.');
-                            });
-                        }
-                    });
-                });
                 tunnelStatusDisplay.className = 'tunnel-status status-running'; // Set class last
             } else {
                 tunnelStatusDisplay.textContent = `Status: Stopped`;
@@ -629,6 +605,12 @@ async function handleStartTunnel() {
         tunnelStatusDisplay.className = 'tunnel-status status-starting';
     }
 
+    // Clear any existing polling interval
+    if (tunnelStatusPollingInterval) {
+        clearInterval(tunnelStatusPollingInterval);
+        tunnelStatusPollingInterval = null;
+    }
+
     try {
         // Save settings first to ensure PINGGY_ACCESS_TOKEN and TUNNEL_LOCAL_PORT are up-to-date in config for next load
         await handleSaveTunnelSettings(); 
@@ -669,18 +651,75 @@ async function handleStartTunnel() {
 
         if (data.status === 'success') { // Check data.status from backend response
             alert(data.message || 'Tunnel started successfully!');
+            
+            // For Cloudflare tunnels, set up polling to check for URL updates
+            if (provider === 'cloudflare') {
+                console.log('Starting tunnel status polling for Cloudflare URL');
+                
+                // Initial status check
+                await updateTunnelStatusDisplay();
+                
+                // Set up polling interval (every 2 seconds)
+                let pollCount = 0;
+                const maxPolls = 30; // Maximum number of polls (60 seconds total)
+                
+                tunnelStatusPollingInterval = setInterval(async () => {
+                    pollCount++;
+                    console.log(`Polling tunnel status (${pollCount}/${maxPolls})`);
+                    
+                    try {
+                        const statusResponse = await fetch('/api/tunnel/status');
+                        const statusData = await statusResponse.json();
+                        
+                        // Update the UI with the latest status
+                        if (statusResponse.ok) {
+                            // If we have a URL, update the display and stop polling
+                            if (statusData.status === 'running' && statusData.url && 
+                                statusData.provider === 'cloudflare' && 
+                                statusData.url.includes('trycloudflare.com')) {
+                                
+                                console.log('Cloudflare URL found, updating display and stopping polling');
+                                await updateTunnelStatusDisplay();
+                                
+                                // Stop polling since we have the URL
+                                clearInterval(tunnelStatusPollingInterval);
+                                tunnelStatusPollingInterval = null;
+                            } else if (statusData.status !== 'running') {
+                                // If tunnel is no longer running, stop polling
+                                console.log('Tunnel is no longer running, stopping polling');
+                                clearInterval(tunnelStatusPollingInterval);
+                                tunnelStatusPollingInterval = null;
+                                await updateTunnelStatusDisplay();
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error polling tunnel status:', error);
+                    }
+                    
+                    // Stop polling after maximum attempts
+                    if (pollCount >= maxPolls) {
+                        console.log('Reached maximum polling attempts, stopping');
+                        clearInterval(tunnelStatusPollingInterval);
+                        tunnelStatusPollingInterval = null;
+                    }
+                }, 2000); // Poll every 2 seconds
+            } else {
+                // For non-Cloudflare tunnels, just update once
+                updateTunnelStatusDisplay();
+            }
         } else {
             alert(`Error starting tunnel: ${data.message || 'Unknown error'}`);
+            updateTunnelStatusDisplay(); // Update status display to show error
         }
     } catch (error) {
         console.error('Failed to start tunnel:', error);
         alert(`Error starting tunnel: ${error.toString()}`);
+        updateTunnelStatusDisplay(); // Update status display to show error
     } finally {
         if(tunnelModalStartBtn) {
             tunnelModalStartBtn.textContent = 'Start Tunnel';
             tunnelModalStartBtn.disabled = false;
         }
-        updateTunnelStatusDisplay(); // Refresh status
     }
 }
 
@@ -696,6 +735,14 @@ async function handleStopTunnel() {
         tunnelStatusDisplay.textContent = 'Status: Stopping...';
         tunnelStatusDisplay.className = 'tunnel-status status-starting'; // Visually similar to starting
     }
+    
+    // Clear any active polling interval when stopping the tunnel
+    if (tunnelStatusPollingInterval) {
+        clearInterval(tunnelStatusPollingInterval);
+        tunnelStatusPollingInterval = null;
+        console.log('Tunnel status polling stopped due to tunnel stop');
+    }
+    
     try {
         const response = await fetch('/api/tunnel/stop', { method: 'POST' });
         const data = await response.json();
