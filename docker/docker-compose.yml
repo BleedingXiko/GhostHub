@@ -2,9 +2,9 @@
 services:
   ghosthub:
     # If you want to build locally instead of pulling:
-    # build:
-    #   context: ..
-    #   dockerfile: docker/Dockerfile
+    build:
+       context: ..
+       dockerfile: docker/Dockerfile
     image: dhux/ghosthub:latest
     container_name: ghosthub
     restart: unless-stopped
@@ -20,6 +20,7 @@ services:
       
       # Create the media directory if it doesn't exist
       - ../media:/media
+    
       
       # Mount your media directories here
       # Format: - /host/path:/media/category_name
@@ -37,10 +38,4 @@ services:
       - PORT=5000
       - FLASK_CONFIG=production
       - DOCKER_ENV=true
-      # Tunnel configuration (choose one: none, cloudflare, pinggy)
-      - TUNNEL_CHOICE=none
-      # - TUNNEL_CHOICE=cloudflare
-      # - TUNNEL_CHOICE=pinggy
-      
-      # Required if TUNNEL_CHOICE=pinggy
-      - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
+      # Tunnel configuration is now managed through the web UI

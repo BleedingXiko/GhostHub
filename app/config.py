@@ -7,6 +7,10 @@ Supports both script and executable modes with environment variable overrides.
 # app/config.py
 import os
 import sys
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_application_root():
     """
@@ -36,22 +40,24 @@ class Config:
     # Core settings
     SECRET_KEY = os.environ.get('SECRET_KEY', os.urandom(24))  # Session security
     CATEGORIES_FILE = os.environ.get('CATEGORIES_FILE', 'media_categories.json')
-    CACHE_EXPIRY = int(os.environ.get('CACHE_EXPIRY', 300))  # 5 minutes
-    DEFAULT_PAGE_SIZE = int(os.environ.get('DEFAULT_PAGE_SIZE', 10))
-    SESSION_EXPIRY = int(os.environ.get('SESSION_EXPIRY', 3600))  # 1 hour
-    SHUFFLE_MEDIA = os.environ.get('SHUFFLE_MEDIA', 'true').lower() == 'true'  # BUG issue with using shuffle and sync while inside a folder (might be fixed needs testing)
-    
-    # Security settings - 'auto', 'true', or 'false'
-    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true'
-    
-    # WebSocket settings
-    WS_RECONNECT_ATTEMPTS = int(os.environ.get('WS_RECONNECT_ATTEMPTS', 10))
-    WS_RECONNECT_DELAY = int(os.environ.get('WS_RECONNECT_DELAY', 1000))  # ms
-    WS_RECONNECT_FACTOR = float(os.environ.get('WS_RECONNECT_FACTOR', 1.5))
-    
-    # Memory management
-    MEMORY_CLEANUP_INTERVAL = int(os.environ.get('MEMORY_CLEANUP_INTERVAL', 60000))  # ms
-    MAX_CACHE_SIZE = int(os.environ.get('MAX_CACHE_SIZE', 50))
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'auto') == 'true' # Stays as env-var/default only
+
+    # Default values for settings that can be overridden by JSON and then ENV VARS
+    CACHE_EXPIRY = 300  # 5 minutes
+    DEFAULT_PAGE_SIZE = 10
+    SESSION_EXPIRY = 3600  # 1 hour
+    SHUFFLE_MEDIA = True 
+    WS_RECONNECT_ATTEMPTS = 10
+    WS_RECONNECT_DELAY = 1000  # ms
+    WS_RECONNECT_FACTOR = 1.5
+    MEMORY_CLEANUP_INTERVAL = 60000  # ms
+    MAX_CACHE_SIZE = 50
+
+    # Tunneling settings
+    TUNNEL_PROVIDER = "none"  # "none", "pinggy", "cloudflare"
+    PINGGY_ACCESS_TOKEN = ""
+    TUNNEL_LOCAL_PORT = 5000
+    SESSION_PASSWORD = ""  # Password for session access, empty means no password
     
     # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
@@ -121,6 +127,70 @@ class Config:
     IMAGE_EXTENSIONS = MEDIA_TYPES['image']['extensions']
     VIDEO_EXTENSIONS = MEDIA_TYPES['video']['extensions']
     MEDIA_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+# Load configurations from JSON and environment variables after Config class definition
+_config_json_path = os.path.join(Config.INSTANCE_FOLDER_PATH, 'ghosthub_config.json')
+_python_config_from_json = {}
+
+if not os.path.exists(Config.INSTANCE_FOLDER_PATH):
+    try:
+        os.makedirs(Config.INSTANCE_FOLDER_PATH)
+        logger.info(f"Created instance folder: {Config.INSTANCE_FOLDER_PATH}")
+    except OSError as e:
+        logger.error(f"Error creating instance folder {Config.INSTANCE_FOLDER_PATH}: {e}")
+
+if os.path.exists(_config_json_path):
+    try:
+        with open(_config_json_path, 'r') as f:
+            _loaded_json = json.load(f)
+            _python_config_from_json = _loaded_json.get('python_config', {})
+    except FileNotFoundError:
+        # This case should ideally not be hit if os.path.exists is true, but as a safeguard:
+        logger.warning(f"Config file disappeared between check and open: {_config_json_path}. Using defaults.")
+    except json.JSONDecodeError:
+        logger.warning(f"Error decoding JSON from {_config_json_path}. Using defaults and environment variables.")
+    except Exception as e:
+        logger.warning(f"An unexpected error occurred while reading {_config_json_path}: {e}. Using defaults and environment variables.")
+else:
+    logger.info(f"Configuration file {_config_json_path} not found. Using defaults and environment variables. A default config will be created if settings are saved via UI.")
+
+_configurable_keys_info = {
+    'CACHE_EXPIRY': int,
+    'DEFAULT_PAGE_SIZE': int,
+    'SESSION_EXPIRY': int,
+    'SHUFFLE_MEDIA': lambda v: str(v).lower() == 'true',
+    'WS_RECONNECT_ATTEMPTS': int,
+    'WS_RECONNECT_DELAY': int,
+    'WS_RECONNECT_FACTOR': float,
+    'MEMORY_CLEANUP_INTERVAL': int,
+    'MAX_CACHE_SIZE': int,
+    'TUNNEL_PROVIDER': str,
+    'PINGGY_ACCESS_TOKEN': str,
+    'TUNNEL_LOCAL_PORT': int,
+    'SESSION_PASSWORD': str
+}
+
+for key, type_converter in _configurable_keys_info.items():
+    # 1. Default is already set in Config class definition
+    
+    # 2. Apply JSON value if present (overrides hardcoded default)
+    if key in _python_config_from_json:
+        try:
+            json_val = _python_config_from_json[key]
+            setattr(Config, key, type_converter(json_val))
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid value for '{key}' in config.json: '{_python_config_from_json[key]}'. Error: {e}. Using previous value.")
+            # Value remains as hardcoded default or previously set env var if this is a re-load
+            
+    # 3. Apply Environment variable if present (overrides JSON and hardcoded default)
+    env_value = os.environ.get(key)
+    if env_value is not None:
+        try:
+            setattr(Config, key, type_converter(env_value))
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid value for environment variable '{key}': '{env_value}'. Error: {e}. Using previous value.")
+            # Value remains as hardcoded default or JSON value
+
 
 class DevelopmentConfig(Config):
     """Development configuration with debug mode enabled."""

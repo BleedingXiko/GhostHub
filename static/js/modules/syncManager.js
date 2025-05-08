@@ -3,19 +3,23 @@
  * Handles sync mode functionality for synchronized media viewing using WebSockets.
  */
 
-import { app, MEDIA_PER_PAGE } from '../core/app.js';
+import { app, MEDIA_PER_PAGE, MOBILE_DEVICE } from '../core/app.js'; // Added MOBILE_DEVICE
 import { updateSyncToggleButton, disableNavigationControls, enableNavigationControls } from './uiController.js';
 import { renderMediaWindow } from './mediaNavigation.js';
+import { getConfigValue } from '../utils/configManager.js'; // Import getConfigValue
 import { viewCategory } from './mediaLoader.js';
 
 // Socket.IO instance (initialized later)
 let socket = null;
 let isWebSocketConnected = false;
 let heartbeatInterval = null; // Module scope for proper cleanup
-let reconnectAttempts = 0;
-let maxReconnectAttempts = 10;
-let reconnectDelay = 1000; // Base delay in ms
-let reconnectFactor = 1.5; // Exponential factor
+
+// Variables for custom reconnection logic, initialized from config later
+let currentReconnectAttempts = 0; // Renamed from reconnectAttempts to avoid conflict with socket.io option
+let configuredMaxReconnectAttempts;
+let configuredReconnectDelayBase;
+let configuredReconnectFactor;
+
 
 // Add page unload handler to clean up socket connections
 window.addEventListener('beforeunload', () => {
@@ -81,16 +85,24 @@ function initWebSocket() {
 
     try {
         console.log('Initializing WebSocket connection...');
-        // The 'io' function is globally available from the script tag in index.html
-        socket = io({
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 20000,                  // Increased connection timeout
-            pingTimeout: 120000,             // Increased ping timeout to match server
-            pingInterval: 10000,             // Increased ping interval to match server
-            transports: ['websocket', 'polling'] // Try WebSocket first, fallback to polling
-        });
+
+        // Load Socket.IO client options from config
+        const socketIoOptions = {
+            reconnectionAttempts: getConfigValue('javascript_config.sync_manager.socket_reconnectionAttempts', 10),
+            reconnectionDelay: getConfigValue('javascript_config.sync_manager.socket_reconnectionDelay', 1000),
+            reconnectionDelayMax: getConfigValue('javascript_config.sync_manager.socket_reconnectionDelayMax', 5000),
+            timeout: getConfigValue('javascript_config.sync_manager.socket_timeout', 20000),
+            pingTimeout: getConfigValue('javascript_config.sync_manager.socket_pingTimeout', 120000),
+            pingInterval: getConfigValue('javascript_config.sync_manager.socket_pingInterval', 10000),
+            transports: ['websocket', 'polling']
+        };
+        console.log("SyncManager: Initializing Socket.IO with options:", socketIoOptions);
+        socket = io(socketIoOptions);
+
+        // Initialize parameters for custom reconnection logic from config
+        configuredMaxReconnectAttempts = getConfigValue('javascript_config.sync_manager.manual_maxReconnectAttempts', 10);
+        configuredReconnectDelayBase = getConfigValue('javascript_config.sync_manager.manual_reconnectDelayBase', 1000);
+        configuredReconnectFactor = getConfigValue('javascript_config.sync_manager.manual_reconnectFactor', 1.5);
         
         // Socket connected successfully
 
@@ -100,9 +112,9 @@ function initWebSocket() {
             isWebSocketConnected = true;
             updateSyncToggleButton(); // Update header display
 
-            // Reset reconnection attempts on successful connection
-            reconnectAttempts = 0;
-            reconnectDelay = 1000; // Reset to base delay
+            // Reset custom reconnection attempts on successful connection
+            currentReconnectAttempts = 0;
+            // configuredReconnectDelayBase is already set from config, no need to reset to hardcoded 1000
 
             // If we are a guest in sync mode, join the sync room
             if (app.state.syncModeEnabled && !app.state.isHost) {
@@ -115,12 +127,13 @@ function initWebSocket() {
                 clearInterval(heartbeatInterval);
             }
             
+            const heartbeatIntervalDelay = getConfigValue('javascript_config.sync_manager.heartbeatInterval', 30000);
             heartbeatInterval = setInterval(() => {
                 if (socket && socket.connected) {
                     console.log('Sending heartbeat to keep connection alive');
                     socket.emit('heartbeat');
                 }
-            }, 30000); // Send heartbeat every 30 seconds
+            }, heartbeatIntervalDelay);
         });
 
         socket.on('disconnect', (reason) => {
@@ -148,7 +161,7 @@ function initWebSocket() {
                         console.log('Manually triggering reconnect...');
                         socket.connect();
                     }
-                }, 2000);
+                }, getConfigValue('javascript_config.sync_manager.manual_reconnect_trigger_delay', 2000));
             }
             // Socket.IO will attempt to reconnect automatically based on options
         });
@@ -164,51 +177,48 @@ function initWebSocket() {
                 heartbeatInterval = null;
             }
             
-            // Add timeout to prevent indefinite hanging on mobile
-            if (reconnectAttempts > 3) {
+            const forceUiTimeoutDelay = getConfigValue('javascript_config.sync_manager.connect_error_force_ui_timeout', 5000);
+            // Add timeout to prevent indefinite hanging on mobile (or any device after several attempts)
+            if (currentReconnectAttempts > 3) { // Using currentReconnectAttempts
                 setTimeout(() => {
                     if (!isWebSocketConnected) {
                         console.log('Forcing application to continue despite WebSocket issues');
-                        // Force UI update and enable controls
                         enableNavigationControls();
                         updateSyncToggleButton();
-                        
-                        // If we're in sync mode as a guest, reset the state to prevent UI lockup
                         if (app.state.syncModeEnabled && !app.state.isHost) {
                             console.log('Resetting sync state due to connection timeout');
                             app.state.syncModeEnabled = false;
                             updateSyncToggleButton();
-                            updateSyncStatusDisplay('error', 'Sync: Connection Timed Out', 5000);
+                            updateSyncStatusDisplay('error', 'Sync: Connection Timed Out', forceUiTimeoutDelay);
                         }
                     }
-                }, 5000); // 5 second timeout
+                }, forceUiTimeoutDelay);
             }
             
-            // Implement exponential backoff for reconnection
-            reconnectAttempts++;
-            if (reconnectAttempts <= maxReconnectAttempts) {
-                // Calculate exponential backoff delay with jitter
-                const jitter = Math.random() * 0.3 + 0.85; // Random between 0.85 and 1.15
-                // Reduce max delay on mobile to prevent long hangs
-                const maxDelay = window.innerWidth <= 768 ? 10000 : 30000;
-                const delay = Math.min(reconnectDelay * Math.pow(reconnectFactor, reconnectAttempts - 1) * jitter, maxDelay);
+            // Implement exponential backoff for reconnection using configured values
+            currentReconnectAttempts++;
+            if (currentReconnectAttempts <= configuredMaxReconnectAttempts) {
+                const jitter = Math.random() * 0.3 + 0.85; 
+                const maxDelay = MOBILE_DEVICE ? 
+                    getConfigValue('javascript_config.sync_manager.manual_reconnect_delay_max_mobile', 10000) :
+                    getConfigValue('javascript_config.sync_manager.manual_reconnect_delay_max_desktop', 30000);
                 
-                console.log(`Connection attempt ${reconnectAttempts}/${maxReconnectAttempts} failed. Retrying in ${Math.round(delay)}ms...`);
+                const delay = Math.min(
+                    configuredReconnectDelayBase * Math.pow(configuredReconnectFactor, currentReconnectAttempts - 1) * jitter,
+                    maxDelay
+                );
                 
-                // Show reconnection status in the UI
-                updateSyncStatusDisplay('connecting', `Sync: Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})`);
+                console.log(`Connection attempt ${currentReconnectAttempts}/${configuredMaxReconnectAttempts} failed. Retrying in ${Math.round(delay)}ms...`);
+                updateSyncStatusDisplay('connecting', `Sync: Reconnecting (${currentReconnectAttempts}/${configuredMaxReconnectAttempts})`);
                 
-                // Try to reconnect after the calculated delay
                 setTimeout(() => {
                     if (socket && !socket.connected) {
-                        console.log(`Attempting reconnection #${reconnectAttempts}...`);
+                        console.log(`Attempting reconnection #${currentReconnectAttempts}...`);
                         socket.connect();
                     }
                 }, delay);
             } else {
-                console.error(`Maximum reconnection attempts (${maxReconnectAttempts}) reached. Giving up.`);
-                
-                // Show connection failure in the UI
+                console.error(`Maximum reconnection attempts (${configuredMaxReconnectAttempts}) reached. Giving up.`);
                 updateSyncStatusDisplay('error', 'Sync: Connection Failed');
                 
                 // If we're in sync mode as a guest, we need to reset the state

@@ -173,3 +173,355 @@
     animation: spin 1s cubic-bezier(0.42, 0, 0.58, 1) infinite;
     box-shadow: 0 0 10px rgba(var(--accent-color-rgb), 0.3);
 }
+
+/* Config Gear Icon in Header */
+.header-config {
+    margin-left: var(--space-md); /* Space it from GitHub icon if present */
+    margin-right: var(--space-sm); /* Space before sync button */
+}
+
+.config-toggle-btn {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: var(--space-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast) ease, color var(--transition-fast) ease;
+}
+
+.config-toggle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--accent-color);
+}
+
+.config-toggle-btn svg {
+    width: 22px; /* Slightly smaller than 24 to fit padding */
+    height: 22px;
+}
+
+/* Tunnel Icon in Header (similar to config) */
+.header-tunnel {
+    margin-left: var(--space-xs); /* Reduced space from config button */
+    margin-right: var(--space-sm);
+}
+
+/* Modal Styles (Generic - can be reused) */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6); /* Darker overlay */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* Ensure it's on top */
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-medium) ease, visibility 0s var(--transition-medium) linear;
+    backdrop-filter: blur(3px);
+}
+
+.modal.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-medium) ease, visibility 0s var(--transition-medium) linear;
+}
+
+.modal:not(.hidden) {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+.modal-content {
+    background-color: var(--background-color-dark);
+    padding: var(--space-xl);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    width: 90%;
+    max-width: 600px; /* Max width for the modal */
+    max-height: 85vh; /* Max height */
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform var(--transition-medium) ease;
+}
+
+.modal:not(.hidden) .modal-content {
+    transform: scale(1);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--divider-color);
+    padding-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    color: var(--text-primary);
+}
+
+.modal-close-btn {
+    background: none;
+    border: none;
+    font-size: 1.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0 var(--space-xs);
+    line-height: 1;
+}
+.modal-close-btn:hover {
+    color: var(--accent-color);
+}
+
+.modal-body {
+    overflow-y: auto; /* Allow scrolling for content */
+    flex-grow: 1;
+    padding-right: var(--space-sm); /* For scrollbar */
+    margin-bottom: var(--space-lg);
+}
+
+/* Styling for form elements within the modal */
+.modal-body .form-group {
+    margin-bottom: var(--space-lg);
+}
+
+.modal-body .form-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.modal-body .form-group input[type="text"],
+.modal-body .form-group input[type="number"],
+.modal-body .form-group input[type="password"], /* Added for Pinggy token field */
+.modal-body .form-group select {
+    width: 100%;
+    padding: var(--space-sm);
+    border: 1px solid var(--divider-color);
+    border-radius: var(--radius-md);
+    background-color: var(--background-color-light);
+    color: var(--text-primary); /* Ensures text is visible on the select box itself */
+    font-size: 1rem;
+    box-sizing: border-box; /* Ensure padding doesn't increase width */
+}
+
+/* Explicitly style select options for better visibility in dropdown */
+.modal-body .form-group select option {
+    background-color: var(--background-color-dark); /* Dark background for options */
+    color: var(--text-primary); /* Light text for options */
+}
+/* For browsers that might style the select element itself when open (like Firefox on some OS) */
+.modal-body .form-group select:focus {
+    background-color: var(--background-color-light); /* Keep consistent with closed state */
+    color: var(--text-primary);
+}
+
+
+.modal-body .form-group input[type="checkbox"] {
+    margin-right: var(--space-sm);
+    vertical-align: middle;
+}
+.modal-body .form-group .checkbox-label {
+    color: var(--text-primary);
+    font-weight: normal;
+}
+
+
+.modal-body h3 { /* For section titles within the modal */
+    font-size: 1.2rem;
+    color: var(--accent-color-light);
+    margin-top: var(--space-lg);
+    margin-bottom: var(--space-md);
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--divider-color-light);
+}
+.modal-body h3:first-child {
+    margin-top: 0;
+}
+
+.config-section-header {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) 0; /* Add some padding for easier clicking */
+    transition: background-color var(--transition-fast);
+}
+
+.config-section-header:hover {
+    background-color: rgba(255,255,255,0.05); /* Slight hover effect */
+}
+
+.config-section-header::after { /* Arrow indicator */
+    content: '▼'; /* Down arrow for expanded */
+    font-size: 0.8em;
+    margin-left: var(--space-sm);
+    transition: transform var(--transition-fast) ease-out;
+}
+
+.config-section-header.collapsed::after {
+    transform: rotate(-90deg); /* Left arrow for collapsed */
+}
+
+.config-section-settings {
+    padding-left: var(--space-md); /* Indent settings under their header */
+    overflow: hidden;
+    max-height: 2000px; /* Large enough for content, for transition */
+    transition: max-height var(--transition-medium) ease-in-out,
+                padding-top var(--transition-medium) ease-in-out,
+                padding-bottom var(--transition-medium) ease-in-out,
+                opacity var(--transition-medium) ease-in-out;
+    padding-top: var(--space-sm);
+    padding-bottom: var(--space-sm);
+    opacity: 1;
+}
+
+.config-section-settings.collapsed {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    /* margin-top: 0;
+    margin-bottom: 0; */ /* Avoid margin collapse issues when hidden */
+}
+
+
+.modal-body .form-group label {
+    display: flex; /* Align label text and help icon */
+    align-items: center;
+    font-weight: 500;
+    margin-bottom: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.config-help-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 50%;
+    background-color: var(--text-tertiary);
+    color: var(--background-color);
+    font-size: 0.75rem;
+    font-weight: bold;
+    margin-left: var(--space-sm);
+    cursor: pointer;
+    user-select: none; /* Prevent text selection on click */
+    transition: background-color var(--transition-fast);
+}
+
+.config-help-icon:hover {
+    background-color: var(--accent-color);
+}
+
+.config-description {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    background-color: var(--background-color-light);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    margin-top: var(--space-xs);
+    border: 1px solid var(--divider-color-light);
+    line-height: 1.4;
+}
+
+.config-description.hidden {
+    display: none;
+}
+
+.input-wrapper { /* To group input and its description */
+    display: flex;
+    flex-direction: column;
+}
+
+.input-wrapper .config-input-checkbox { /* Specific alignment for checkbox text */
+   vertical-align: middle; /* Align checkbox with its text label */
+}
+.input-wrapper .checkbox-label-text {
+    margin-left: var(--space-xs);
+    vertical-align: middle;
+}
+
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-md);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--divider-color);
+}
+
+/* Tunnel Status Display in Modal */
+.tunnel-status {
+    margin-top: var(--space-md);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    background-color: var(--background-color-light);
+    border: 1px solid var(--divider-color);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.tunnel-status.status-running {
+    color: var(--success-color);
+    border-color: var(--success-color-muted);
+    background-color: var(--success-color-bg);
+}
+
+.tunnel-status.status-stopped {
+    color: var(--error-color);
+    border-color: var(--error-color-muted);
+    background-color: var(--error-color-bg);
+}
+
+.tunnel-status.status-starting {
+    color: var(--warning-color); /* Or a neutral color */
+    border-color: var(--warning-color-muted);
+    background-color: var(--warning-color-bg);
+}
+
+.tunnel-status a {
+    color: var(--accent-color);
+    text-decoration: underline;
+}
+.tunnel-status a:hover {
+    color: var(--accent-color-light);
+}
+
+.tunnel-copy-btn { /* Style for the copy button */
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.8rem;
+    background-color: var(--secondary-color); /* Or another distinct color */
+    color: var(--text-primary);
+    border: 1px solid var(--secondary-color-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    margin-left: var(--space-sm);
+    text-transform: none; /* Override general button uppercase if needed */
+    letter-spacing: normal; /* Override general button letter-spacing */
+    width: auto; /* Override general button width */
+}
+
+.tunnel-copy-btn:hover {
+    background-color: var(--secondary-color-light);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}

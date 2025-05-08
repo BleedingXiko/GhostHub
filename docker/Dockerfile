@@ -2,17 +2,10 @@ FROM python:3.9-slim-buster
 
 WORKDIR /app
 
-# Install system dependencies
+# Install minimal system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
-    tk \
-    python3-tk \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libglib2.0-0 \
-    libgl1-mesa-glx \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,36 +13,42 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Ensure we have the correct versions of critical packages
+# Ensure critical version locking
 RUN pip install --no-cache-dir "numpy<2.0.0" "Flask-SocketIO==5.1.1" "python-socketio==5.4.0" "python-engineio==4.2.1"
 
-# Download and install cloudflared
+# Install cloudflared tunnel binary
 RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared \
     && chmod +x /usr/local/bin/cloudflared
 
-# Copy application files (context is now project root)
-COPY . .
+# Copy application files
+COPY app/ ./app/
+COPY static/ ./static/
+COPY templates/ ./templates/
+COPY scripts/ ./scripts/
+COPY wsgi.py .
+COPY docker-media-server.py .
+COPY ghosthub.py .
 
-# Create symbolic links to required executables in the app directory
+# (Optional) Copy wsgi.py to root if needed — uncomment if required
+# COPY app/wsgi.py ./wsgi.py
+
+# Symlinks to make cloudflared accessible from app root
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared.exe
 
-# Create media directory for mounting volumes
+# Create volume mount point
 RUN mkdir -p /media
 
-# Make the initialization script executable
+# Make init script executable
 RUN chmod +x /app/scripts/docker-init.py
 
-# Expose the port
+# Expose app port
 EXPOSE 5000
 
-# Set environment variables
+# Environment setup
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:0
 ENV DOCKER_ENV=true
 
-# Set environment variables for Cloudflare Tunnel
-# Removed ENV USE_CLOUDFLARE_TUNNEL=n (will be set in docker-compose.yml)
-
-# Run the initialization script and then start the Docker-specific application script
+# Start server
 CMD python /app/scripts/docker-init.py && python /app/docker-media-server.py

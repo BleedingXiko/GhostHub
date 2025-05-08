@@ -8,6 +8,7 @@ import { app, syncToggleBtn } from './core/app.js';
 
 // Utility modules
 import * as cacheManager from './utils/cacheManager.js';
+import { fetchAndApplyConfig, getConfigValue } from './utils/configManager.js'; // Import config manager
 
 // Feature modules
 import * as categoryManager from './modules/categoryManager.js';
@@ -35,8 +36,12 @@ window.appModules = {
 };
 
 // Application initialization on DOM ready
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => { // Make async
     console.log('Initializing application...');
+
+    // PHASE 0: Load application configuration
+    await fetchAndApplyConfig();
+    console.log('Configuration loaded.');
     
     // Connect interdependent modules
     categoryManager.setViewCategoryFunction(mediaLoader.viewCategory);
@@ -49,6 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // PHASE 1: Critical initialization
     categoryManager.loadCategories();
     
+    // Get phase delays from config, with fallbacks to original values
+    const phase2Delay = getConfigValue('javascript_config.main.phase2_init_delay', 250);
+    const phase3Delay = getConfigValue('javascript_config.main.phase3_init_delay', 500);
+
     // PHASE 2: Secondary initialization (delayed)
     setTimeout(() => {
         console.log('Phase 2 initialization...');
@@ -66,11 +75,14 @@ document.addEventListener('DOMContentLoaded', () => {
             // Chat initialization (optional)
             if (typeof io !== 'undefined') {
                 try {
-                    // Create socket connection
-                    const socket = io({
-                        reconnectionAttempts: 5,
-                        reconnectionDelay: 2000
-                    });
+                    // Get socket options from config
+                    const socketOptions = {
+                        reconnectionAttempts: getConfigValue('javascript_config.main.socket_reconnectionAttempts', 5),
+                        reconnectionDelay: getConfigValue('javascript_config.main.socket_reconnectionDelay', 2000)
+                        // Add other Socket.IO client options here if they become configurable
+                    };
+                    console.log('Initializing main socket with options:', socketOptions);
+                    const socket = io(socketOptions);
                     
                     // Initialize chat
                     chatManager.initChat(socket);
@@ -87,9 +99,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             console.log('Application fully initialized');
-        }, 500); // Wait 500ms for non-critical features
+        }, phase3Delay); // Use configured delay
         
-    }, 250); // Wait 250ms for secondary initialization
+    }, phase2Delay); // Use configured delay
     
     console.log('Critical application components initialized');
 });

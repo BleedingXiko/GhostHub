@@ -4,6 +4,8 @@
 
 **GhostHub** is a zero-setup, mobile-first media server you can run instantly and share over the internet. No accounts. No config. Just swipe through your own folder like it's TikTok.
 
+**⚠️ Warning:** Please review [Known Issues](#known-issues) regarding security before use.
+
 Perfect for temporary sharing, personal libraries, or lightweight deployments with friends.
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
@@ -26,6 +28,7 @@ Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container
 - 🎞️ TikTok-style swipe navigation for images & videos
 - 🔁 Optional host sync — everyone sees the same media, watches at their own pace
 - 💬 Built-in real-time chat (ephemeral, anonymous)
+- 🔒 Session password protection configurable in server settings
 - ⌨️ Slash commands like /myview, /help, and more coming soon
 - 📱 Fully mobile and desktop optimized
 - 🌐 Optional public sharing via Cloudflare Tunnel
@@ -93,7 +96,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
        build:
          context: ..
          dockerfile: docker/Dockerfile
-       image: ghosthub
+       image: dhux/ghosthub:latest
        container_name: ghosthub
        ports:
          - "5000:5000"
@@ -110,10 +113,6 @@ Run GhostHub in a Docker container for easy deployment on any platform.
          - PORT=5000
          - FLASK_CONFIG=production
          - DOCKER_ENV=true
-         - TUNNEL_CHOICE=none
-         # - TUNNEL_CHOICE=cloudflare
-         # - TUNNEL_CHOICE=pinggy
-         # - PINGGY_TOKEN=YOUR_PINGGY_TOKEN_HERE
    ```
 
 3. Build and start the container:
@@ -125,7 +124,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
 
 > 📌 **Automatic Media Categories**: The container auto-generates categories for anything mounted under `/media`.
 >
-> 🌐 **Tunneling**: Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
+> 🌐 **Tunneling**: Tunnels are now managed through the web UI. Cloudflare Tunnel works, but free accounts can auto-shutdown tunnels after a few minutes.
 >
 > 🐳 **Pull from DockerHub** (if you don't want to build locally):
 > ```bash
@@ -146,8 +145,7 @@ cd docker && docker-compose logs -f
 # Rebuild the container (after changes)
 cd docker && docker-compose build
 
-# Enable Tunnel
-# Edit docker-compose.yml and set TUNNEL_CHOICE=TUNNEL
+# Tunnel management is available through the web UI
 ```
 
 #### Docker Environment Variables
@@ -155,8 +153,6 @@ cd docker && docker-compose build
 |----------------|--------------------------------------------|-------------|
 | PORT           | Port to run the server on                  | 5000        |
 | FLASK_CONFIG   | Flask configuration mode                   | development |
-| TUNNEL_CHOICE  | Tunnel option: none, cloudflare, or pinggy | none        |
-| PINGGY_TOKEN   | Required if TUNNEL_CHOICE=pinggy           | —           |
 
 ---
 
@@ -198,7 +194,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 ## 🧪 Troubleshooting
 
 - Media not loading? Check your paths and file types
-- Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode)
+- Tunnel not starting? Ensure cloudflared.exe is present (for .bat/Python mode). For Docker, tunnels are managed through the web UI.
 - Chat or sync buggy? Refresh — GhostHub is resilient and stateless
 - Crashes? Run from terminal for logs:
   ```bash
@@ -211,6 +207,8 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 ## ⚠️ Known Issues
 
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
+- **Password Field**: Setting a password does not visually update the input field to reflect that a password has been set, but the password is still active and enforced.
+- **Security Limitation (Temporary)**: Sync mode currently bypasses session password enforcement — this will be fixed in an upcoming release.
 
 
 ## 💬 Final Notes

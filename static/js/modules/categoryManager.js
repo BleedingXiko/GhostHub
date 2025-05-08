@@ -4,6 +4,7 @@
  */
 
 import { categoryList } from '../core/app.js';
+import { getConfigValue } from '../utils/configManager.js'; // Import getConfigValue
 
 /**
  * Main function to load categories
@@ -192,17 +193,64 @@ function initLazyLoading() {
 
 // This function is imported from mediaLoader, but we need to declare it here
 // to avoid circular dependencies. It will be properly set by main.js
-let viewCategory = (categoryId) => {
-    console.warn('viewCategory not yet initialized');
+
+let originalViewCategoryFunction = (categoryId, mediaOrder, index) => { // Added mediaOrder and index to signature
+    console.warn('Original viewCategory function not yet initialized or called before password check.');
 };
 
+// This is our new function that will be called when a category is clicked
+async function protectedViewCategory(categoryId, mediaOrder, index) { // Added mediaOrder and index
+    const appRequiresPassword = getConfigValue('isPasswordProtectionActive', false);
+    const sessionPasswordValidated = sessionStorage.getItem('session_password_validated') === 'true';
+
+    if (appRequiresPassword && !sessionPasswordValidated) {
+        const enteredPassword = prompt("This content is password protected. Please enter the password:");
+        if (enteredPassword === null) { // User cancelled prompt
+            console.log('Password prompt cancelled.');
+            return; // Stop further action
+        }
+
+        try {
+            const response = await fetch('/api/validate_session_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: enteredPassword })
+            });
+            const data = await response.json();
+
+            if (data.valid) {
+                sessionStorage.setItem('session_password_validated', 'true');
+                console.log('Session password validated.');
+                originalViewCategoryFunction(categoryId, mediaOrder, index); // Call the original function
+            } else {
+                alert(data.message || 'Incorrect password.');
+            }
+        } catch (error) {
+            console.error('Password validation error:', error);
+            alert('Error validating password. Please try again.');
+        }
+    } else {
+        // Proceed to load category (password not required or already validated)
+        originalViewCategoryFunction(categoryId, mediaOrder, index); // Call the original function
+    }
+}
+
+// The 'viewCategory' that gets called by the event listener in loadCategories
+// will now be our protected version.
+let viewCategory = protectedViewCategory;
+
 /**
- * Set the viewCategory function from outside
- * @param {Function} func - The viewCategory function
+ * Set the viewCategory function from outside.
+ * We will store the original function and our viewCategory will call it after password check.
+ * @param {Function} func - The original viewCategory function from mediaLoader.js (via main.js)
  */
 function setViewCategoryFunction(func) {
     if (typeof func === 'function') {
-        viewCategory = func;
+        originalViewCategoryFunction = func;
+        // viewCategory is already set to protectedViewCategory, which calls originalViewCategoryFunction.
+        console.log('Original viewCategory function has been set and wrapped for password protection.');
+    } else {
+        console.error('setViewCategoryFunction: provided argument is not a function.');
     }
 }
 
@@ -212,4 +260,5 @@ export {
     createPlaceholder,
     initLazyLoading,
     setViewCategoryFunction
+    // viewCategory (which is protectedViewCategory) is used internally by the click listener
 };

@@ -474,10 +474,11 @@ function createVideoElement(file, isActive) {
   
   
 /**
- * Create the actual video element (used directly or via thumbnail click)
- * @param {Object} file - The file object
- * @param {boolean} isActive - Whether this is the active media (determines preload and muted state)
- * @returns {HTMLVideoElement} - The created video element
+ * Create the actual HTMLVideoElement for playback.
+ * This is used to replace a thumbnail or for direct rendering.
+ * @param {Object} file - The file object containing media details (url, name, thumbnailUrl).
+ * @param {boolean} isActive - Whether this video is the currently active one in the viewport.
+ * @returns {HTMLVideoElement} The configured HTMLVideoElement.
  */
 function createActualVideoElement(file, isActive) {
     console.log(`Creating actual video element for ${file.name}, isActive: ${isActive}`);
