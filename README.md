@@ -96,7 +96,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
        build:
          context: ..
          dockerfile: docker/Dockerfile
-       image: ghosthub
+       image: dhux/ghosthub:latest
        container_name: ghosthub
        ports:
          - "5000:5000"
