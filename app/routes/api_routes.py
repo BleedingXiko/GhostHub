@@ -6,14 +6,20 @@ REST API endpoints for category and media management.
 # app/routes/api_routes.py
 import logging
 import traceback
-import tkinter as tk
-from tkinter import filedialog
+import os
+
 from flask import Blueprint, jsonify, request, current_app
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
-from app.services.sync_service import SyncService # Import SyncService
-from app.services import config_service # Import the new config_service
-from app.utils import server_utils # For tunnel management
+from app.services.sync_service import SyncService  # Import SyncService
+from app.services import config_service  # Import the new config_service
+from app.utils import server_utils  # For tunnel management
+
+# Only import tkinter if not running in Docker
+if os.getenv("DOCKER_ENV") != "true":
+    import tkinter as tk
+    from tkinter import filedialog
+
 
 logger = logging.getLogger(__name__)
 api_bp = Blueprint('api', __name__)

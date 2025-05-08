@@ -1,46 +1,58 @@
-# Git
+# Git files
 .git
 .gitignore
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
+# Python virtual environment
+venv
+.venv
+env
+.env
+
+# Python cache files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and editor specific files
+.vscode
+.idea
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
-venv/
-ENV/
-env/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS specific
-.DS_Store
-Thumbs.db
-
-# Application specific
-instance/
-media/
-*.exe
 *.spec
+
+# Test files
+tests/
+*.test.py
+*.spec.py
+
+# Documentation
+docs/
+README.md
+LICENSE
+THIRD_PARTY_LICENSES.md
+
+# Media files (these should be mounted as volumes, not copied)
+media/
+
+# Scripts not needed in the final image (if any, adjust as needed)
+# e.g., scripts/some_dev_script.py
+
+# Configuration examples
+nginx.conf.example
+
+# Previews and GIFs
+preview-*.gif
+preview.png
+
+# Other potentially unnecessary files
+bin/build_exe.bat
+bin/test_exe.bat
+hooks/
+scripts/generate_icons.py
+ghosthub.spec
