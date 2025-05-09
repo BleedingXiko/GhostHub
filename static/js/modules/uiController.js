@@ -243,25 +243,25 @@ function createConfigInput(key, value, pathPrefix = '') {
 
     const helpIcon = document.createElement('span');
     helpIcon.className = 'config-help-icon';
-    helpIcon.textContent = '?'; // Simple text-based icon
-    helpIcon.title = 'Click for details'; // Tooltip for desktop (won't harm mobile)
-    
+    helpIcon.textContent = '?';
+    helpIcon.title = 'Click for details';
+
     const descriptionDiv = document.createElement('div');
-    descriptionDiv.className = 'config-description hidden'; // Initially hidden
+    descriptionDiv.className = 'config-description hidden';
     const fullPath = `${pathPrefix}${key}`;
     descriptionDiv.textContent = CONFIG_DESCRIPTIONS[fullPath] || 'No description available.';
-    
+
     helpIcon.addEventListener('click', (e) => {
-        e.stopPropagation(); // Prevent click from bubbling to other elements
+        e.stopPropagation();
         descriptionDiv.classList.toggle('hidden');
     });
 
-    label.appendChild(helpIcon); // Add icon next to label text
-    
+    label.appendChild(helpIcon);
+
     let input;
-    const inputWrapper = document.createElement('div'); // Wrapper for input and its description
+    const inputWrapper = document.createElement('div');
     inputWrapper.className = 'input-wrapper';
-    const fullPathKey = `${pathPrefix}${key}`; // Use this for checks and dataset
+    const fullPathKey = `${pathPrefix}${key}`;
 
     if (typeof value === 'boolean') {
         input = document.createElement('input');
@@ -271,8 +271,8 @@ function createConfigInput(key, value, pathPrefix = '') {
         const checkboxLabel = document.createElement('span');
         checkboxLabel.className = 'checkbox-label-text';
         checkboxLabel.textContent = ` ${labelText}`;
-        
-        label.textContent = ''; 
+
+        label.textContent = '';
         label.appendChild(helpIcon);
 
         inputWrapper.appendChild(input);
@@ -280,36 +280,38 @@ function createConfigInput(key, value, pathPrefix = '') {
         inputWrapper.appendChild(descriptionDiv);
         formGroup.appendChild(label);
         formGroup.appendChild(inputWrapper);
-    } else { // For number, text, and password inputs
+    } else {
         input = document.createElement('input');
+
         if (fullPathKey === 'python_config.SESSION_PASSWORD') {
             input.type = 'password';
-            input.value = ''; // Always clear password field for security
-            input.placeholder = 'Leave blank for no password';
+            input.value = ''; // Never show real password
+            input.placeholder = value ? '••••••••' : 'Enter a password';
         } else if (typeof value === 'number') {
             input.type = 'number';
             input.value = value;
             if (key.includes('FACTOR')) {
                 input.step = '0.1';
             }
-        } else { // Treat as string (default)
+        } else {
             input.type = 'text';
             input.value = value;
         }
+
         inputWrapper.appendChild(input);
         inputWrapper.appendChild(descriptionDiv);
         formGroup.appendChild(label);
         formGroup.appendChild(inputWrapper);
     }
-    
+
     if (input) {
-      // Generate a valid ID by replacing dots with hyphens
-      input.id = `config-${fullPathKey.replace(/\./g, '-')}`;
-      input.dataset.path = fullPathKey; // Store the original dot-separated path
+        input.id = `config-${fullPathKey.replace(/\./g, '-')}`;
+        input.dataset.path = fullPathKey;
     }
 
     return formGroup;
 }
+
 
 /**
  * Populates the configuration modal with form fields based on currentConfig.
