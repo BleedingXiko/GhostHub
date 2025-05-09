@@ -82,6 +82,37 @@
     color: var(--accent-color);
 }
 
+.header-admin-lock {
+    margin-right: var(--space-lg); /* Similar to old github link */
+}
+
+#adminLockBtn { /* Basic styling to match other header buttons */
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    padding: var(--space-xs); /* Consistent with .config-toggle-btn */
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast) ease, color var(--transition-fast) ease;
+}
+
+#adminLockBtn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--accent-color);
+}
+
+#adminLockBtn svg {
+    width: 22px; /* Consistent with .config-toggle-btn svg */
+    height: 22px;
+}
+
+.admin-feature {
+    display: none; /* Hidden by default, JS will show if admin. */
+}
+
 .sync-toggle-container {
     flex-basis: 120px;
     text-align: right;

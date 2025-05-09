@@ -19,6 +19,7 @@ import * as syncManager from './modules/syncManager.js';
 import * as eventHandlers from './modules/eventHandlers.js';
 import * as chatManager from './modules/chatManager.js';
 import * as fullscreenManager from './modules/fullscreenManager.js';
+import { initAdminControls } from './modules/adminController.js'; // Import admin controller
 // Import the init function specifically
 import { initMediaNavigation } from './modules/mediaNavigation.js'; 
 
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
     }
     
     // PHASE 1: Critical initialization
+    initAdminControls(); // Initialize admin controls early
     categoryManager.loadCategories();
     
     // Get phase delays from config, with fallbacks to original values

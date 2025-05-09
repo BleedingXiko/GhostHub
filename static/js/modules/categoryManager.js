@@ -70,8 +70,9 @@ async function loadCategories() {
             // Button Group - only contains delete button now
             const buttonGroup = document.createElement('div');
             buttonGroup.className = 'button-group';
+            // Add admin-feature class to the delete button
             buttonGroup.innerHTML = `
-                <button class="delete-btn" data-id="${category.id}" title="Delete">🗑️</button>
+                <button class="delete-btn admin-feature" data-id="${category.id}" title="Delete">🗑️</button>
             `;
 
             // Append in the correct order for the new card layout
@@ -259,6 +260,23 @@ export {
     deleteCategory,
     createPlaceholder,
     initLazyLoading,
-    setViewCategoryFunction
+    setViewCategoryFunction,
+    refreshCategoryDeleteButtonVisibility // Export the new function
     // viewCategory (which is protectedViewCategory) is used internally by the click listener
 };
+
+// Function to be called by adminController to update delete button visibility
+// This is necessary because categories (and their delete buttons) might be loaded
+// after the initial admin status check.
+function refreshCategoryDeleteButtonVisibility(isAdmin) {
+    const deleteButtons = document.querySelectorAll('.delete-btn.admin-feature');
+    deleteButtons.forEach(btn => {
+        if (isAdmin) {
+            // Buttons are typically inline-block or block by default.
+            // Check if .delete-btn has specific display CSS, otherwise '' or 'inline-block'
+            btn.style.display = 'inline-block'; 
+        } else {
+            btn.style.display = 'none';
+        }
+    });
+}
