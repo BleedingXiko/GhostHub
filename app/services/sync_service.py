@@ -239,10 +239,33 @@ class SyncService:
         return True  # Indicate success
 
     @staticmethod
-    def get_session_state(session_id):
-        """Get the last known state for a specific session."""
+    def get_session_state(session_id_or_prefix):
+        """
+        Get the last known state for a specific session.
+        Tries an exact match first, then attempts a prefix match if the provided ID might be short.
+        """
         global _session_states
-        return _session_states.get(session_id)
+        
+        # Try exact match first
+        state = _session_states.get(session_id_or_prefix)
+        if state:
+            logger.debug(f"Found session state by exact match for ID: {session_id_or_prefix}")
+            return state
+        
+        # If no exact match and the provided ID is potentially a prefix (e.g., common short length like 8)
+        # This is a heuristic. A more robust system might require full IDs or have a dedicated prefix lookup.
+        # For now, we assume if it's short, it might be a prefix from chat.
+        if len(session_id_or_prefix) < 16: # Arbitrary length to consider it a potential prefix (full UUIDs are longer)
+            logger.debug(f"No exact match for ID: {session_id_or_prefix}. Attempting prefix search.")
+            for full_id, session_data in _session_states.items():
+                if full_id.startswith(session_id_or_prefix):
+                    logger.info(f"Found session state by prefix match for '{session_id_or_prefix}' (actual ID: {full_id})")
+                    return session_data
+            logger.info(f"No session state found by prefix match for ID: {session_id_or_prefix}")
+        else:
+            logger.debug(f"No session state found by exact match for ID: {session_id_or_prefix} (not attempting prefix search due to length)")
+            
+        return None
 
     @staticmethod
     def remove_session_state(session_id):

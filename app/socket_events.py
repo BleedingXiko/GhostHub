@@ -339,4 +339,47 @@ def register_socket_events(socketio):
             except:
                 pass  # Ignore errors in the error handler
 
+    @socketio.on(SE['REQUEST_VIEW_INFO'])
+    def handle_request_view_info(data):
+        """Handles a client requesting view information for another session."""
+        try:
+            requesting_client_id = request.sid
+            # Use the cookie-based session_id for the requesting user, for logging/context
+            requesting_session_id = request.cookies.get('session_id', 'unknown_requestor') 
+            
+            if not data or 'target_session_id' not in data:
+                logger.warning(f"Client {requesting_client_id} (Session: {requesting_session_id}) sent invalid request_view_info: {data}")
+                emit(SE['VIEW_INFO_RESPONSE'], {'error': 'Invalid request. Missing target_session_id.'}, room=requesting_client_id)
+                return
+
+            target_session_id = data['target_session_id']
+            logger.info(f"Client {requesting_client_id} (Session: {requesting_session_id}) requested view info for target session: {target_session_id}")
+
+            target_state = SyncService.get_session_state(target_session_id)
+
+            if target_state:
+                logger.info(f"Found state for target session {target_session_id}: {target_state}")
+                # Ensure all necessary components are present
+                if 'category_id' in target_state and 'index' in target_state and 'media_order' in target_state:
+                    emit(SE['VIEW_INFO_RESPONSE'], {
+                        'category_id': target_state['category_id'],
+                        'index': target_state['index'],
+                        'media_order': target_state['media_order'],
+                        'target_session_id': target_session_id # Echo back for confirmation
+                    }, room=requesting_client_id)
+                else:
+                    logger.warning(f"Incomplete state for target session {target_session_id}: {target_state}")
+                    emit(SE['VIEW_INFO_RESPONSE'], {'error': f'View information for session {target_session_id} is incomplete.'}, room=requesting_client_id)
+            else:
+                logger.info(f"No state found for target session {target_session_id}")
+                emit(SE['VIEW_INFO_RESPONSE'], {'error': f'Could not find view information for session {target_session_id}. User might not be active or sharing.'}, room=requesting_client_id)
+        
+        except Exception as e:
+            logger.error(f"Error handling request_view_info: {str(e)}")
+            try:
+                # Ensure the event name here matches what the client expects for an error
+                emit(SE['VIEW_INFO_RESPONSE'], {'error': 'Server error processing your request.'}, room=requesting_client_id)
+            except:
+                pass # Ignore errors in the error handler
+
     logger.info("SocketIO event handlers registered with improved error handling.")
