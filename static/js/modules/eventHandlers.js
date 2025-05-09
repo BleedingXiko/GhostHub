@@ -7,6 +7,7 @@ import { app, tiktokContainer } from '../core/app.js';
 import { navigateMedia } from './mediaNavigation.js';
 
 // Touch event variables
+let startX = 0; // Added for horizontal swipe
 let startY = 0;
 let isSwiping = false;
 const swipeThreshold = 50;
@@ -57,9 +58,10 @@ function setupMediaNavigation() {
             return;
         }
         
+        startX = e.touches[0].clientX; // Record startX
         startY = e.touches[0].clientY;
         isSwiping = true;
-        console.log(`touchstart: startY = ${startY}`);
+        console.log(`touchstart: startX = ${startX}, startY = ${startY}`); // Updated log
         
         // Pause current video during swipe interaction
         const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
@@ -76,8 +78,11 @@ function setupMediaNavigation() {
         }
         
         if (tiktokContainer.classList.contains('hidden') || !isSwiping) return;
-        // Only prevent default if we're actually swiping
-        if (Math.abs(e.touches[0].clientY - startY) > 10) {
+        
+        const currentX = e.touches[0].clientX;
+        const currentY = e.touches[0].clientY;
+        // Only prevent default if we're actually swiping significantly in either direction
+        if (Math.abs(currentY - startY) > 10 || Math.abs(currentX - startX) > 10) {
             e.preventDefault();
         }
     };
@@ -97,9 +102,11 @@ function setupMediaNavigation() {
             return;
         }
         isSwiping = false;
+        const endX = e.changedTouches[0].clientX; // Record endX
         const endY = e.changedTouches[0].clientY;
-        const diffY = startY - endY;
-        console.log(`touchend: endY = ${endY}, diffY = ${diffY}`);
+        const diffX = endX - startX; // Calculate horizontal difference
+        const diffY = startY - endY; // Vertical difference (original logic)
+        console.log(`touchend: endX = ${endX}, endY = ${endY}, diffX = ${diffX}, diffY = ${diffY}`); // Updated log
 
         // Check for double tap
         const currentTime = new Date().getTime();
@@ -115,39 +122,79 @@ function setupMediaNavigation() {
                 e.preventDefault();
             }
         } else {
-        // Vertical Swipe - Navigate Media (only if navigation is not disabled)
-        if (app.state.navigationDisabled) {
-            console.log('Swipe navigation ignored: user is a guest in sync mode');
-            // Still allow tapping to play/pause
-            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
-            if (activeElement && activeElement.tagName === 'VIDEO') {
-                // Ensure loop is set before playing
-                activeElement.loop = true;
-                activeElement.setAttribute('loop', 'true');
-                
-                if (activeElement.paused) {
-                    activeElement.play().catch(e => console.error("Resume play failed:", e));
+            const absDiffX = Math.abs(diffX);
+            const absDiffY = Math.abs(diffY);
+
+            // Determine dominant swipe direction
+            if (absDiffX > swipeThreshold && absDiffX > absDiffY) { // Horizontal swipe is dominant
+                if (diffX > 0) { // Swipe Right (Refresh)
+                    console.log('Swipe Right (Refresh) detected');
+                    if (!app.state.navigationDisabled && !e.target.closest('.media-controls, .back-button')) {
+                        window.location.reload(); // Changed to refresh the page
+                    } else {
+                        console.log('Swipe Right (Refresh) ignored: navigation disabled or target is controls/back button');
+                        // Resume video if back navigation is ignored
+                        const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                        if (activeElement && activeElement.tagName === 'VIDEO') {
+                            activeElement.loop = true;
+                            activeElement.setAttribute('loop', 'true');
+                            activeElement.play().catch(err => console.error("Resume play failed:", err));
+                        }
+                    }
+                } else { // Swipe Left
+                    console.log('Swipe Left detected (no action assigned), resuming video');
+                    // No action for swipe left, resume video
+                    const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                    if (activeElement && activeElement.tagName === 'VIDEO') {
+                        activeElement.loop = true;
+                        activeElement.setAttribute('loop', 'true');
+                        activeElement.play().catch(err => console.error("Resume play failed:", err));
+                    }
+                }
+            } else if (absDiffY > swipeThreshold && absDiffY >= absDiffX) { // Vertical swipe is dominant or equal
+                if (app.state.navigationDisabled) {
+                    console.log('Vertical swipe navigation ignored: user is a guest in sync mode');
+                    // Still allow tapping to play/pause
+                    const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                    if (activeElement && activeElement.tagName === 'VIDEO') {
+                        activeElement.loop = true;
+                        activeElement.setAttribute('loop', 'true');
+                        if (activeElement.paused) {
+                            activeElement.play().catch(err => console.error("Resume play failed:", err));
+                        } else {
+                            activeElement.pause();
+                        }
+                    }
+                } else if (diffY > swipeThreshold) {
+                    console.log('Swipe Up detected');
+                    navigateMedia('next', e);
+                } else if (diffY < -swipeThreshold) {
+                    console.log('Swipe Down detected');
+                    navigateMedia('prev', e);
                 } else {
-                    activeElement.pause();
+                     // This case should ideally not be reached if absDiffY > swipeThreshold
+                    console.log('Vertical swipe threshold met but no direction, resuming video');
+                    const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                    if (activeElement && activeElement.tagName === 'VIDEO') {
+                        activeElement.loop = true;
+                        activeElement.setAttribute('loop', 'true');
+                        activeElement.play().catch(err => console.error("Resume play failed:", err));
+                    }
+                }
+            } else {
+                // No significant swipe (tap or minor movement), toggle play/pause
+                console.log('Swipe threshold not met or no dominant swipe, treating as tap to play/pause');
+                const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
+                if (activeElement && activeElement.tagName === 'VIDEO') {
+                    activeElement.loop = true;
+                    activeElement.setAttribute('loop', 'true');
+                    if (activeElement.paused) {
+                        activeElement.play().catch(err => console.error("Resume play failed:", err));
+                    } else {
+                        activeElement.pause();
+                    }
                 }
             }
-        } else if (diffY > swipeThreshold) {
-            console.log('Swipe Up detected');
-            navigateMedia('next', e);
-        } else if (diffY < -swipeThreshold) {
-            console.log('Swipe Down detected');
-            navigateMedia('prev', e);
-        } else {
-            console.log('Swipe threshold not met, resuming video');
-            // No vertical threshold met, resume video
-            const activeElement = tiktokContainer.querySelector('.tiktok-media.active');
-            if (activeElement && activeElement.tagName === 'VIDEO') {
-                // Ensure loop is set before playing
-                activeElement.loop = true;
-                activeElement.setAttribute('loop', 'true');
-                activeElement.play().catch(e => console.error("Resume play failed:", e));
-            }
-        }
         }
         
         lastTap = currentTime;
