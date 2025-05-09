@@ -96,7 +96,7 @@ Run GhostHub in a Docker container for easy deployment on any platform.
        build:
          context: ..
          dockerfile: docker/Dockerfile
-       image: ghosthub
+       image: dhux/ghosthub:latest
        container_name: ghosthub
        ports:
          - "5000:5000"
@@ -208,7 +208,7 @@ Output appears in the `/dist` folder as `GhostHub.exe`
 
 - **Video Loading**: Very large video files may take a moment to buffer before playing smoothly.
 - **Password Field**: Setting a password does not visually update the input field to reflect that a password has been set, but the password is still active and enforced.
-- **Security Concern - Sync Bypass**: Using the sync feature currently bypasses password protection. This is a major security concern if you intend to use passwords.
+- **Security Limitation (Temporary)**: Sync mode currently bypasses session password enforcement — this will be fixed in an upcoming release.
 
 
 ## 💬 Final Notes
