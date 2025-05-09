@@ -90,10 +90,26 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
                     chatManager.initChat(socket);
                     
                     // Initialize media navigation with socket
-                    initMediaNavigation(socket); 
+                    initMediaNavigation(socket);
+
+                    // Listen for category activity updates
+                    // Ensure app.socket is set by chatManager.initChat or use local socket
+                    const activeSocket = app.socket || socket; 
+                    if (activeSocket) {
+                        activeSocket.on('category_activity_update', (data) => {
+                            // Use the imported categoryManager module directly
+                            if (categoryManager && typeof categoryManager.updateCategoryActivityDisplay === 'function') {
+                                categoryManager.updateCategoryActivityDisplay(data);
+                            } else {
+                                console.error('categoryManager.updateCategoryActivityDisplay is not available.');
+                            }
+                        });
+                    } else {
+                        console.error('Socket not available for category_activity_update listener.');
+                    }
                     
                 } catch (e) {
-                    console.error('Error initializing chat or media navigation:', e);
+                    console.error('Error initializing chat, media navigation, or category activity listener:', e);
                     // Non-blocking error
                 }
             } else {

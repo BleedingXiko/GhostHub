@@ -154,6 +154,15 @@ def register_socket_events(socketio):
                 'type': 'join',
                 'message': 'A new user joined the chat'
             }, room=CHAT_ROOM, include_self=False)
+
+            # Send current category activity to the newly joined client
+            try:
+                counts = SyncService.get_category_session_counts()
+                emit(SE['CATEGORY_ACTIVITY_UPDATE'], counts, room=client_id)
+                logger.info(f"Sent category activity to new client {client_id}: {counts}")
+            except Exception as ex_activity:
+                logger.error(f"Error sending category activity to {client_id}: {ex_activity}")
+
         except Exception as e:
             logger.error(f"Error during join_chat: {str(e)}")
             
@@ -166,6 +175,15 @@ def register_socket_events(socketio):
             logger.info(f"Client {client_id} (Session: {session_id}) rejoined chat room after refresh.")
             join_room(CHAT_ROOM)
             # No notification is sent to other users
+
+            # Send current category activity to the rejoined client
+            try:
+                counts = SyncService.get_category_session_counts()
+                emit(SE['CATEGORY_ACTIVITY_UPDATE'], counts, room=client_id)
+                logger.info(f"Sent category activity to rejoined client {client_id}: {counts}")
+            except Exception as ex_activity:
+                logger.error(f"Error sending category activity to rejoined {client_id}: {ex_activity}")
+                
         except Exception as e:
             logger.error(f"Error during rejoin_chat: {str(e)}")
 

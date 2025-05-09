@@ -81,6 +81,13 @@ async function loadCategories() {
             categoryElement.appendChild(thumbnail);
             categoryElement.appendChild(badge);
             categoryElement.appendChild(typeIcon); // Add the type icon
+            
+            // Activity Indicator
+            const activityIndicator = document.createElement('div');
+            activityIndicator.className = 'category-activity-indicator';
+            activityIndicator.setAttribute('data-category-id', category.id);
+            categoryElement.appendChild(activityIndicator);
+
             categoryElement.appendChild(buttonGroup);
 
             // Make the entire card clickable
@@ -237,9 +244,35 @@ export {
     createPlaceholder,
     initLazyLoading,
     setViewCategoryFunction,
-    refreshCategoryDeleteButtonVisibility // Export the new function
+    refreshCategoryDeleteButtonVisibility, // Export the new function
+    updateCategoryActivityDisplay // Export the new function
     // viewCategory (which is protectedViewCategory) is used internally by the click listener
 };
+
+/**
+ * Update the display of category activity indicators.
+ * @param {Object} activityData - Object mapping categoryId to active user count.
+ *                                e.g., { 'cat1': 2, 'cat2': 1 }
+ */
+function updateCategoryActivityDisplay(activityData) {
+    const indicators = document.querySelectorAll('.category-activity-indicator');
+    indicators.forEach(indicator => {
+        const categoryId = indicator.getAttribute('data-category-id');
+        const count = activityData[categoryId] || 0;
+        
+        indicator.innerHTML = ''; // Clear previous content
+        indicator.style.display = 'none'; // Hide by default
+
+        if (count === 1) {
+            indicator.textContent = '👤'; 
+            indicator.style.display = 'flex'; // Show if active
+        } else if (count >= 2) {
+            indicator.innerHTML = `👥 <span class="activity-count">${count}</span>`;
+            indicator.style.display = 'flex'; // Show if active
+        }
+        // If count is 0, it remains empty and hidden
+    });
+}
 
 // Function to be called by adminController to update delete button visibility
 // This is necessary because categories (and their delete buttons) might be loaded

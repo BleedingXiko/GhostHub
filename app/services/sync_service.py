@@ -9,7 +9,7 @@ import time
 import logging
 from flask import request, current_app
 from .. import socketio # Import the socketio instance
-from ..constants import SYNC_ROOM # Import from constants
+from ..constants import SYNC_ROOM, SOCKET_EVENTS as SE # Import SOCKET_EVENTS
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,30 @@ class SyncService:
         # TODO: Limit the size of _session_states to prevent memory issues
         # if len(_session_states) > MAX_SESSIONS: ... cleanup logic ...
         logger.debug(f"Updated state for session {session_id}: Cat={category_id}, Idx={index}, Order URLs: {len(media_order) if media_order else 'N/A'} - Total sessions: {len(_session_states)}")
+        
+        SyncService.broadcast_category_activity() # Broadcast updates
         return True  # Indicate success
+
+    @staticmethod
+    def get_category_session_counts():
+        """Calculates the number of active sessions per category_id."""
+        global _session_states
+        counts = {}
+        for session_data in _session_states.values():
+            cat_id = session_data.get('category_id')
+            if cat_id: # Only count if user is in a category
+                counts[cat_id] = counts.get(cat_id, 0) + 1
+        return counts
+
+    @staticmethod
+    def broadcast_category_activity():
+        """Broadcasts the current category session counts to all clients."""
+        try:
+            counts = SyncService.get_category_session_counts()
+            logger.info(f"Broadcasting category activity: {counts}")
+            socketio.emit(SE['CATEGORY_ACTIVITY_UPDATE'], counts)
+        except Exception as e:
+            logger.error(f"Error broadcasting category activity: {e}")
 
     @staticmethod
     def get_session_state(session_id_or_prefix):
@@ -274,3 +297,4 @@ class SyncService:
         if session_id in _session_states:
             del _session_states[session_id]
             logger.debug(f"Removed state for session {session_id}")
+            SyncService.broadcast_category_activity() # Broadcast updates
