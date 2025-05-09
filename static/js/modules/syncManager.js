@@ -8,6 +8,7 @@ import { updateSyncToggleButton, disableNavigationControls, enableNavigationCont
 import { renderMediaWindow } from './mediaNavigation.js';
 import { getConfigValue } from '../utils/configManager.js'; // Import getConfigValue
 import { viewCategory } from './mediaLoader.js';
+import { ensureFeatureAccess } from '../utils/authManager.js'; // Import the new auth utility
 
 // Socket.IO instance (initialized later)
 let socket = null;
@@ -277,8 +278,9 @@ function initWebSocket() {
             // If media state is provided, handle it
             if (data.media && data.media.category_id) {
                 // Force handling of sync update regardless of current state
-                console.log('Forcing sync update with host media state:', data.media);
-                handleSyncUpdate(data.media, true); // Added force parameter
+                console.log('Forcing sync update with host media state (via sync_enabled event):', data.media);
+                // Let handleSyncUpdate perform the password check
+                handleSyncUpdate(data.media, true); 
             }
         }
         });
@@ -451,6 +453,18 @@ async function toggleSyncMode() {
     // Update header display immediately to show toggling state
     updateSyncStatusDisplay('toggling', 'Sync: Toggling...');
 
+    // If enabling sync, check password first
+    const newDesiredState = !app.state.syncModeEnabled;
+    if (newDesiredState) { // If attempting to enable sync
+        const accessGranted = await ensureFeatureAccess();
+        if (!accessGranted) {
+            console.log("Password validation failed. Sync toggle aborted.");
+            updateSyncToggleButton(); // Revert button to previous state
+            updateSyncStatusDisplay('warning', 'Sync: Password Required', 3000);
+            return { error: "Password validation failed for sync toggle." };
+        }
+    }
+
     try {
         console.log('Toggling sync mode via HTTP...');
 
@@ -598,8 +612,18 @@ async function sendSyncUpdate(mediaInfo) {
  */
 async function handleSyncUpdate(data, force = false) {
     // Skip if sync mode is disabled or we're the host
+    // This initial check is fine, but the crucial password check is *before acting* on the data.
     if (!app.state.syncModeEnabled || app.state.isHost) {
-        console.log('Ignoring sync update (sync disabled or is host)');
+        // console.log('Ignoring sync update (sync disabled or is host)'); // Can be noisy
+        return;
+    }
+
+    // Password check before acting on received sync data
+    const accessGranted = await ensureFeatureAccess();
+    if (!accessGranted) {
+        console.log("Password validation failed. Sync update ignored by guest.");
+        updateSyncStatusDisplay('warning', 'Sync: Password Required to View', 3000);
+        // Potentially disconnect from sync or show a persistent message
         return;
     }
 

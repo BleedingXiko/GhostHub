@@ -6,6 +6,7 @@
 import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 import { initCommandHandler } from './commandHandler.js';
+import { ensureFeatureAccess } from '../utils/authManager.js'; // Added for password protection
 
 
 // Session storage keys
@@ -610,8 +611,16 @@ function displayClickableCommandMessage(data) {
     // Add click handler for the command link
     const commandLink = messageEl.querySelector('.command-link');
     if (commandLink) {
-        commandLink.addEventListener('click', (e) => {
+        commandLink.addEventListener('click', async (e) => { // Made async
             e.preventDefault();
+
+            // Add the password check
+            const accessGranted = await ensureFeatureAccess();
+            if (!accessGranted) {
+                displayLocalSystemMessage('Password validation required to access this shared view. Please try again after validating.');
+                console.log('Access to shared view denied by password protection.');
+                return;
+            }
             
             // Get data attributes
             const sessionId = commandLink.getAttribute('data-session-id');
@@ -868,8 +877,16 @@ function addMessageToDOM(data, saveToState = true) {
         // Add click handler for the command link
         const commandLink = messageEl.querySelector('.command-link');
         if (commandLink) {
-            commandLink.addEventListener('click', (e) => {
+            commandLink.addEventListener('click', async (e) => { // Made async
                 e.preventDefault();
+
+                // Add the password check
+                const accessGranted = await ensureFeatureAccess();
+                if (!accessGranted) {
+                    displayLocalSystemMessage('Password validation required to access this shared view. Please try again after validating.');
+                    console.log('Access to shared view denied by password protection.');
+                    return;
+                }
                 
                 const sessionId = commandLink.getAttribute('data-session-id');
                 const categoryId = commandLink.getAttribute('data-category-id');

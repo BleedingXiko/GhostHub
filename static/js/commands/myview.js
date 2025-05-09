@@ -4,6 +4,7 @@
  */
 
 import { app } from '../core/app.js';
+import { ensureFeatureAccess } from '../utils/authManager.js'; // Import the new auth utility
 
 /**
  * Execute the /myview command
@@ -11,7 +12,14 @@ import { app } from '../core/app.js';
  * @param {Function} displayLocalMessage - Function to display local-only messages
  * @param {string} arg - Command arguments (unused for myview)
  */
-export function execute(socket, displayLocalMessage, arg) {
+export async function execute(socket, displayLocalMessage, arg) { // Made async
+  const accessGranted = await ensureFeatureAccess();
+  if (!accessGranted) {
+    displayLocalMessage('Password validation required to use /myview. Please try again after validating.');
+    console.log('Access to /myview command denied by password protection.');
+    return;
+  }
+
   const categoryId = app.state.currentCategoryId;
   const index = app.state.currentMediaIndex;
   const sessionId = socket.id;
