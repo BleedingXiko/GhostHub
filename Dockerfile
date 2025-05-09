@@ -16,9 +16,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Ensure critical version locking
 RUN pip install --no-cache-dir "numpy<2.0.0" "Flask-SocketIO==5.1.1" "python-socketio==5.4.0" "python-engineio==4.2.1"
 
-# Install cloudflared tunnel binary
-RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared
+# Install cloudflared (auto-detect arch: amd64 or arm64)
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/') && \
+    curl -L "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" -o /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared
 
 # Copy application files
 COPY app/ ./app/
@@ -28,9 +29,6 @@ COPY scripts/ ./scripts/
 COPY wsgi.py .
 COPY docker-media-server.py .
 COPY ghosthub.py .
-
-# (Optional) Copy wsgi.py to root if needed — uncomment if required
-# COPY app/wsgi.py ./wsgi.py
 
 # Symlinks to make cloudflared accessible from app root
 RUN ln -sf /usr/local/bin/cloudflared /app/cloudflared
