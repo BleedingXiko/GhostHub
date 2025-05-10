@@ -93,6 +93,16 @@ function initChat(socketInstance) {
     
     console.log('Chat UI elements found successfully');
     
+    // Expose chat manager functions to window.appModules
+    if (!window.appModules) {
+        window.appModules = {};
+    }
+    window.appModules.chatManager = {
+        expandChat,
+        collapseChat,
+        toggleChat
+    };
+    
     // Initialize command popup manager
     commandPopupManager = initCommandPopup(chatInput);
     
@@ -1109,6 +1119,6 @@ export {
     leaveChat,
     toggleChat,
     displayLocalSystemMessage,
-    displayClickableCommandMessage
-    
+    displayClickableCommandMessage,
+    expandChat
 };

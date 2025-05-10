@@ -23,11 +23,23 @@ export function initCommandPopup(inputElement) {
   // Set up event listeners
   setupEventListeners();
   
-  return {
+  // Expose the command popup module globally
+  if (!window.appModules) {
+    window.appModules = {};
+  }
+  
+  // Create the module interface object
+  const commandPopupModule = {
     showCommandPopup,
     hideCommandPopup,
     isPopupVisible: () => !!commandPopup
   };
+  
+  // Expose the module
+  window.appModules.commandPopup = commandPopupModule;
+  
+  // Return the module interface
+  return commandPopupModule;
 }
 
 /**
@@ -115,6 +127,11 @@ export function showCommandPopup() {
     commandPopup.remove();
   }
 
+  // Disable media navigation while popup is open
+  if (window.appInstance) {
+    window.appInstance.state.navigationDisabled = true;
+  }
+
   // Create popup container
   commandPopup = document.createElement('div');
   commandPopup.className = 'command-popup';
@@ -129,12 +146,13 @@ export function showCommandPopup() {
     z-index: 1000;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     font-size: 14px;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     opacity: 0;
     user-select: none;
     transform: translateY(10px);
     bottom: 60px;
     left: 10px;
+    will-change: transform, opacity;
   `;
 
   // Create header with drag handle
@@ -188,7 +206,27 @@ export function showCommandPopup() {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding-right: 5px;
+    overscroll-behavior: contain;
   `;
+
+  // Global touch state
+  const touchState = {
+    isTouching: false,
+    tapThreshold: 0
+  };
+
+  // Simple touch event handlers for the list
+  commandList.addEventListener('touchstart', () => {
+    touchState.isTouching = true;
+  }, { passive: true });
+
+  commandList.addEventListener('touchend', () => {
+    touchState.isTouching = false;
+  }, { passive: true });
+
+  commandList.addEventListener('touchcancel', () => {
+    touchState.isTouching = false;
+  }, { passive: true });
 
   commands.forEach(([name, cmd]) => {
     const cmdItem = document.createElement('div');
@@ -199,7 +237,8 @@ export function showCommandPopup() {
       margin: 2px 0;
       display: flex;
       flex-direction: column;
-      transition: background-color 0.15s ease;
+      transition: background-color 0.1s ease;
+      will-change: background-color;
     `;
     
     const cmdName = document.createElement('div');
@@ -224,31 +263,94 @@ export function showCommandPopup() {
     cmdItem.appendChild(cmdDesc);
     
     cmdItem.addEventListener('mouseover', () => {
+      // Use transform: translateZ(0) to enable GPU acceleration
       cmdItem.style.background = '#444';
+      cmdItem.style.transform = 'translateZ(0)';
     });
     
     cmdItem.addEventListener('mouseout', () => {
       cmdItem.style.background = 'transparent';
+      cmdItem.style.transform = '';
     });
     
-    // Handle click for both mobile and desktop
+    // Item-specific touch state
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let hasMoved = false;
+    
+    // Handle tap and click events - simplify touch handling
+    cmdItem.addEventListener('touchstart', (e) => {
+      touchStartY = e.touches[0].clientY;
+      touchStartTime = Date.now();
+      hasMoved = false;
+    }, { passive: true });
+    
+    cmdItem.addEventListener('touchmove', (e) => {
+      const delta = Math.abs(e.touches[0].clientY - touchStartY);
+      if (delta > touchState.tapThreshold) {
+        hasMoved = true;
+      }
+    }, { passive: true });
+    
+    cmdItem.addEventListener('touchend', (e) => {
+      const touchDuration = Date.now() - touchStartTime;
+      
+      // Only count as a tap if movement was minimal and duration was short
+      if (!hasMoved && touchDuration < 300) {
+        e.preventDefault();
+        selectCommand(name, helpText);
+      }
+    });
+    
     cmdItem.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      // Ensure we don't add an extra space if the command doesn't take arguments
-      const cmdHasArgs = helpText.includes('{') || helpText.includes('[') || 
-                       helpText.toLowerCase().includes('optional') || 
-                       helpText.includes('<');
-      
-      // Set input value to just the command name if it doesn't take args, or add a space if it does
-      chatInput.value = cmdHasArgs ? `/${name} ` : `/${name}`;
-      chatInput.focus();
-      hideCommandPopup();
+      // For mouse clicks, or as a fallback
+      if (!touchState.isTouching) {
+        selectCommand(name, helpText);
+        e.preventDefault();
+        e.stopPropagation();
+      }
     });
     
     commandList.appendChild(cmdItem);
   });
+
+  /**
+   * Select a command and update the input
+   * @param {string} name - Command name
+   * @param {string} helpText - Command help text
+   */
+  function selectCommand(name, helpText) {
+    // Make sure chat is expanded first
+    const chatContainer = document.getElementById('chat-container');
+    const isChatCollapsed = chatContainer && chatContainer.classList.contains('collapsed');
+    
+    if (isChatCollapsed) {
+      // Expand chat first
+      if (window.appModules && window.appModules.chatManager && typeof window.appModules.chatManager.expandChat === 'function') {
+        window.appModules.chatManager.expandChat();
+      } else {
+        // Fallback method
+        chatContainer.classList.remove('collapsed');
+        chatContainer.classList.add('expanded');
+      }
+    }
+    
+    // Determine if the command takes arguments
+    const cmdHasArgs = helpText.includes('{') || helpText.includes('[') || 
+                       helpText.toLowerCase().includes('optional') || 
+                       helpText.includes('<');
+    
+    // Set input value
+    chatInput.value = cmdHasArgs ? `/${name} ` : `/${name}`;
+    
+    // Focus the input after a short delay
+    setTimeout(() => {
+      chatInput.focus();
+    }, 50);
+    
+    // Close the popup
+    hideCommandPopup();
+  }
 
   commandPopup.appendChild(commandList);
 
@@ -286,14 +388,20 @@ export function showCommandPopup() {
 export function hideCommandPopup() {
   if (!commandPopup) return;
   
+  // Re-enable media navigation when popup is closed
+  if (window.appInstance) {
+    window.appInstance.state.navigationDisabled = false;
+  }
+  
   // Remove event listeners
   document.removeEventListener('mousemove', drag);
   document.removeEventListener('mouseup', stopDrag);
-  document.removeEventListener('touchmove', dragTouch);
+  document.removeEventListener('touchmove', dragTouch, { passive: false });
   document.removeEventListener('touchend', stopDragTouch);
   
-  // Animate out
+  // Animate out with GPU acceleration
   commandPopup.style.opacity = '0';
+  commandPopup.style.transform = 'translateY(10px) translateZ(0)';
   setTimeout(() => {
     if (commandPopup) {
       commandPopup.remove();
@@ -349,17 +457,20 @@ function startDragTouch(e) {
 function drag(e) {
   if (!isDragging || !commandPopup) return;
   
-  // Remove transform for precise positioning
-  if (commandPopup.style.transform) {
-    commandPopup.style.transform = '';
-  }
-  
-  // Calculate new position
-  const x = e.clientX - dragOffset.x;
-  const y = e.clientY - dragOffset.y;
-  
-  // Apply new position
-  updatePosition(x, y);
+  // Use requestAnimationFrame for smoother animation
+  requestAnimationFrame(() => {
+    // Remove transform for precise positioning
+    if (commandPopup.style.transform) {
+      commandPopup.style.transform = 'translateZ(0)'; // Keep GPU acceleration
+    }
+    
+    // Calculate new position
+    const x = e.clientX - dragOffset.x;
+    const y = e.clientY - dragOffset.y;
+    
+    // Apply new position
+    updatePosition(x, y);
+  });
   
   e.preventDefault();
   e.stopPropagation();
@@ -372,17 +483,20 @@ function drag(e) {
 function dragTouch(e) {
   if (!isDragging || !commandPopup) return;
   
-  // Remove transform for precise positioning
-  if (commandPopup.style.transform) {
-    commandPopup.style.transform = '';
-  }
-  
-  // Calculate new position
-  const x = e.touches[0].clientX - dragOffset.x;
-  const y = e.touches[0].clientY - dragOffset.y;
-  
-  // Apply new position
-  updatePosition(x, y);
+  // Use requestAnimationFrame for smoother animation
+  requestAnimationFrame(() => {
+    // Remove transform for precise positioning
+    if (commandPopup.style.transform) {
+      commandPopup.style.transform = 'translateZ(0)'; // Keep GPU acceleration
+    }
+    
+    // Calculate new position
+    const x = e.touches[0].clientX - dragOffset.x;
+    const y = e.touches[0].clientY - dragOffset.y;
+    
+    // Apply new position
+    updatePosition(x, y);
+  });
   
   e.preventDefault();
   e.stopPropagation();
@@ -406,13 +520,13 @@ function updatePosition(x, y) {
   const constrainedX = Math.max(0, Math.min(x, viewportWidth - popupWidth));
   const constrainedY = Math.max(0, Math.min(y, viewportHeight - popupHeight));
   
-  // Apply position - use fixed positioning
+  // Apply position - use fixed positioning with transform for GPU acceleration
   commandPopup.style.position = 'fixed';
   commandPopup.style.left = `${constrainedX}px`;
   commandPopup.style.top = `${constrainedY}px`;
   // Clear bottom position when dragging
   commandPopup.style.bottom = 'auto';
-  commandPopup.style.transform = 'none';
+  commandPopup.style.transform = 'translateZ(0)';
 }
 
 /**
