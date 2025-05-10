@@ -30,6 +30,13 @@ export function initCommandHandler(socketInstance, displayLocalMessageFn) {
   }
   socket = socketInstance;
   displayLocalMessage = displayLocalMessageFn;
+  
+  // Expose commands through window object for the command popup
+  if (!window.appModules) {
+    window.appModules = {};
+  }
+  window.appModules.commandHandler = { commands };
+  
   console.log('Command handler initialized with modular command system');
   return { processCommand };
 }

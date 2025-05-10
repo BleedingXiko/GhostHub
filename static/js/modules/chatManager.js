@@ -7,6 +7,7 @@ import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 import { initCommandHandler } from './commandHandler.js';
 import { ensureFeatureAccess } from '../utils/authManager.js'; // Added for password protection
+import { initCommandPopup } from './commandPopup.js'; // Import the command popup module
 
 
 // Session storage keys
@@ -48,6 +49,9 @@ let socket = null;
 // Command handler reference
 let commandHandler = null;
 
+// Command popup reference
+let commandPopupManager = null;
+
 /**
  * Initialize the chat module
  * @param {Object} socketInstance - The existing socket.io instance
@@ -88,6 +92,9 @@ function initChat(socketInstance) {
     }
     
     console.log('Chat UI elements found successfully');
+    
+    // Initialize command popup manager
+    commandPopupManager = initCommandPopup(chatInput);
     
     // Set up event listeners
     setupEventListeners();
@@ -198,11 +205,7 @@ function clearChatHistory() {
 function setupEventListeners() {
     // Toggle chat expansion when clicking the toggle button
     chatToggle.addEventListener('click', (e) => {
-        // Prevent event from bubbling up to document
-        e.stopPropagation();
-        // Prevent default behavior
         e.preventDefault();
-        // Toggle chat
         toggleChat();
     });
     
@@ -239,7 +242,7 @@ function setupEventListeners() {
         }
     });
     
-    // Submit message on form submit
+    // Handle chat form submission
     chatForm.addEventListener('submit', (e) => {
         e.preventDefault();
         sendMessage();

@@ -9,7 +9,7 @@ import { app } from '../core/app.js';
 
 export const random = {
     description: 'Navigates to a random media item. Stays in current category if active (random from loaded items), otherwise picks a new random category (random from its first page).',
-    getHelpText: () => '/random [new] - Random item. Use "new" to force new category.',
+    getHelpText: () => '• /random - Switch to a random media item.',
     execute: async (socket, displayLocalMessage, args) => {
         displayLocalMessage('Fetching random item...');
 
