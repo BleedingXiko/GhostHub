@@ -49,13 +49,16 @@ def display_server_info(config_name, port):
     local_ip = get_local_ip()
 
     # Use the application's logger
-    app_logger.info(f"Starting GhostHub server ({config_name} config) with optimized performance...")
-    app_logger.info(f"Server running on http://{local_ip}:{port}")
-    app_logger.info(f"Also available on http://0.0.0.0:{port}")
-    print(f"Starting GhostHub server ({config_name} config) with optimized performance...")
-    print(f"Access locally at http://localhost:{port} or http://127.0.0.1:{port}")
-    print(f"Access on your local network at http://{local_ip}:{port}")
-    print(f"(Ensure your firewall allows connections on port {port})")
+    app_logger.info(f"GhostHub: Booting [{config_name.upper()} MODE] on port {port}")
+    app_logger.info(f"GhostHub: Local network access available at http://{local_ip}:{port}")
+    app_logger.info("GhostHub: Listening on all interfaces (0.0.0.0)")
+
+    print("\n============================")
+    print("     GhostHub is LIVE!     ")
+    print("============================")
+    print(f" - Localhost : http://localhost:{port}")
+    print(f" - Loopback  : http://127.0.0.1:{port}")
+    print(f" - LAN Access: http://{local_ip}:{port}\n")
 
 def find_cloudflared_path():
     """
