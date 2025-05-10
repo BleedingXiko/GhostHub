@@ -6,11 +6,20 @@
  */
 
 import { app } from '../core/app.js';
+import { ensureFeatureAccess } from '../utils/authManager.js';
 
 export const random = {
     description: 'Navigates to a random media item. Stays in current category if active (random from loaded items), otherwise picks a new random category (random from its first page).',
-    getHelpText: () => '• /random - Switch to a random media item.',
+    getHelpText: () => '• /random - Switch to a random media item (password protected).',
     execute: async (socket, displayLocalMessage, args) => {
+        // Add password protection like other sensitive commands
+        const accessGranted = await ensureFeatureAccess();
+        if (!accessGranted) {
+            displayLocalMessage('Password validation required to use /random. Please try again after validating.');
+            console.log('Access to /random command denied by password protection.');
+            return;
+        }
+        
         displayLocalMessage('Fetching random item...');
 
         try {
