@@ -3,7 +3,7 @@
  * Handles sync mode functionality for synchronized media viewing using WebSockets.
  */
 
-import { app, MEDIA_PER_PAGE, MOBILE_DEVICE } from '../core/app.js'; // Added MOBILE_DEVICE
+import { app, getMediaPerPage, MOBILE_DEVICE } from '../core/app.js'; // Changed MEDIA_PER_PAGE to getMediaPerPage
 import { updateSyncToggleButton, disableNavigationControls, enableNavigationControls } from './uiController.js';
 import { renderMediaWindow } from './mediaNavigation.js';
 import { getConfigValue } from '../utils/configManager.js'; // Import getConfigValue
@@ -712,7 +712,7 @@ async function ensureMediaLoadedForIndex(index) {
     if (index >= app.state.fullMediaList.length && app.state.hasMoreMedia) {
         console.log(`Index ${index} is beyond current loaded media (${app.state.fullMediaList.length}), calculating target page...`);
 
-        const itemsPerPage = MEDIA_PER_PAGE || 10; // Use constant or default
+        const itemsPerPage = getMediaPerPage() || 10; // Call getMediaPerPage()
         const targetPage = Math.floor(index / itemsPerPage) + 1;
         const currentPage = Math.floor(app.state.fullMediaList.length / itemsPerPage); // Current max page loaded
 

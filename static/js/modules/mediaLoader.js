@@ -9,7 +9,7 @@ import {
     spinnerContainer, 
     categoryView, 
     mediaView,
-    MEDIA_PER_PAGE,
+    getMediaPerPage,
     MOBILE_DEVICE,
     MAX_CACHE_SIZE
 } from '../core/app.js';
@@ -87,8 +87,8 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     // Show spinner
     if (spinnerContainer) spinnerContainer.style.display = 'flex';
   
-    // Decide page size
-    const pageSize = window.innerWidth <= 768 ? 5 : MEDIA_PER_PAGE;
+    // Decide page size - Always use getMediaPerPage() from core/app.js
+    const pageSize = getMediaPerPage();
     const signal   = app.state.currentFetchController.signal;
   
     try {
@@ -194,7 +194,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
     }
 
     app.state.isLoading = true;
-    const limit = customLimit || MEDIA_PER_PAGE;
+    const limit = customLimit || getMediaPerPage();
     console.log(`Loading page ${pageToLoad} with limit ${limit}...`); // Use pageToLoad
     
     // Show loading indicator

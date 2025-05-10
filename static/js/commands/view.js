@@ -6,13 +6,8 @@
 import { app } from '../core/app.js';
 import { ensureFeatureAccess } from '../utils/authManager.js';
 
-/**
- * Execute the /view command
- * @param {Object} socket - The socket.io instance
- * @param {Function} displayLocalMessage - Function to display local-only messages
- * @param {string} arg - Command arguments (target_session_id)
- */
-export async function execute(socket, displayLocalMessage, arg) {
+// Define the functions first
+async function executeView(socket, displayLocalMessage, arg) {
   const accessGranted = await ensureFeatureAccess();
   if (!accessGranted) {
     displayLocalMessage('Password validation required to use /view. Please try again after validating.');
@@ -27,15 +22,17 @@ export async function execute(socket, displayLocalMessage, arg) {
     return;
   }
 
-  // Emit to server to request view information for the target session
   socket.emit('request_view_info', { target_session_id: targetSessionId });
   displayLocalMessage(`Requesting view for session ${targetSessionId}...`);
 }
 
-/**
- * Get help text for this command
- * @returns {string} Help text
- */
-export function getHelpText() {
+function getViewHelpText() {
   return '• /view {session_id}  Jump to another user\'s shared view (password protected)';
 }
+
+// Export the command object
+export const view = {
+    description: "Jump to another user's shared view using their session ID.",
+    execute: executeView,
+    getHelpText: getViewHelpText
+};

@@ -6,13 +6,8 @@
 import { app } from '../core/app.js';
 import { ensureFeatureAccess } from '../utils/authManager.js'; // Import the new auth utility
 
-/**
- * Execute the /myview command
- * @param {Object} socket - The socket.io instance
- * @param {Function} displayLocalMessage - Function to display local-only messages
- * @param {string} arg - Command arguments (unused for myview)
- */
-export async function execute(socket, displayLocalMessage, arg) { // Made async
+// Define the functions first
+async function executeMyView(socket, displayLocalMessage, arg) {
   const accessGranted = await ensureFeatureAccess();
   if (!accessGranted) {
     displayLocalMessage('Password validation required to use /myview. Please try again after validating.');
@@ -35,13 +30,15 @@ export async function execute(socket, displayLocalMessage, arg) { // Made async
     arg: { category_id: categoryId, index },
     from: sessionId
   });
-  
 }
 
-/**
- * Get help text for this command
- * @returns {string} Help text
- */
-export function getHelpText() {
+function getMyViewHelpText() {
   return '• /myview           Share your current view with others';
 }
+
+// Export the command object
+export const myview = {
+    description: "Share your current media view with others in the chat.",
+    execute: executeMyView,
+    getHelpText: getMyViewHelpText
+};
