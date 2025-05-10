@@ -6,6 +6,7 @@
 import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 import { initCommandHandler } from './commandHandler.js';
+import { ensureFeatureAccess } from '../utils/authManager.js'; // Added for password protection
 
 
 // Session storage keys
@@ -520,6 +521,30 @@ function setupSocketHandlers() {
             console.log('Ignoring command event (not /myview or missing required data).');
         }
     });
+
+    // Listen for view_info_response from the server
+    socket.on('view_info_response', (data) => {
+        if (data.error) {
+            displayLocalSystemMessage(`View Error: ${data.error}`);
+            console.error('View Info Response Error:', data.error);
+            return;
+        }
+
+        if (data.category_id && data.index != null && data.media_order) {
+            console.log(`Received view info for ${data.target_session_id}:`, data);
+            // Use window.appModules to access mediaLoader
+            if (window.appModules && window.appModules.mediaLoader && typeof window.appModules.mediaLoader.viewCategory === 'function') {
+                window.appModules.mediaLoader.viewCategory(data.category_id, data.media_order, data.index);
+                displayLocalSystemMessage(`Switched to view of session ${data.target_session_id}.`);
+            } else {
+                displayLocalSystemMessage('Error: Could not switch view. Media loading function not available.');
+                console.error('Cannot switch view: window.appModules.mediaLoader.viewCategory is not defined or accessible.');
+            }
+        } else {
+            displayLocalSystemMessage('Received incomplete view information from server.');
+            console.error('Incomplete view_info_response:', data);
+        }
+    });
 }
 
 /**
@@ -610,8 +635,16 @@ function displayClickableCommandMessage(data) {
     // Add click handler for the command link
     const commandLink = messageEl.querySelector('.command-link');
     if (commandLink) {
-        commandLink.addEventListener('click', (e) => {
+        commandLink.addEventListener('click', async (e) => { // Made async
             e.preventDefault();
+
+            // Add the password check
+            const accessGranted = await ensureFeatureAccess();
+            if (!accessGranted) {
+                displayLocalSystemMessage('Password validation required to access this shared view. Please try again after validating.');
+                console.log('Access to shared view denied by password protection.');
+                return;
+            }
             
             // Get data attributes
             const sessionId = commandLink.getAttribute('data-session-id');
@@ -868,8 +901,16 @@ function addMessageToDOM(data, saveToState = true) {
         // Add click handler for the command link
         const commandLink = messageEl.querySelector('.command-link');
         if (commandLink) {
-            commandLink.addEventListener('click', (e) => {
+            commandLink.addEventListener('click', async (e) => { // Made async
                 e.preventDefault();
+
+                // Add the password check
+                const accessGranted = await ensureFeatureAccess();
+                if (!accessGranted) {
+                    displayLocalSystemMessage('Password validation required to access this shared view. Please try again after validating.');
+                    console.log('Access to shared view denied by password protection.');
+                    return;
+                }
                 
                 const sessionId = commandLink.getAttribute('data-session-id');
                 const categoryId = commandLink.getAttribute('data-category-id');

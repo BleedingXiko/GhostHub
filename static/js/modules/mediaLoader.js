@@ -93,28 +93,53 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
   
     try {
       // ALWAYS fetch metadata from the server first
-      // Keep loading pages until we have at least forced_order.length items (or no more)
       if (forced_order) {
-        console.log(`Forced order present (${forced_order.length} URLs) — fetching metadata first`);
-        while (app.state.fullMediaList.length < forced_order.length && app.state.hasMoreMedia) {
+        console.log(`Forced order present (${forced_order.length} URLs) — fetching metadata until all are found or no more media.`);
+        
+        const forcedUrlsSet = new Set(forced_order);
+        let allForcedItemsLoaded = false;
+
+        // Keep fetching pages until all URLs in forced_order are found in fullMediaList,
+        // or there's no more media to load from the server.
+        while (!allForcedItemsLoaded && app.state.hasMoreMedia) {
           await loadMoreMedia(pageSize, signal, false);
+
+          // Check if all forced_order URLs are now in fullMediaList
+          let foundCount = 0;
+          const currentLoadedUrls = new Set(app.state.fullMediaList.map(item => item.url));
+          for (const url of forcedUrlsSet) {
+            if (currentLoadedUrls.has(url)) {
+              foundCount++;
+            }
+          }
+          if (foundCount === forcedUrlsSet.size) {
+            allForcedItemsLoaded = true;
+            console.log('All items from forced_order have been loaded.');
+          } else {
+            console.log(`Still missing ${forcedUrlsSet.size - foundCount} items from forced_order. Current list size: ${app.state.fullMediaList.length}. Has more media: ${app.state.hasMoreMedia}`);
+          }
         }
+        
         // Now reorder based on forced_order
         const metaMap = new Map(app.state.fullMediaList.map(f => [f.url, f]));
         app.state.fullMediaList = forced_order.map(url => {
           const real = metaMap.get(url);
-          if (real) return real;
-          // fallback stub, but now with no-null thumbnail (you could supply your own default)
-          return {
-            url,
-            name: url.split('/').pop(),
-            type: /\.(jpe?g|png|gif)$/i.test(url) ? 'image'
-                 : /\.(mp4|webm|mov)$/i.test(url) ? 'video'
-                 : 'unknown',
-            thumbnailUrl: '/path/to/default-placeholder.png' // <-- put your own default here
-          };
+          if (real) {
+            return real;
+          } else {
+            // This case should be rarer now. Log a warning if a forced URL wasn't found.
+            console.warn(`URL from forced_order not found in loaded media after attempting to load all: ${url}. Using placeholder.`);
+            return {
+              url,
+              name: url.split('/').pop(),
+              type: /\.(jpe?g|png|gif)$/i.test(url) ? 'image'
+                   : /\.(mp4|webm|mov)$/i.test(url) ? 'video'
+                   : 'unknown',
+              thumbnailUrl: '/static/icons/Ghosthub192.png'
+            };
+          }
         });
-        app.state.hasMoreMedia = false;
+        app.state.hasMoreMedia = false; // This line might be reviewed depending on desired behavior after viewing a shared link.
       } else {
         // Normal first-page load
         await loadMoreMedia(pageSize, signal, false);

@@ -41,7 +41,14 @@ SOCKET_EVENTS = {
     'COMMAND': 'command',
     
     # Client state update
-    'UPDATE_MY_STATE': 'update_my_state'
+    'UPDATE_MY_STATE': 'update_my_state',
+
+    # View command specific events
+    'REQUEST_VIEW_INFO': 'request_view_info',
+    'VIEW_INFO_RESPONSE': 'view_info_response',
+
+    # Category activity heatmap
+    'CATEGORY_ACTIVITY_UPDATE': 'category_activity_update'
 }
 
 # File Types

@@ -8,7 +8,7 @@ import logging
 import traceback
 import os
 
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, current_app, session
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
 from app.services.sync_service import SyncService  # Import SyncService
@@ -88,7 +88,11 @@ def list_categories():
 
 @api_bp.route('/categories', methods=['POST'])
 def add_category():
-    """Create new media category with name and path."""
+    """Create new media category with name and path. Requires admin."""
+    if not session.get('is_admin', False):
+        logger.warning(f"Unauthorized attempt to add category by session: {request.cookies.get('session_id')}")
+        return jsonify({'error': 'Administrator privileges required to add categories.'}), 403
+
     data = request.json
     if not data or 'name' not in data or 'path' not in data:
         return jsonify({'error': 'Name and path are required'}), 400
@@ -114,7 +118,11 @@ def add_category():
 
 @api_bp.route('/categories/<category_id>', methods=['DELETE'])
 def delete_category(category_id):
-    """Delete category and clear associated caches."""
+    """Delete category and clear associated caches. Requires admin."""
+    if not session.get('is_admin', False):
+        logger.warning(f"Unauthorized attempt to delete category {category_id} by session: {request.cookies.get('session_id')}")
+        return jsonify({'error': 'Administrator privileges required to delete categories.'}), 403
+
     try:
         success, error = CategoryService.delete_category(category_id)
         if not success:
@@ -304,6 +312,65 @@ def tunnel_status_route():
         logger.error(f"Error in tunnel_status_route: {str(e)}")
         logger.debug(traceback.format_exc())
         return jsonify({'status': 'error', 'message': f'An unexpected error occurred: {str(e)}'}), 500
+
+# --- Admin Lock Endpoints ---
+
+@api_bp.route('/admin/claim', methods=['POST'])
+def claim_admin():
+    """Claim the admin role for the current session."""
+    if not hasattr(current_app, 'ADMIN_SESSION_ID'):
+        current_app.ADMIN_SESSION_ID = None # Initialize if not present due to hot reload or other reasons
+
+    # Use request.cookies.get('session_id') as a fallback if session.sid is not available
+    # This depends on how session.sid is populated (Flask-Session vs. custom)
+    # For this app, 'session_id' cookie is manually set.
+    current_session_id = request.cookies.get('session_id')
+    if not current_session_id:
+        logger.warning("Attempt to claim admin without a session_id cookie.")
+        return jsonify(success=False, isAdmin=False, message="Session not found. Please refresh."), 400
+
+
+    if current_app.ADMIN_SESSION_ID is None or current_app.ADMIN_SESSION_ID == current_session_id:
+        current_app.ADMIN_SESSION_ID = current_session_id
+        session['is_admin'] = True # Standard Flask session usage
+        logger.info(f"Admin role claimed by session: {current_session_id}")
+        return jsonify(success=True, isAdmin=True, message="Admin role claimed successfully.")
+    else:
+        # Check if the current user is already the admin but using a different session mechanism
+        # This part might be redundant if session['is_admin'] is the source of truth for the user
+        is_current_user_admin = session.get('is_admin', False) and current_app.ADMIN_SESSION_ID == current_session_id
+        
+        logger.warning(f"Admin role claim failed. Already claimed by: {current_app.ADMIN_SESSION_ID}. Current session: {current_session_id}")
+        return jsonify(success=False, isAdmin=is_current_user_admin, message="Admin role already claimed by another user."), 403
+
+@api_bp.route('/admin/status', methods=['GET'])
+def admin_status():
+    """Get the admin status for the current session."""
+    if not hasattr(current_app, 'ADMIN_SESSION_ID'):
+        current_app.ADMIN_SESSION_ID = None
+
+    current_session_id = request.cookies.get('session_id')
+    is_admin = session.get('is_admin', False)
+
+    # Consistency check: if a global admin is set and it's not this session, then this session cannot be admin.
+    if current_app.ADMIN_SESSION_ID is not None and current_app.ADMIN_SESSION_ID != current_session_id:
+        if is_admin: # If session thought it was admin, but global lock says otherwise
+            session['is_admin'] = False
+            is_admin = False
+            logger.info(f"Corrected admin status for session {current_session_id} to False due to global lock.")
+    elif current_app.ADMIN_SESSION_ID is None and is_admin: # If no global admin, but session thought it was admin (e.g. server restart)
+        session['is_admin'] = False
+        is_admin = False
+        logger.info(f"Corrected admin status for session {current_session_id} to False as global admin lock is not set.")
+
+
+    role_claimed_by_anyone = current_app.ADMIN_SESSION_ID is not None
+    # If the current user is admin, then the role is claimed by them (and thus by anyone)
+    if is_admin:
+        role_claimed_by_anyone = True
+        
+    logger.debug(f"Admin status check: session_id={current_session_id}, is_admin={is_admin}, global_admin_id={current_app.ADMIN_SESSION_ID}, role_claimed_by_anyone={role_claimed_by_anyone}")
+    return jsonify(isAdmin=is_admin, roleClaimedByAnyone=role_claimed_by_anyone)
 
 # API error handlers
 @api_bp.app_errorhandler(404)

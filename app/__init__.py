@@ -62,6 +62,7 @@ def create_app(config_name='default'):
         instance_relative_config=True
     )
     app.config.from_object(config_by_name[config_name])
+    app.ADMIN_SESSION_ID = None # Stores the session ID of the admin
     
     # Increase upload size limit for media files
     app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB

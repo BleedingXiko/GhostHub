@@ -4,7 +4,9 @@
  */
 
 import { categoryList } from '../core/app.js';
-import { getConfigValue } from '../utils/configManager.js'; // Import getConfigValue
+// getConfigValue is not directly used in this file after refactor, but ensureFeatureAccess will use it.
+// import { getConfigValue } from '../utils/configManager.js'; 
+import { ensureFeatureAccess } from '../utils/authManager.js'; // Import the new auth utility
 
 /**
  * Main function to load categories
@@ -70,14 +72,22 @@ async function loadCategories() {
             // Button Group - only contains delete button now
             const buttonGroup = document.createElement('div');
             buttonGroup.className = 'button-group';
+            // Add admin-feature class to the delete button
             buttonGroup.innerHTML = `
-                <button class="delete-btn" data-id="${category.id}" title="Delete">🗑️</button>
+                <button class="delete-btn admin-feature" data-id="${category.id}" title="Delete">🗑️</button>
             `;
 
             // Append in the correct order for the new card layout
             categoryElement.appendChild(thumbnail);
             categoryElement.appendChild(badge);
             categoryElement.appendChild(typeIcon); // Add the type icon
+            
+            // Activity Indicator
+            const activityIndicator = document.createElement('div');
+            activityIndicator.className = 'category-activity-indicator';
+            activityIndicator.setAttribute('data-category-id', category.id);
+            categoryElement.appendChild(activityIndicator);
+
             categoryElement.appendChild(buttonGroup);
 
             // Make the entire card clickable
@@ -200,38 +210,12 @@ let originalViewCategoryFunction = (categoryId, mediaOrder, index) => { // Added
 
 // This is our new function that will be called when a category is clicked
 async function protectedViewCategory(categoryId, mediaOrder, index) { // Added mediaOrder and index
-    const appRequiresPassword = getConfigValue('isPasswordProtectionActive', false);
-    const sessionPasswordValidated = sessionStorage.getItem('session_password_validated') === 'true';
-
-    if (appRequiresPassword && !sessionPasswordValidated) {
-        const enteredPassword = prompt("This content is password protected. Please enter the password:");
-        if (enteredPassword === null) { // User cancelled prompt
-            console.log('Password prompt cancelled.');
-            return; // Stop further action
-        }
-
-        try {
-            const response = await fetch('/api/validate_session_password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: enteredPassword })
-            });
-            const data = await response.json();
-
-            if (data.valid) {
-                sessionStorage.setItem('session_password_validated', 'true');
-                console.log('Session password validated.');
-                originalViewCategoryFunction(categoryId, mediaOrder, index); // Call the original function
-            } else {
-                alert(data.message || 'Incorrect password.');
-            }
-        } catch (error) {
-            console.error('Password validation error:', error);
-            alert('Error validating password. Please try again.');
-        }
-    } else {
-        // Proceed to load category (password not required or already validated)
+    const accessGranted = await ensureFeatureAccess();
+    if (accessGranted) {
         originalViewCategoryFunction(categoryId, mediaOrder, index); // Call the original function
+    } else {
+        console.log('Access to category view denied by password protection.');
+        // Optionally, provide user feedback here if not already handled by ensureFeatureAccess (e.g. alert was cancelled)
     }
 }
 
@@ -259,6 +243,49 @@ export {
     deleteCategory,
     createPlaceholder,
     initLazyLoading,
-    setViewCategoryFunction
+    setViewCategoryFunction,
+    refreshCategoryDeleteButtonVisibility, // Export the new function
+    updateCategoryActivityDisplay // Export the new function
     // viewCategory (which is protectedViewCategory) is used internally by the click listener
 };
+
+/**
+ * Update the display of category activity indicators.
+ * @param {Object} activityData - Object mapping categoryId to active user count.
+ *                                e.g., { 'cat1': 2, 'cat2': 1 }
+ */
+function updateCategoryActivityDisplay(activityData) {
+    const indicators = document.querySelectorAll('.category-activity-indicator');
+    indicators.forEach(indicator => {
+        const categoryId = indicator.getAttribute('data-category-id');
+        const count = activityData[categoryId] || 0;
+        
+        indicator.innerHTML = ''; // Clear previous content
+        indicator.style.display = 'none'; // Hide by default
+
+        if (count === 1) {
+            indicator.textContent = '👤'; 
+            indicator.style.display = 'flex'; // Show if active
+        } else if (count >= 2) {
+            indicator.innerHTML = `👥 <span class="activity-count">${count}</span>`;
+            indicator.style.display = 'flex'; // Show if active
+        }
+        // If count is 0, it remains empty and hidden
+    });
+}
+
+// Function to be called by adminController to update delete button visibility
+// This is necessary because categories (and their delete buttons) might be loaded
+// after the initial admin status check.
+function refreshCategoryDeleteButtonVisibility(isAdmin) {
+    const deleteButtons = document.querySelectorAll('.delete-btn.admin-feature');
+    deleteButtons.forEach(btn => {
+        if (isAdmin) {
+            // Buttons are typically inline-block or block by default.
+            // Check if .delete-btn has specific display CSS, otherwise '' or 'inline-block'
+            btn.style.display = 'inline-block'; 
+        } else {
+            btn.style.display = 'none';
+        }
+    });
+}

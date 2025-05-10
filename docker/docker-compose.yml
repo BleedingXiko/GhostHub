@@ -2,9 +2,9 @@
 services:
   ghosthub:
     # If you want to build locally instead of pulling:
-    build:
-       context: ..
-       dockerfile: docker/Dockerfile
+    #build:
+       #context: ..
+       #dockerfile: Dockerfile
     image: dhux/ghosthub:latest
     container_name: ghosthub
     restart: unless-stopped
@@ -20,7 +20,6 @@ services:
       
       # Create the media directory if it doesn't exist
       - ../media:/media
-    
       
       # Mount your media directories here
       # Format: - /host/path:/media/category_name

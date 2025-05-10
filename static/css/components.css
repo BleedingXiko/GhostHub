@@ -270,3 +270,27 @@ input[type="text"]:focus {
     justify-content: center;
     box-shadow: none;
 }
+
+/* Category Activity Indicator */
+.category-activity-indicator {
+    position: absolute;
+    top: 10px; /* Adjust as needed */
+    left: 10px; /* Position to the top-left */
+    font-size: 1em; /* Base size for icons */
+    color: #fff; 
+    background-color: rgba(0, 0, 0, 0.6);
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    display: flex; /* Use flex to align icon and number */
+    align-items: center;
+    justify-content: center;
+    z-index: 5; /* Ensure it's above thumbnail but below buttons if overlapping */
+    line-height: 1;
+    display: none; /* Hidden by default, shown by JS */
+}
+
+.category-activity-indicator .activity-count {
+    margin-left: 4px;
+    font-size: 0.9em;
+    font-weight: bold;
+}
