@@ -833,6 +833,11 @@ function sendMessage() {
     
     if (!message) return;
     
+    // Close command popup if it's open
+    if (commandPopupManager && commandPopupManager.isPopupVisible()) {
+        commandPopupManager.hideCommandPopup();
+    }
+    
     // Check if this is a command (starts with /)
     if (commandHandler && message.startsWith('/')) {
         // Process the command and only continue if it wasn't handled

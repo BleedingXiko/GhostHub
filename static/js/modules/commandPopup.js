@@ -40,6 +40,11 @@ function setupEventListeners() {
     if (commandPopup && !chatInput.value.startsWith('/')) {
       hideCommandPopup();
     }
+    
+    // Check for double-slash issue and fix it
+    if (chatInput.value.includes('//')) {
+      chatInput.value = chatInput.value.replace('//', '/');
+    }
   });
 
   // Keydown event for command popup handling
@@ -230,7 +235,14 @@ export function showCommandPopup() {
     cmdItem.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      chatInput.value = `/${name} `;
+      
+      // Ensure we don't add an extra space if the command doesn't take arguments
+      const cmdHasArgs = helpText.includes('{') || helpText.includes('[') || 
+                       helpText.toLowerCase().includes('optional') || 
+                       helpText.includes('<');
+      
+      // Set input value to just the command name if it doesn't take args, or add a space if it does
+      chatInput.value = cmdHasArgs ? `/${name} ` : `/${name}`;
       chatInput.focus();
       hideCommandPopup();
     });
