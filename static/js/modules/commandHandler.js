@@ -31,14 +31,21 @@ export function initCommandHandler(socketInstance, displayLocalMessageFn) {
   socket = socketInstance;
   displayLocalMessage = displayLocalMessageFn;
   
-  // Expose commands through window object for the command popup
+  // The processCommand function is defined in this module's scope
+  // and uses the module-scoped socket and displayLocalMessage.
+  const handlerInstance = {
+    commands,
+    processCommand // Expose the processCommand function itself
+  };
+
+  // Expose commands and processCommand through window object
   if (!window.appModules) {
     window.appModules = {};
   }
-  window.appModules.commandHandler = { commands };
+  window.appModules.commandHandler = handlerInstance;
   
-  console.log('Command handler initialized with modular command system');
-  return { processCommand };
+  console.log('Command handler initialized with modular command system and processCommand exposed.');
+  return handlerInstance; // Return the instance for direct use (e.g., by chatManager)
 }
 
 /**

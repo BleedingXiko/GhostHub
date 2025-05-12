@@ -13,6 +13,12 @@ let dragOffset = { x: 0, y: 0 };
 // References to input elements
 let chatInput = null;
 
+// Global touch state for command list items (moved here for broader access)
+const listItemTouchState = {
+  isTouching: false,
+  tapThreshold: 10 // Small threshold to differentiate tap from scroll
+};
+
 /**
  * Initialize the command popup module
  * @param {HTMLElement} inputElement - The chat input element
@@ -48,14 +54,19 @@ export function initCommandPopup(inputElement) {
 function setupEventListeners() {
   // Input event listener to monitor value changes
   chatInput.addEventListener('input', (e) => {
+    const inputValue = chatInput.value;
     // If popup is open but input doesn't start with slash, close it
-    if (commandPopup && !chatInput.value.startsWith('/')) {
+    if (commandPopup && !inputValue.startsWith('/')) {
       hideCommandPopup();
+    } else if (commandPopup && inputValue.startsWith('/')) {
+      // Filter commands based on input
+      const filterText = inputValue.substring(1); // Get text after '/'
+      filterAndDisplayCommands(filterText);
     }
-    
+
     // Check for double-slash issue and fix it
-    if (chatInput.value.includes('//')) {
-      chatInput.value = chatInput.value.replace('//', '/');
+    if (inputValue.includes('//')) {
+      chatInput.value = inputValue.replace('//', '/');
     }
   });
 
@@ -195,10 +206,7 @@ export function showCommandPopup() {
   
   commandPopup.appendChild(header);
 
-  // Get all commands and their help text
-  const commands = Object.entries(window.appModules.commandHandler.commands);
-  
-  // Create command list
+  // Create command list (structure only, content filled by filterAndDisplayCommands)
   const commandList = document.createElement('div');
   commandList.className = 'command-popup-list';
   commandList.style.cssText = `
@@ -208,151 +216,10 @@ export function showCommandPopup() {
     padding-right: 5px;
     overscroll-behavior: contain;
   `;
+  commandPopup.appendChild(commandList); // Append the empty list container
 
-  // Global touch state
-  const touchState = {
-    isTouching: false,
-    tapThreshold: 0
-  };
-
-  // Simple touch event handlers for the list
-  commandList.addEventListener('touchstart', () => {
-    touchState.isTouching = true;
-  }, { passive: true });
-
-  commandList.addEventListener('touchend', () => {
-    touchState.isTouching = false;
-  }, { passive: true });
-
-  commandList.addEventListener('touchcancel', () => {
-    touchState.isTouching = false;
-  }, { passive: true });
-
-  commands.forEach(([name, cmd]) => {
-    const cmdItem = document.createElement('div');
-    cmdItem.style.cssText = `
-      padding: 8px;
-      cursor: pointer;
-      border-radius: 4px;
-      margin: 2px 0;
-      display: flex;
-      flex-direction: column;
-      transition: background-color 0.1s ease;
-      will-change: background-color;
-    `;
-    
-    const cmdName = document.createElement('div');
-    cmdName.style.cssText = `
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 3px;
-    `;
-    cmdName.textContent = `/${name}`;
-    
-    const cmdDesc = document.createElement('div');
-    cmdDesc.style.cssText = `
-      font-size: 12px;
-      color: #aaa;
-    `;
-    // Extract just the description part from help text
-    const helpText = cmd.getHelpText();
-    const descriptionPart = helpText.includes(' - ') ? helpText.split(' - ')[1] : helpText;
-    cmdDesc.textContent = descriptionPart;
-    
-    cmdItem.appendChild(cmdName);
-    cmdItem.appendChild(cmdDesc);
-    
-    cmdItem.addEventListener('mouseover', () => {
-      // Use transform: translateZ(0) to enable GPU acceleration
-      cmdItem.style.background = '#444';
-      cmdItem.style.transform = 'translateZ(0)';
-    });
-    
-    cmdItem.addEventListener('mouseout', () => {
-      cmdItem.style.background = 'transparent';
-      cmdItem.style.transform = '';
-    });
-    
-    // Item-specific touch state
-    let touchStartY = 0;
-    let touchStartTime = 0;
-    let hasMoved = false;
-    
-    // Handle tap and click events - simplify touch handling
-    cmdItem.addEventListener('touchstart', (e) => {
-      touchStartY = e.touches[0].clientY;
-      touchStartTime = Date.now();
-      hasMoved = false;
-    }, { passive: true });
-    
-    cmdItem.addEventListener('touchmove', (e) => {
-      const delta = Math.abs(e.touches[0].clientY - touchStartY);
-      if (delta > touchState.tapThreshold) {
-        hasMoved = true;
-      }
-    }, { passive: true });
-    
-    cmdItem.addEventListener('touchend', (e) => {
-      const touchDuration = Date.now() - touchStartTime;
-      
-      // Only count as a tap if movement was minimal and duration was short
-      if (!hasMoved && touchDuration < 300) {
-        e.preventDefault();
-        selectCommand(name, helpText);
-      }
-    });
-    
-    cmdItem.addEventListener('click', (e) => {
-      // For mouse clicks, or as a fallback
-      if (!touchState.isTouching) {
-        selectCommand(name, helpText);
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    });
-    
-    commandList.appendChild(cmdItem);
-  });
-
-  /**
-   * Select a command and update the input
-   * @param {string} name - Command name
-   * @param {string} helpText - Command help text
-   */
-  function selectCommand(name, helpText) {
-    // Make sure chat is expanded first
-    const chatContainer = document.getElementById('chat-container');
-    const isChatCollapsed = chatContainer && chatContainer.classList.contains('collapsed');
-    
-    if (isChatCollapsed) {
-      // Expand chat first
-      if (window.appModules && window.appModules.chatManager && typeof window.appModules.chatManager.expandChat === 'function') {
-        window.appModules.chatManager.expandChat();
-      } else {
-        // Fallback method
-        chatContainer.classList.remove('collapsed');
-        chatContainer.classList.add('expanded');
-      }
-    }
-    
-    // Determine if the command takes arguments
-    const cmdHasArgs = helpText.includes('{') || helpText.includes('[') || 
-                       helpText.toLowerCase().includes('optional') || 
-                       helpText.includes('<');
-    
-    // Set input value
-    chatInput.value = cmdHasArgs ? `/${name} ` : `/${name}`;
-    
-    // Focus the input after a short delay
-    setTimeout(() => {
-      chatInput.focus();
-    }, 50);
-    
-    // Close the popup
-    hideCommandPopup();
-  }
-
-  commandPopup.appendChild(commandList);
+  // Initial population of commands
+  filterAndDisplayCommands(''); // Show all commands initially
 
   // Add click outside listener to close popup
   const closePopupHandler = function(e) {
@@ -555,4 +422,219 @@ function stopDragTouch() {
       commandPopup.classList.remove('dragging');
     }
   }
+}
+
+/**
+ * Filter and display commands in the popup
+ * @param {string} filterText - The text to filter commands by
+ */
+function filterAndDisplayCommands(filterText = '') {
+  if (!commandPopup) return;
+
+  const commandList = commandPopup.querySelector('.command-popup-list');
+  if (!commandList) return;
+
+  // Clear existing items
+  commandList.innerHTML = '';
+
+  const allCommands = Object.entries(window.appModules.commandHandler.commands);
+  
+  const filteredCommands = allCommands.filter(([name, cmd]) => 
+    name.toLowerCase().startsWith(filterText.toLowerCase())
+  );
+
+  // Sort commands: exact matches first, then by length, then alphabetically
+  filteredCommands.sort(([nameA], [nameB]) => {
+    const lowerFilterText = filterText.toLowerCase();
+    const lowerNameA = nameA.toLowerCase();
+    const lowerNameB = nameB.toLowerCase();
+
+    const isExactA = lowerNameA === lowerFilterText;
+    const isExactB = lowerNameB === lowerFilterText;
+
+    if (isExactA && !isExactB) return -1;
+    if (!isExactA && isExactB) return 1;
+    
+    // If both or neither are exact, sort by how much of the command matches the start
+    const startsWithA = lowerNameA.startsWith(lowerFilterText);
+    const startsWithB = lowerNameB.startsWith(lowerFilterText);
+
+    if (startsWithA && !startsWithB) return -1;
+    if (!startsWithA && startsWithB) return 1;
+
+    // If both start with the filter, prioritize shorter command names (closer match)
+    if (lowerNameA.length !== lowerNameB.length) {
+      return lowerNameA.length - lowerNameB.length;
+    }
+    
+    // Finally, alphabetical order
+    return lowerNameA.localeCompare(lowerNameB);
+  });
+  
+  if (filteredCommands.length === 0) {
+    const noResultsItem = document.createElement('div');
+    noResultsItem.style.cssText = `
+      padding: 8px;
+      color: #aaa;
+      text-align: center;
+      font-style: italic;
+    `;
+    noResultsItem.textContent = 'No commands match';
+    commandList.appendChild(noResultsItem);
+    return;
+  }
+
+  filteredCommands.forEach(([name, cmd]) => {
+    const cmdItem = document.createElement('div');
+    cmdItem.style.cssText = `
+      padding: 8px;
+      cursor: pointer;
+      border-radius: 4px;
+      margin: 2px 0;
+      display: flex;
+      flex-direction: column;
+      transition: background-color 0.1s ease;
+      will-change: background-color;
+    `;
+    
+    const cmdName = document.createElement('div');
+    cmdName.style.cssText = `
+      font-weight: bold;
+      color: #fff;
+      margin-bottom: 3px;
+    `;
+    cmdName.textContent = `/${name}`;
+    
+    const cmdDesc = document.createElement('div');
+    cmdDesc.style.cssText = `
+      font-size: 12px;
+      color: #aaa;
+    `;
+    const helpText = cmd.getHelpText();
+    const descriptionPart = helpText.includes(' - ') ? helpText.split(' - ')[1] : helpText;
+    cmdDesc.textContent = descriptionPart;
+    
+    cmdItem.appendChild(cmdName);
+    cmdItem.appendChild(cmdDesc);
+    
+    cmdItem.addEventListener('mouseover', () => {
+      cmdItem.style.background = '#444';
+      cmdItem.style.transform = 'translateZ(0)';
+    });
+    
+    cmdItem.addEventListener('mouseout', () => {
+      cmdItem.style.background = 'transparent';
+      cmdItem.style.transform = '';
+    });
+    
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let hasMoved = false;
+    
+    cmdItem.addEventListener('touchstart', (e) => {
+      touchStartY = e.touches[0].clientY;
+      touchStartTime = Date.now();
+      hasMoved = false;
+      listItemTouchState.isTouching = true; // Use global state
+    }, { passive: true });
+    
+    cmdItem.addEventListener('touchmove', (e) => {
+      const delta = Math.abs(e.touches[0].clientY - touchStartY);
+      if (delta > listItemTouchState.tapThreshold) { // Use global threshold
+        hasMoved = true;
+      }
+    }, { passive: true });
+    
+    cmdItem.addEventListener('touchend', (e) => {
+      const touchDuration = Date.now() - touchStartTime;
+      listItemTouchState.isTouching = false; // Reset global state
+      
+      if (!hasMoved && touchDuration < 300) {
+        e.preventDefault();
+        selectCommand(name, helpText);
+      }
+    });
+    
+    cmdItem.addEventListener('click', (e) => {
+      if (!listItemTouchState.isTouching) { // Check global state
+        selectCommand(name, helpText);
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+    
+    commandList.appendChild(cmdItem);
+  });
+
+  // Highlight the first item automatically if there are results
+  const items = commandList.querySelectorAll('.command-popup-list > div');
+  if (items.length > 0 && !items[0].textContent.includes('No commands match')) {
+    items[0].style.background = '#444';
+    items[0].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+/**
+ * Select a command and update the input
+ * @param {string} name - Command name
+ * @param {string} helpText - Command help text
+ */
+function selectCommand(name, helpText) {
+  // Make sure chat is expanded first
+  const chatContainer = document.getElementById('chat-container');
+  const isChatCollapsed = chatContainer && chatContainer.classList.contains('collapsed');
+  
+  if (isChatCollapsed) {
+    // Expand chat first
+    if (window.appModules && window.appModules.chatManager && typeof window.appModules.chatManager.expandChat === 'function') {
+      window.appModules.chatManager.expandChat();
+    } else {
+      // Fallback method
+      chatContainer.classList.remove('collapsed');
+      chatContainer.classList.add('expanded');
+    }
+  }
+  
+  // Determine if the command takes arguments
+  const cmdHasArgs = helpText.includes('{') || helpText.includes('[') || 
+                     helpText.toLowerCase().includes('optional') || 
+                     helpText.includes('<');
+  
+  if (cmdHasArgs) {
+    // Command has arguments: populate input with space and focus for user to type args.
+    chatInput.value = `/${name} `;
+    setTimeout(() => {
+      chatInput.focus();
+    }, 50);
+  } else {
+    // Command does not have arguments: set input value and attempt to process immediately.
+    chatInput.value = `/${name}`;
+    let processed = false;
+    if (window.appModules && 
+        window.appModules.commandHandler && 
+        typeof window.appModules.commandHandler.processCommand === 'function') {
+      try {
+        // processCommand is expected to handle UI like clearing input or showing errors.
+        processed = window.appModules.commandHandler.processCommand(chatInput.value);
+      } catch (err) {
+        console.error(`Error auto-processing command /${name}:`, err);
+        processed = false; // Ensure it's false if processCommand throws
+      }
+    }
+
+    if (processed) {
+      // If command was successfully processed, commandHandler should have handled input clearing or focus.
+      // As a best practice for sendMessage in chatManager, we clear chatInput if command is handled.
+      chatInput.value = ''; 
+    } else {
+      // Command processing failed, or handler not available, or command was not fully handled.
+      // Leave command in input and focus, so user can manually submit or edit.
+      setTimeout(() => {
+        chatInput.focus();
+      }, 50);
+    }
+  }
+  
+  // Close the popup
+  hideCommandPopup();
 } 
