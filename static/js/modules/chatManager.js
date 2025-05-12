@@ -381,8 +381,10 @@ function drag(e) {
     const x = e.clientX - offsetX;
     const y = e.clientY - offsetY;
     
-    // Apply new position
-    updatePosition(x, y);
+    // Apply new position and ensure bounds
+    if (chatContainer) { // Ensure chatContainer exists
+        ensureInBoundsAndSetPosition(x, y, chatContainer.offsetWidth, chatContainer.offsetHeight);
+    }
     
     // Prevent default behavior
     e.preventDefault();
@@ -410,8 +412,10 @@ function dragTouch(e) {
     const x = e.touches[0].clientX - offsetX;
     const y = e.touches[0].clientY - offsetY;
     
-    // Apply new position
-    updatePosition(x, y);
+    // Apply new position and ensure bounds
+    if (chatContainer) { // Ensure chatContainer exists
+        ensureInBoundsAndSetPosition(x, y, chatContainer.offsetWidth, chatContainer.offsetHeight);
+    }
     
     // Prevent default behavior
     e.preventDefault();
@@ -419,28 +423,43 @@ function dragTouch(e) {
 }
 
 /**
- * Update the container position
- * @param {number} x - The x position
- * @param {number} y - The y position
+ * Update the container position and ensure it is within viewport boundaries
+ * @param {number} x - The target x position
+ * @param {number} y - The target y position
+ * @param {number} containerWidth - The current width of the container
+ * @param {number} containerHeight - The current height of the container
  */
-function updatePosition(x, y) {
+function ensureInBoundsAndSetPosition(x, y, containerWidth, containerHeight) {
+    if (!chatContainer) return; // Added a guard
+    // console.log('[Desktop Debug] ensureInBoundsAndSetPosition - Input x:', x, 'y:', y, 'w:', containerWidth, 'h:', containerHeight);
+
     // Get viewport dimensions
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     
-    // Get container dimensions
-    const containerWidth = chatContainer.offsetWidth;
-    const containerHeight = chatContainer.offsetHeight;
+    // Use passed-in container dimensions
+    // const containerWidth = chatContainer.offsetWidth; // Now passed as parameter
+    // const containerHeight = chatContainer.offsetHeight; // Now passed as parameter
     
+    // console.log('[Desktop Debug] ensureInBoundsAndSetPosition - Viewport W/H:', viewportWidth, viewportHeight, 'Passed Container W/H:', containerWidth, containerHeight);
+
     // Constrain position to viewport
-    const constrainedX = Math.max(0, Math.min(x, viewportWidth - containerWidth));
-    const constrainedY = Math.max(0, Math.min(y, viewportHeight - containerHeight));
+    let constrainedX = Math.max(0, Math.min(x, viewportWidth - containerWidth));
+    let constrainedY = Math.max(0, Math.min(y, viewportHeight - containerHeight));
+
+    // If the container is larger than the viewport (e.g. zoomed in), allow it to be at 0,0
+    if (containerWidth > viewportWidth) {
+        constrainedX = 0;
+    }
+    if (containerHeight > viewportHeight) {
+        constrainedY = 0;
+    }
     
     // Apply position
     chatContainer.style.left = `${constrainedX}px`;
     chatContainer.style.top = `${constrainedY}px`;
     
-    // Remove bottom/right positioning
+    // Remove bottom/right positioning as we are explicitly setting left/top
     chatContainer.style.bottom = 'auto';
     chatContainer.style.right = 'auto';
 }
@@ -816,14 +835,30 @@ function expandChat() {
     // Clear unread indicator
     chatToggle.removeAttribute('data-count');
     chatToggle.classList.remove('has-unread');
+
+    // console.log('[Desktop Debug] expandChat: Before transitionend listener - offsetWidth:', chatContainer.offsetWidth, 'offsetHeight:', chatContainer.offsetHeight);
+
+    const handleTransitionEnd = () => {
+        // Ensure this handler only runs once and is removed
+        chatContainer.removeEventListener('transitionend', handleTransitionEnd);
+
+        if (chatContainer) {
+            const rect = chatContainer.getBoundingClientRect();
+            // console.log('[Desktop Debug] expandChat: Inside transitionend - rect.left:', rect.left, 'rect.top:', rect.top, 'rect.width:', rect.width, 'rect.height:', rect.height);
+            
+            ensureInBoundsAndSetPosition(rect.left, rect.top, rect.width, rect.height);
+            scrollToBottom();
+        }
+    };
+
+    chatContainer.addEventListener('transitionend', handleTransitionEnd, { once: true });
     
-    // Focus the input field
+    // Focus the input field - this can still be on a timer
     setTimeout(() => {
-        chatInput.focus();
+        if (chatInput) { // Added null check
+            chatInput.focus();
+        }
     }, 300);
-    
-    // Scroll to the bottom of the chat
-    scrollToBottom();
 }
 
 /**
