@@ -19,8 +19,8 @@ import {
     performCacheCleanup
 } from '../utils/cacheManager.js';
 
-import { loadMoreMedia, preloadNextMedia, updateSwipeIndicators } from './mediaLoader.js';
-import { setupControls } from './uiController.js';
+import { loadMoreMedia, preloadNextMedia } from './mediaLoader.js';
+import { setupControls, updateSwipeIndicators } from './uiController.js';
 
 // Need access to the socket instance for state updates
 // Socket instance (initialized via initMediaNavigation)

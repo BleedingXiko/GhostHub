@@ -23,7 +23,7 @@ import {
 
 import { renderMediaWindow } from './mediaNavigation.js';
 import { setupMediaNavigation } from './eventHandlers.js';
-import { setupControls } from './uiController.js';
+import { setupControls, createOrUpdateIndexingUI, updateSwipeIndicators } from './uiController.js';
 
 /**
  * Load and display a media category
@@ -723,60 +723,6 @@ function optimizeVideoElement(videoElement) {
 }
 
 /**
- * Create or update the indexing progress UI
- * @param {number} progress - The indexing progress (0-100)
- */
-function createOrUpdateIndexingUI(progress) {
-    // Create progress indicator if it doesn't exist
-    if (!app.state.indexingProgressElement) {
-        const progressElement = document.createElement('div');
-        progressElement.className = 'indexing-progress';
-        progressElement.style.position = 'fixed';
-        progressElement.style.top = '10px';
-        progressElement.style.left = '50%';
-        progressElement.style.transform = 'translateX(-50%)';
-        progressElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        progressElement.style.color = 'white';
-        progressElement.style.padding = '10px 20px';
-        progressElement.style.borderRadius = '5px';
-        progressElement.style.zIndex = '1000';
-        document.body.appendChild(progressElement);
-        app.state.indexingProgressElement = progressElement;
-    }
-    
-    // Update progress text
-    app.state.indexingProgressElement.textContent = `Indexing media files: ${progress}%`;
-}
-
-/**
- * Update navigation indicators
- * @param {number} currentIndex - Current position
- * @param {number} totalItems - Total available items
- */
-function updateSwipeIndicators(currentIndex, totalItems) {
-    // Create indicators if they don't exist
-    if (!tiktokContainer.querySelector('.swipe-indicator.up')) {
-        const upIndicator = document.createElement('div');
-        upIndicator.className = 'swipe-indicator up';
-        upIndicator.innerHTML = '⬆️';
-        tiktokContainer.appendChild(upIndicator);
-        
-        const downIndicator = document.createElement('div');
-        downIndicator.className = 'swipe-indicator down';
-        downIndicator.innerHTML = '⬇️';
-        tiktokContainer.appendChild(downIndicator);
-    }
-    
-    const upIndicator = tiktokContainer.querySelector('.swipe-indicator.up');
-    const downIndicator = tiktokContainer.querySelector('.swipe-indicator.down');
-    
-    // Show up arrow if not the first item
-    upIndicator.classList.toggle('visible', currentIndex > 0);
-    // Show down arrow if not the last item or if more media might be loading
-    downIndicator.classList.toggle('visible', currentIndex < totalItems - 1 || app.state.hasMoreMedia);
-}
-
-/**
  * Handle the case when no media files are found
  * @param {string} categoryId - The category ID
  * @param {number} pageSize - The page size for loading more media
@@ -861,7 +807,5 @@ export {
     loadMoreMedia,
     clearResources,
     preloadNextMedia,
-    updateSwipeIndicators,
-    optimizeVideoElement,
-    createOrUpdateIndexingUI
+    optimizeVideoElement
 };
