@@ -9,7 +9,7 @@
     border: 1px solid var(--primary-color-light);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    z-index: 9999; /* Ensure it's above fullscreen content */
+    z-index: 990;
     transition: height var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
     overflow: hidden;
     backdrop-filter: blur(5px);
@@ -35,13 +35,13 @@
 :-moz-full-screen .chat-container,
 :-ms-fullscreen .chat-container {
     position: absolute;
-    z-index: 9999;
+    z-index: 990;
 }
 
 /* When document has fullscreen class */
 html.is-fullscreen .chat-container {
     position: fixed;
-    z-index: 9999;
+    z-index: 990;
 }
 
 .chat-container.collapsed {

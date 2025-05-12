@@ -193,6 +193,28 @@ function updateSyncToggleButton() {
 initConfigModal();
 initTunnelModal();
 
+// Attach listeners to the toggle buttons
+const configBtn = document.getElementById('config-toggle-btn');
+const tunnelBtn = document.getElementById('tunnel-toggle-btn');
+
+if (configBtn) {
+    configBtn.addEventListener('click', () => {
+        console.log("Config toggle button clicked"); // Add log for debugging
+        openConfigModal();
+    });
+} else {
+    console.warn("Config toggle button not found in uiController");
+}
+
+if (tunnelBtn) {
+    tunnelBtn.addEventListener('click', () => {
+        console.log("Tunnel toggle button clicked"); // Add log for debugging
+        openTunnelModal();
+    });
+} else {
+    console.warn("Tunnel toggle button not found in uiController");
+}
+
 // Re-export openConfigModal so other modules can access it via uiController if needed
 const openConfigModal = importedOpenConfigModal;
 const openTunnelModal = importedOpenTunnelModal;

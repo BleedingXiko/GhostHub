@@ -163,7 +163,7 @@ export function showCommandPopup() {
     padding: 10px;
     width: 90%;
     max-width: 300px;
-    z-index: 1000;
+    z-index: 980;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     font-size: 14px;
     transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
