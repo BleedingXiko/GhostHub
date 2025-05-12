@@ -38,6 +38,7 @@ Thumbs.db
 # Application specific
 instance/*
 !instance/.gitkeep
+docker/docker-compose.yml
 media/*
 !media/README.md
 *.exe
