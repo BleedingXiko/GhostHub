@@ -171,31 +171,35 @@ html.is-fullscreen .chat-container {
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-md);
     background-color: var(--primary-color);
-    max-width: 80%;
     word-break: break-word;
     box-shadow: var(--shadow-sm);
     animation: message-fade-in var(--transition-normal) ease;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
 }
 
 .chat-user {
     font-weight: 700;
     color: var(--text-secondary);
     font-size: 0.8rem;
-    display: block;
     margin-bottom: 3px;
+    width: 100%;
 }
 
 .chat-text {
     color: var(--text-primary);
     font-size: 0.95rem;
+    flex-grow: 1;
+    margin-right: var(--space-sm);
 }
 
 .chat-time {
-    float: right;
     color: var(--text-tertiary);
     font-size: 0.7rem;
-    margin-top: var(--space-xs);
     margin-left: var(--space-md);
+    white-space: nowrap;
 }
 
 .chat-notification {
