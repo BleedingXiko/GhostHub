@@ -123,17 +123,22 @@ function populateConfigModal() {
     
     const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
 
-    // Iterate over CONFIG_DESCRIPTIONS for python_config keys to ensure all described fields are attempted
+    // Handle SESSION_PASSWORD first
+    const passwordValue = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty('SESSION_PASSWORD'))
+                          ? window.appConfig.python_config.SESSION_PASSWORD
+                          : '';
+    pythonSettingsContainer.appendChild(createConfigInput('SESSION_PASSWORD', passwordValue, 'python_config.'));
+
+    // Iterate over remaining CONFIG_DESCRIPTIONS for python_config keys
     for (const fullKey in CONFIG_DESCRIPTIONS) {
-        if (fullKey.startsWith('python_config.')) {
+        if (fullKey.startsWith('python_config.') && fullKey !== 'python_config.SESSION_PASSWORD') {
             const key = fullKey.substring('python_config.'.length);
             if (!tunnelConfigKeys.includes(key)) { // Exclude tunnel-specific keys handled elsewhere
-                // Get value from window.appConfig, default to empty string if not found (e.g., for new SESSION_PASSWORD)
                 const value = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty(key))
                               ? window.appConfig.python_config[key]
-                              : (key === 'SESSION_PASSWORD' ? '' : undefined); // Default SESSION_PASSWORD to ""
+                              : undefined;
 
-                if (value !== undefined) { // Only create input if a value or default is determined
+                if (value !== undefined) { // Only create input if a value is determined
                     pythonSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
                 }
             }
@@ -251,4 +256,4 @@ function initConfigModal() {
     console.log('Config Modal Initialized');
 }
 
-export { initConfigModal, openConfigModal }; 
+export { initConfigModal, openConfigModal };
