@@ -16,7 +16,7 @@ from app.services.streaming_service import (
     serve_small_file, stream_video_file, serve_large_file_non_blocking,
     is_video_file, SMALL_FILE_THRESHOLD, SPECIAL_MIME_TYPES
 )
-from app.utils.media_utils import get_mime_type, THUMBNAIL_DIR_NAME
+from app.utils.media_utils import get_mime_type, THUMBNAIL_DIR_NAME, GHOSTHUB_DIR_NAME
 
 logger = logging.getLogger(__name__)
 media_bp = Blueprint('media', __name__)
@@ -123,10 +123,11 @@ def serve_thumbnail(category_id, filename):
         # 2. Construct the path to the thumbnails directory
         # Use safe_join to prevent directory traversal attacks
         # Note: safe_join needs the base path first.
-        thumbnail_dir_abs = safe_join(os.path.abspath(category_path), THUMBNAIL_DIR_NAME)
+        ghosthub_dir = safe_join(os.path.abspath(category_path), GHOSTHUB_DIR_NAME)
+        thumbnail_dir_abs = safe_join(ghosthub_dir, THUMBNAIL_DIR_NAME)
 
-        if not thumbnail_dir_abs or not os.path.isdir(thumbnail_dir_abs):
-             # If the .thumbnails dir doesn't exist yet (e.g., no thumbnails generated), return 404
+        if not os.path.isdir(ghosthub_dir) or not os.path.isdir(thumbnail_dir_abs):
+             # If the thumbnail dir doesn't exist yet (e.g., no thumbnails generated), return 404
              logger.warning(f"Thumbnail directory not found or not accessible: {thumbnail_dir_abs}")
              abort(404, description="Thumbnail not found (directory missing)")
 

@@ -13,7 +13,8 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-INDEX_FILENAME = "ghosthub_index.json"  # Removed the leading dot
+INDEX_FILENAME = "ghosthub.json"
+GHOSTHUB_DIR_NAME = ".ghosthub"
 
 def get_categories_filepath():
     """Get absolute path to the categories JSON file."""
@@ -92,7 +93,9 @@ def backup_corrupted_file(filepath):
 
 def get_index_filepath(category_path):
     """Get the absolute path to the index file for a given category path."""
-    return os.path.join(category_path, INDEX_FILENAME)
+    ghosthub_dir = os.path.join(category_path, GHOSTHUB_DIR_NAME)
+    os.makedirs(ghosthub_dir, exist_ok=True)
+    return os.path.join(ghosthub_dir, INDEX_FILENAME)
 
 def load_index(category_path):
     """
@@ -132,7 +135,7 @@ def save_index(category_path, index_data):
         bool: True if successful, False otherwise.
     """
     # Use a direct path to the index file in the category directory
-    filepath = os.path.join(category_path, INDEX_FILENAME)
+    filepath = get_index_filepath(category_path)
     
     try:
         file_count = len(index_data.get('files', []))
