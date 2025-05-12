@@ -113,10 +113,19 @@ function setupEventListeners() {
       // Ensure the item is visible by scrolling to it
       items[newIndex].scrollIntoView({ block: 'nearest' });
     } else if (commandPopup && e.key === 'Enter') {
-      // Select highlighted item
-      const highlightedItem = commandPopup.querySelector('.command-popup-list > div[style*="background: rgb(68, 68, 68)"]');
-      if (highlightedItem) {
-        highlightedItem.click();
+      // Select highlighted item using Enter key
+      e.preventDefault(); // Prevent default form submission/line break
+      const highlightedItem = commandPopup.querySelector('.command-popup-list > div[style*="background: rgb(68, 68, 68)"], .command-popup-list > div[style*="background: rgb(68, 68, 68)"]'); // Include both highlight colors
+      if (highlightedItem && highlightedItem.dataset.commandName) {
+        const name = highlightedItem.dataset.commandName;
+        const helpText = highlightedItem.dataset.commandHelpText;
+        selectCommand(name, helpText);
+        hideCommandPopup(); // Close popup after selection
+      } else {
+        // If no item is highlighted or somehow lacks data, maybe just close the popup?
+        hideCommandPopup();
+        // Or potentially allow default Enter behaviour if needed? 
+        // For now, we just close the popup.
       }
     }
   });
@@ -497,6 +506,11 @@ function filterAndDisplayCommands(filterText = '') {
       will-change: background-color;
     `;
     
+    // Store command data on the element
+    cmdItem.dataset.commandName = name;
+    const helpText = cmd.getHelpText();
+    cmdItem.dataset.commandHelpText = helpText; // Store the full help text
+
     const cmdName = document.createElement('div');
     cmdName.style.cssText = `
       font-weight: bold;
@@ -510,7 +524,6 @@ function filterAndDisplayCommands(filterText = '') {
       font-size: 12px;
       color: #aaa;
     `;
-    const helpText = cmd.getHelpText();
     const descriptionPart = helpText.includes(' - ') ? helpText.split(' - ')[1] : helpText;
     cmdDesc.textContent = descriptionPart;
     
@@ -605,7 +618,9 @@ function selectCommand(name, helpText) {
     chatInput.value = `/${name} `;
     setTimeout(() => {
       chatInput.focus();
-    }, 50);
+      // Move caret to the end of the input
+      chatInput.selectionStart = chatInput.selectionEnd = chatInput.value.length;
+    }, 50); // Small delay might be needed for focus to take effect before setting selection
   } else {
     // Command does not have arguments: set input value and attempt to process immediately.
     chatInput.value = `/${name}`;
