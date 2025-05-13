@@ -2,12 +2,26 @@ FROM python:3.9-slim-buster
 
 WORKDIR /app
 
-# Install minimal system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
     openssh-client \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpng-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Create required directories with proper permissions
+RUN mkdir -p /app/instance/thumbnails && \
+    chmod 777 /app/instance/thumbnails
+
 
 # Install Python dependencies
 COPY requirements.txt .

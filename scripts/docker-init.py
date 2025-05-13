@@ -9,6 +9,7 @@ Features:
 - Auto-detects directories in /media
 - Preserves existing configuration on container restarts
 - Creates unique IDs for each media directory
+- Ensures proper permissions for thumbnail directories
 
 Usage: Add media by mounting volumes to /media in docker-compose.yml
 """
@@ -17,17 +18,46 @@ import os
 import json
 import sys
 import uuid
+import subprocess
 
 # Configuration paths
 INSTANCE_DIR = '/app/instance'
 CATEGORIES_FILE = os.path.join(INSTANCE_DIR, 'media_categories.json')
 MEDIA_DIR = '/media'
+GHOSTHUB_DIR_NAME = '.ghosthub'
+THUMBNAIL_DIR_NAME = 'thumbnails'
 
 def ensure_instance_dir():
     """Ensure the instance directory exists for persistent configuration."""
     if not os.path.exists(INSTANCE_DIR):
         print(f"Creating instance directory: {INSTANCE_DIR}")
         os.makedirs(INSTANCE_DIR, exist_ok=True)
+
+def ensure_thumbnail_permissions(media_dirs):
+    """
+    Ensure thumbnail directories have proper permissions.
+    
+    Args:
+        media_dirs: List of category dictionaries with paths
+    """
+    print("Ensuring proper permissions for thumbnail directories...")
+    
+    for media_dir in media_dirs:
+        path = media_dir['path']
+        ghosthub_dir = os.path.join(path, GHOSTHUB_DIR_NAME)
+        thumbnail_dir = os.path.join(ghosthub_dir, THUMBNAIL_DIR_NAME)
+        
+        # Create directories if they don't exist
+        os.makedirs(thumbnail_dir, exist_ok=True)
+        
+        # Set permissions to 777 to ensure write access
+        try:
+            subprocess.run(['chmod', '-R', '777', ghosthub_dir], check=True)
+            print(f"Set permissions for: {ghosthub_dir}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error setting permissions for {ghosthub_dir}: {e}")
+        except Exception as e:
+            print(f"Unexpected error setting permissions: {e}")
 
 def get_media_directories():
     """
@@ -132,6 +162,9 @@ def main():
         else:
             print("Media categories initialization failed!")
             sys.exit(1)
+        
+        # Ensure thumbnail directories have proper permissions
+        ensure_thumbnail_permissions(media_dirs)
     
     print("Docker initialization complete!")
 
