@@ -14,6 +14,9 @@ services:
       # Mount the instance directory for persistent configuration
       - ../instance:/app/instance
       
+      # Explicit volume for thumbnails with proper permissions
+      - ./thumbnails:/app/instance/thumbnails
+      
       # MEDIA DIRECTORIES: Add your media directories here
       # The container will automatically create media categories for all
       # directories mounted under /media
