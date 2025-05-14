@@ -87,8 +87,8 @@ async function updateTunnelStatusDisplay() {
                 if (data.url) {
                     if (data.provider === 'cloudflare' && data.url.includes('trycloudflare.com')) {
                         displayText += ` - URL: <a href="${data.url}" target="_blank" style="font-weight: bold;">${data.url}</a>`;
-                    } else if (data.provider === 'pinggy') {
-                        displayText += ` - Reminder: Use your permanent Pinggy URL.`;
+                    } else if (data.provider === 'pinggy' && data.url) {
+                        displayText += ` - URL: <a href="${data.url}" target="_blank" style="font-weight: bold;">${data.url}</a>`;
                     } else if (data.url) { 
                         displayText += ` - URL: <a href="${data.url}" target="_blank">${data.url}</a>`;
                     }
@@ -207,49 +207,46 @@ async function handleStartTunnel() {
         if (data.status === 'success') { 
             alert(data.message || 'Tunnel started successfully!');
             
-            if (provider === 'cloudflare') {
-                console.log('Starting tunnel status polling for Cloudflare URL');
-                await updateTunnelStatusDisplay();
-                let pollCount = 0;
-                const maxPolls = 30;
+            // Start polling for both Cloudflare and Pinggy tunnels
+            console.log(`Starting tunnel status polling for ${provider} URL`);
+            await updateTunnelStatusDisplay();
+            let pollCount = 0;
+            const maxPolls = 30;
+            
+            tunnelStatusPollingInterval = setInterval(async () => {
+                pollCount++;
+                console.log(`Polling tunnel status (${pollCount}/${maxPolls})`);
                 
-                tunnelStatusPollingInterval = setInterval(async () => {
-                    pollCount++;
-                    console.log(`Polling tunnel status (${pollCount}/${maxPolls})`);
+                try {
+                    const statusResponse = await fetch('/api/tunnel/status');
+                    const statusData = await statusResponse.json();
                     
-                    try {
-                        const statusResponse = await fetch('/api/tunnel/status');
-                        const statusData = await statusResponse.json();
-                        
-                        if (statusResponse.ok) {
-                            if (statusData.status === 'running' && statusData.url && 
-                                statusData.provider === 'cloudflare' && 
-                                statusData.url.includes('trycloudflare.com')) {
-                                
-                                console.log('Cloudflare URL found, updating display and stopping polling');
-                                await updateTunnelStatusDisplay();
-                                clearInterval(tunnelStatusPollingInterval);
-                                tunnelStatusPollingInterval = null;
-                            } else if (statusData.status !== 'running') {
-                                console.log('Tunnel is no longer running, stopping polling');
-                                clearInterval(tunnelStatusPollingInterval);
-                                tunnelStatusPollingInterval = null;
-                                await updateTunnelStatusDisplay();
-                            }
+                    if (statusResponse.ok) {
+                        if (statusData.status === 'running' && statusData.url && 
+                            ((statusData.provider === 'cloudflare' && statusData.url.includes('trycloudflare.com')) ||
+                             (statusData.provider === 'pinggy' && statusData.url.startsWith('https://')))) {
+                            
+                            console.log(`${statusData.provider} URL found, updating display and stopping polling`);
+                            await updateTunnelStatusDisplay();
+                            clearInterval(tunnelStatusPollingInterval);
+                            tunnelStatusPollingInterval = null;
+                        } else if (statusData.status !== 'running') {
+                            console.log('Tunnel is no longer running, stopping polling');
+                            clearInterval(tunnelStatusPollingInterval);
+                            tunnelStatusPollingInterval = null;
+                            await updateTunnelStatusDisplay();
                         }
-                    } catch (error) {
-                        console.error('Error polling tunnel status:', error);
                     }
-                    
-                    if (pollCount >= maxPolls) {
-                        console.log('Reached maximum polling attempts, stopping');
-                        clearInterval(tunnelStatusPollingInterval);
-                        tunnelStatusPollingInterval = null;
-                    }
-                }, 2000); 
-            } else {
-                updateTunnelStatusDisplay();
-            }
+                } catch (error) {
+                    console.error('Error polling tunnel status:', error);
+                }
+                
+                if (pollCount >= maxPolls) {
+                    console.log('Reached maximum polling attempts, stopping');
+                    clearInterval(tunnelStatusPollingInterval);
+                    tunnelStatusPollingInterval = null;
+                }
+            }, 2000); 
         } else {
             alert(`Error starting tunnel: ${data.message || 'Unknown error'}`);
             updateTunnelStatusDisplay();

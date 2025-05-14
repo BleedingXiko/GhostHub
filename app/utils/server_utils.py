@@ -13,8 +13,20 @@ import subprocess
 import shutil # For finding gunicorn executable
 import threading
 import re
-import pyperclip
-import time # For Pinggy URL capture delay
+import time
+import json
+import requests
+
+try:
+    import pyperclip
+except ImportError:
+    # Fallback implementation for pyperclip
+    class PyperclipFallback:
+        def copy(self, text):
+            logging.warning("pyperclip module not available. URL was not copied to clipboard.")
+            print("[!] pyperclip module not available. URL was not copied to clipboard.")
+    pyperclip = PyperclipFallback()
+
 from app import create_app, socketio, logger as app_logger
 from app.utils.system_utils import get_local_ip
 from app.utils.file_utils import init_categories_file
@@ -98,48 +110,62 @@ def find_cloudflared_path():
     return cloudflared_path
 
 def capture_tunnel_url(process):
-    """Extract and copy Cloudflare Tunnel URL from process output."""
-    url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
+    """Extract and copy Pinggy URL from localhost:4300/urls API endpoint."""
     global _active_tunnel_info
+    
     try:
-        # Read stderr first as cloudflared often prints the URL there
-        for line_bytes in iter(process.stderr.readline, b''):
-            line = line_bytes.decode('utf-8', errors='ignore').strip()
-            app_logger.debug(f"[Tunnel Output CF]: {line}")
-            print(f"[Tunnel] {line}") 
-            match = url_pattern.search(line)
-            if match:
-                tunnel_url = match.group(1)
-                app_logger.info(f"Cloudflare Tunnel URL found: {tunnel_url}")
-                print(f"[*] Cloudflare Tunnel URL: {tunnel_url}")
-                _active_tunnel_info["url"] = tunnel_url
-                try:
-                    pyperclip.copy(tunnel_url)
-                    print("[+] Cloudflare Tunnel URL copied to clipboard!")
-                except Exception as clip_err:
-                    print(f"[!] Failed to copy Cloudflare URL to clipboard: {clip_err}")
-                return # Stop reading once URL is found
-        # If not found in stderr, check stdout
-        for line_bytes in iter(process.stdout.readline, b''):
-            line = line_bytes.decode('utf-8', errors='ignore').strip()
-            app_logger.debug(f"[Tunnel Output CF]: {line}")
-            print(f"[Tunnel] {line}")
-            match = url_pattern.search(line)
-            if match:
-                tunnel_url = match.group(1)
-                app_logger.info(f"Cloudflare Tunnel URL found: {tunnel_url}")
-                print(f"[*] Cloudflare Tunnel URL: {tunnel_url}")
-                _active_tunnel_info["url"] = tunnel_url
-                try:
-                    pyperclip.copy(tunnel_url)
-                    print("[+] Cloudflare Tunnel URL copied to clipboard!")
-                except Exception as clip_err:
-                    print(f"[!] Failed to copy Cloudflare URL to clipboard: {clip_err}")
-                return # Stop reading once URL is found
-        app_logger.warning("Cloudflare Tunnel URL not found in output after process start.")
-    except Exception as read_err:
-         app_logger.error(f"Error reading Cloudflare tunnel output: {read_err}")
-         print(f"[!] Error reading tunnel output: {read_err}")
+        app_logger.info("Attempting to retrieve tunnel URL from API endpoint")
+        print("[*] Waiting for tunnel URL from API endpoint...")
+        
+        # Wait for the API endpoint to become available (max 30 seconds)
+        start_time = time.time()
+        timeout = 30
+        api_url = "http://localhost:4300/urls"
+        
+        while time.time() - start_time < timeout:
+            if process.poll() is not None:
+                app_logger.error("Tunnel process terminated before URL could be retrieved")
+                print("[!] Tunnel process terminated before URL could be retrieved")
+                return
+                
+            try:
+                response = requests.get(api_url, timeout=3)
+                if response.status_code == 200:
+                    url_data = response.json()
+                    if "urls" in url_data and len(url_data["urls"]) > 0:
+                        # Look for the HTTPS URL
+                        https_url = None
+                        for url in url_data["urls"]:
+                            if url.startswith("https://"):
+                                https_url = url
+                                break
+                        
+                        if https_url:
+                            app_logger.info(f"Tunnel URL found: {https_url}")
+                            print(f"[*] Tunnel URL: {https_url}")
+                            _active_tunnel_info["url"] = https_url
+                            try:
+                                pyperclip.copy(https_url)
+                                print("[+] Tunnel URL copied to clipboard!")
+                            except Exception as clip_err:
+                                print(f"[!] Failed to copy URL to clipboard: {clip_err}")
+                            return
+                        else:
+                            app_logger.warning("No HTTPS URL found in API response")
+                            print("[!] No HTTPS URL found in API response")
+                            # Check again after a short delay
+            except requests.RequestException:
+                # API endpoint might not be ready yet
+                pass
+                
+            # Wait a moment before trying again
+            time.sleep(1)
+            
+        app_logger.warning("Timed out waiting for tunnel URL from API endpoint")
+        print("[!] Timed out waiting for tunnel URL from API endpoint")
+    except Exception as err:
+        app_logger.error(f"Error retrieving tunnel URL: {err}")
+        print(f"[!] Error retrieving tunnel URL: {err}")
 
 def start_cloudflare_tunnel(cloudflared_path, port):
     """
@@ -248,6 +274,7 @@ def start_pinggy_tunnel(port, token):
         command = [
             "ssh", "-p", "443",
             f"-R0:127.0.0.1:{port}",
+            "-L4300:127.0.0.1:4300",
             "-o", "StrictHostKeyChecking=no",
             "-o", "ServerAliveInterval=30", # Changed from 60
             f"{token}@pro.pinggy.io" # Changed from a.pinggy.io
@@ -355,13 +382,18 @@ def start_pinggy_tunnel(port, token):
 
         _active_tunnel_info["provider"] = "pinggy"
         _active_tunnel_info["process"] = process
-        _active_tunnel_info["url"] = "Please use your configured permanent Pinggy URL."
+        _active_tunnel_info["url"] = None # Will be updated by capture_tunnel_url
         _active_tunnel_info["local_port"] = port
         
-        app_logger.info("Pinggy Tunnel process initiated.")
+        # Start a thread to capture the URL without blocking
+        url_capture_thread = threading.Thread(target=capture_tunnel_url, args=(process,))
+        url_capture_thread.daemon = True 
+        url_capture_thread.start()
+        
+        app_logger.info("Pinggy Tunnel process initiated. Waiting for URL capture thread.")
         print("\n[+] Pinggy Tunnel process started successfully.")
-        print("[!] Please use your permanent Pinggy URL to access the server.")
-        return {"status": "success", "message": "Pinggy Tunnel started. Please use your permanent Pinggy URL."}
+        print("[*] Waiting for tunnel URL...")
+        return {"status": "success", "message": "Pinggy Tunnel starting. URL will be available shortly."}
 
     except FileNotFoundError:
         app_logger.error("'ssh' command not found for Pinggy Tunnel.")
