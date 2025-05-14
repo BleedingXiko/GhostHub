@@ -53,6 +53,42 @@ function populateTunnelModal() {
 function openTunnelModal() {
     populateTunnelModal();
     if (tunnelModal) tunnelModal.classList.remove('hidden');
+    
+    // Initialize tunnel status and start polling if not active
+    updateTunnelStatusDisplay();
+    
+    // Start a polling interval for tunnel status updates when the modal is open
+    if (!tunnelStatusPollingInterval) {
+        tunnelStatusPollingInterval = setInterval(async () => {
+            try {
+                const statusResponse = await fetch('/api/tunnel/status');
+                const statusData = await statusResponse.json();
+                
+                if (statusResponse.ok) {
+                    await updateTunnelStatusDisplay();
+                    
+                    // If tunnel is running and has a URL, we can slow down polling or stop it
+                    if (statusData.status === 'running' && statusData.url) {
+                        console.log('Tunnel has URL, reducing polling frequency');
+                        
+                        // Just do one more poll after a delay, then stop
+                        clearInterval(tunnelStatusPollingInterval);
+                        tunnelStatusPollingInterval = null;
+                        
+                        // Do a final refresh after 3 seconds to ensure everything is up to date
+                        setTimeout(async () => {
+                            await updateTunnelStatusDisplay();
+                            console.log('Final tunnel status check completed');
+                        }, 3000);
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling tunnel status:', error);
+            }
+        }, 3000); // Poll every 3 seconds while modal is open
+        
+        console.log('Started tunnel status polling on modal open');
+    }
 }
 
 /**
@@ -84,15 +120,24 @@ async function updateTunnelStatusDisplay() {
         if (response.ok) {
             if (data.status === 'running') {
                 let displayText = `Status: Running (${data.provider || 'Unknown'}) on port ${data.local_port || 'N/A'}`;
+                
                 if (data.url) {
+                    // For Cloudflare tunnels
                     if (data.provider === 'cloudflare' && data.url.includes('trycloudflare.com')) {
-                        displayText += ` - URL: <a href="${data.url}" target="_blank" style="font-weight: bold;">${data.url}</a>`;
-                    } else if (data.provider === 'pinggy' && data.url) {
-                        displayText += ` - URL: <a href="${data.url}" target="_blank" style="font-weight: bold;">${data.url}</a>`;
-                    } else if (data.url) { 
-                        displayText += ` - URL: <a href="${data.url}" target="_blank">${data.url}</a>`;
+                        displayText += ` - URL: <a href="${data.url}" target="_blank" class="tunnel-url cloudflare-url">${data.url}</a>`;
+                    } 
+                    // For Pinggy tunnels
+                    else if (data.provider === 'pinggy' && data.url.startsWith('https://')) {
+                        displayText += ` - URL: <a href="${data.url}" target="_blank" class="tunnel-url pinggy-url">${data.url}</a>`;
+                    } 
+                    // For any other tunnels or URLs
+                    else {
+                        displayText += ` - URL: <a href="${data.url}" target="_blank" class="tunnel-url">${data.url}</a>`;
                     }
+                } else {
+                    displayText += ' - URL: Waiting for URL...';
                 }
+                
                 tunnelStatusDisplay.innerHTML = displayText;
                 tunnelStatusDisplay.className = 'tunnel-status status-running'; // Set class last
             } else {
@@ -207,7 +252,7 @@ async function handleStartTunnel() {
         if (data.status === 'success') { 
             alert(data.message || 'Tunnel started successfully!');
             
-            // Start polling for both Cloudflare and Pinggy tunnels
+            // Start polling for tunnel status
             console.log(`Starting tunnel status polling for ${provider} URL`);
             await updateTunnelStatusDisplay();
             let pollCount = 0;
@@ -222,18 +267,26 @@ async function handleStartTunnel() {
                     const statusData = await statusResponse.json();
                     
                     if (statusResponse.ok) {
-                        if (statusData.status === 'running' && statusData.url && 
-                            ((statusData.provider === 'cloudflare' && statusData.url.includes('trycloudflare.com')) ||
-                             (statusData.provider === 'pinggy' && statusData.url.startsWith('https://')))) {
-                            
-                            console.log(`${statusData.provider} URL found, updating display and stopping polling`);
+                        // If tunnel is running and has a URL - stop polling immediately
+                        if (statusData.status === 'running' && statusData.url) {
+                            console.log(`Tunnel URL found: ${statusData.url}, updating display and stopping polling`);
                             await updateTunnelStatusDisplay();
+                            
+                            // Stop polling immediately when URL is found
                             clearInterval(tunnelStatusPollingInterval);
                             tunnelStatusPollingInterval = null;
-                        } else if (statusData.status !== 'running') {
+                            console.log('Tunnel URL polling stopped - URL found');
+                        } 
+                        // If tunnel is no longer running
+                        else if (statusData.status !== 'running') {
                             console.log('Tunnel is no longer running, stopping polling');
                             clearInterval(tunnelStatusPollingInterval);
                             tunnelStatusPollingInterval = null;
+                            await updateTunnelStatusDisplay();
+                        }
+                        // If tunnel is running but URL not yet available, continue polling
+                        else {
+                            console.log('Tunnel is running but URL not yet available, continuing to poll');
                             await updateTunnelStatusDisplay();
                         }
                     }
@@ -245,6 +298,7 @@ async function handleStartTunnel() {
                     console.log('Reached maximum polling attempts, stopping');
                     clearInterval(tunnelStatusPollingInterval);
                     tunnelStatusPollingInterval = null;
+                    await updateTunnelStatusDisplay();
                 }
             }, 2000); 
         } else {
@@ -276,10 +330,11 @@ async function handleStopTunnel() {
         tunnelStatusDisplay.className = 'tunnel-status status-starting';
     }
     
+    // Always clear any existing polling interval before proceeding
     if (tunnelStatusPollingInterval) {
         clearInterval(tunnelStatusPollingInterval);
         tunnelStatusPollingInterval = null;
-        console.log('Tunnel status polling stopped due to tunnel stop');
+        console.log('Tunnel status polling stopped due to tunnel stop request');
     }
     
     try {
@@ -307,6 +362,33 @@ async function handleStopTunnel() {
  * Initializes the tunnel modal event listeners.
  */
 function initTunnelModal() {
+    // Add inline styles for tunnel URLs if not already in CSS
+    const style = document.createElement('style');
+    style.textContent = `
+        .tunnel-url {
+            font-weight: bold;
+            color: #0066cc;
+            text-decoration: underline;
+            transition: all 0.2s ease;
+        }
+        .tunnel-url:hover {
+            color: #004080;
+        }
+        .cloudflare-url {
+            color: #f48120;
+        }
+        .cloudflare-url:hover {
+            color: #bf6012;
+        }
+        .pinggy-url {
+            color: #2fac66;
+        }
+        .pinggy-url:hover {
+            color: #238a4f;
+        }
+    `;
+    document.head.appendChild(style);
+
     // tunnelToggleBtn is handled by uiController, which will call openTunnelModal
     if (tunnelModalCloseBtn) {
         tunnelModalCloseBtn.addEventListener('click', closeTunnelModal);
