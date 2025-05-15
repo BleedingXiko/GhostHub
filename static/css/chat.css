@@ -124,8 +124,8 @@ html.is-fullscreen .chat-container {
     min-width: 18px; /* Ensure minimum width */
     height: 18px;
     padding: 0 4px; /* Add some horizontal padding for multi-digit numbers */
-    background-color: #FF3B30; /* Bright red, non-variable */
-    color: white; /* White text, non-variable */
+    background-color: var(--error-color); /* Use theme variable */
+    color: var(--text-primary); /* Use theme variable */
     border-radius: 9px; /* Make it pill-shaped / circular */
     font-size: 11px; /* Slightly larger font */
     font-weight: bold;
