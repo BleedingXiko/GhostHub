@@ -9,8 +9,8 @@ import { app } from '../core/app.js';
 import { ensureFeatureAccess } from '../utils/authManager.js';
 
 export const random = {
-    description: 'Navigates to a random media item. Stays in current category if active (random from loaded items), otherwise picks a new random category (random from its first page).',
-    getHelpText: () => '• /random - Switch to a random media item (password protected).',
+    description: '• Navigates to a random media item. Stays in current category if active (random from loaded items), otherwise picks a new random category (random from its first page).',
+    getHelpText: () => '• /random Switch to a random media item.',
     execute: async (socket, displayLocalMessage, args) => {
         // Add password protection like other sensitive commands
         const accessGranted = await ensureFeatureAccess();

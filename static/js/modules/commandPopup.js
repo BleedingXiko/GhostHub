@@ -91,7 +91,7 @@ function setupEventListeners() {
       // Find currently highlighted item
       let currentIndex = -1;
       for (let i = 0; i < items.length; i++) {
-        if (items[i].style.background === 'rgb(68, 68, 68)') {
+        if (items[i].style.background) {
           currentIndex = i;
           break;
         }
@@ -107,7 +107,7 @@ function setupEventListeners() {
       
       // Update highlighting
       for (let i = 0; i < items.length; i++) {
-        items[i].style.background = i === newIndex ? '#444' : 'transparent';
+        items[i].style.background = i === newIndex ? 'var(--primary-color)' : '';
       }
       
       // Ensure the item is visible by scrolling to it
@@ -115,17 +115,15 @@ function setupEventListeners() {
     } else if (commandPopup && e.key === 'Enter') {
       // Select highlighted item using Enter key
       e.preventDefault(); // Prevent default form submission/line break
-      const highlightedItem = commandPopup.querySelector('.command-popup-list > div[style*="background: rgb(68, 68, 68)"], .command-popup-list > div[style*="background: rgb(68, 68, 68)"]'); // Include both highlight colors
+      const highlightedItem = commandPopup.querySelector('.command-popup-list > div[style*="background"]');
       if (highlightedItem && highlightedItem.dataset.commandName) {
         const name = highlightedItem.dataset.commandName;
         const helpText = highlightedItem.dataset.commandHelpText;
         selectCommand(name, helpText);
         hideCommandPopup(); // Close popup after selection
       } else {
-        // If no item is highlighted or somehow lacks data, maybe just close the popup?
+        // If no item is highlighted or somehow lacks data, just close the popup
         hideCommandPopup();
-        // Or potentially allow default Enter behaviour if needed? 
-        // For now, we just close the popup.
       }
     }
   });
@@ -155,40 +153,10 @@ export function showCommandPopup() {
   // Create popup container
   commandPopup = document.createElement('div');
   commandPopup.className = 'command-popup';
-  commandPopup.style.cssText = `
-    position: fixed;
-    background: #2a2a2a;
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 10px;
-    width: 90%;
-    max-width: 300px;
-    z-index: 980;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    font-size: 14px;
-    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    opacity: 0;
-    user-select: none;
-    transform: translateY(10px);
-    bottom: 60px;
-    left: 10px;
-    will-change: transform, opacity;
-  `;
 
   // Create header with drag handle
   const header = document.createElement('div');
   header.className = 'command-popup-header';
-  header.style.cssText = `
-    font-weight: bold;
-    color: #ccc;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #444;
-    cursor: move;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  `;
   
   const title = document.createElement('span');
   title.textContent = 'Available Commands';
@@ -197,12 +165,6 @@ export function showCommandPopup() {
   // Add close button
   const closeBtn = document.createElement('span');
   closeBtn.textContent = '✕';
-  closeBtn.style.cssText = `
-    cursor: pointer;
-    padding: 0 4px;
-    color: #888;
-    font-size: 16px;
-  `;
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     hideCommandPopup();
@@ -218,13 +180,10 @@ export function showCommandPopup() {
   // Create command list (structure only, content filled by filterAndDisplayCommands)
   const commandList = document.createElement('div');
   commandList.className = 'command-popup-list';
-  commandList.style.cssText = `
-    max-height: ${MOBILE_DEVICE ? '180px' : '220px'};
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-right: 5px;
-    overscroll-behavior: contain;
-  `;
+  // Adjust height for mobile devices
+  if (MOBILE_DEVICE) {
+    commandList.style.maxHeight = '180px';
+  }
   commandPopup.appendChild(commandList); // Append the empty list container
 
   // Initial population of commands
@@ -482,12 +441,7 @@ function filterAndDisplayCommands(filterText = '') {
   
   if (filteredCommands.length === 0) {
     const noResultsItem = document.createElement('div');
-    noResultsItem.style.cssText = `
-      padding: 8px;
-      color: #aaa;
-      text-align: center;
-      font-style: italic;
-    `;
+    noResultsItem.className = 'no-results';
     noResultsItem.textContent = 'No commands match';
     commandList.appendChild(noResultsItem);
     return;
@@ -495,16 +449,6 @@ function filterAndDisplayCommands(filterText = '') {
 
   filteredCommands.forEach(([name, cmd]) => {
     const cmdItem = document.createElement('div');
-    cmdItem.style.cssText = `
-      padding: 8px;
-      cursor: pointer;
-      border-radius: 4px;
-      margin: 2px 0;
-      display: flex;
-      flex-direction: column;
-      transition: background-color 0.1s ease;
-      will-change: background-color;
-    `;
     
     // Store command data on the element
     cmdItem.dataset.commandName = name;
@@ -512,33 +456,14 @@ function filterAndDisplayCommands(filterText = '') {
     cmdItem.dataset.commandHelpText = helpText; // Store the full help text
 
     const cmdName = document.createElement('div');
-    cmdName.style.cssText = `
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 3px;
-    `;
     cmdName.textContent = `/${name}`;
     
     const cmdDesc = document.createElement('div');
-    cmdDesc.style.cssText = `
-      font-size: 12px;
-      color: #aaa;
-    `;
     const descriptionPart = helpText.includes(' - ') ? helpText.split(' - ')[1] : helpText;
     cmdDesc.textContent = descriptionPart;
     
     cmdItem.appendChild(cmdName);
     cmdItem.appendChild(cmdDesc);
-    
-    cmdItem.addEventListener('mouseover', () => {
-      cmdItem.style.background = '#444';
-      cmdItem.style.transform = 'translateZ(0)';
-    });
-    
-    cmdItem.addEventListener('mouseout', () => {
-      cmdItem.style.background = 'transparent';
-      cmdItem.style.transform = '';
-    });
     
     let touchStartY = 0;
     let touchStartTime = 0;
@@ -582,7 +507,7 @@ function filterAndDisplayCommands(filterText = '') {
   // Highlight the first item automatically if there are results
   const items = commandList.querySelectorAll('.command-popup-list > div');
   if (items.length > 0 && !items[0].textContent.includes('No commands match')) {
-    items[0].style.background = '#444';
+    items[0].style.background = 'var(--primary-color)';
     items[0].scrollIntoView({ block: 'nearest' });
   }
 }
