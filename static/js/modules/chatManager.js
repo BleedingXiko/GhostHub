@@ -118,9 +118,6 @@ function initChat(socketInstance) {
     // Load chat history from sessionStorage
     loadChatHistory();
 
-    // Remove the beforeunload handler as sessionStorage handles clearing automatically
-    // setupBeforeUnloadHandler();
-
     // Join the chat room
     joinChat();
     
@@ -833,8 +830,11 @@ function expandChat() {
     chatState.unreadCount = 0;
     
     // Clear unread indicator
-    chatToggle.removeAttribute('data-count');
-    chatToggle.classList.remove('has-unread');
+    chatContainer.classList.remove('has-unread');
+    const unreadBadge = document.querySelector('.chat-unread-badge');
+    if (unreadBadge) {
+        unreadBadge.textContent = '';
+    }
 
     // console.log('[Desktop Debug] expandChat: Before transitionend listener - offsetWidth:', chatContainer.offsetWidth, 'offsetHeight:', chatContainer.offsetHeight);
 
@@ -1118,12 +1118,18 @@ function updateLatestMessage(message) {
  * Update the unread message indicator
  */
 function updateUnreadIndicator() {
+    const unreadBadge = document.querySelector('.chat-unread-badge');
+    
     if (chatState.unreadCount > 0) {
-        chatToggle.setAttribute('data-count', chatState.unreadCount);
-        chatToggle.classList.add('has-unread');
+        if (unreadBadge) {
+            unreadBadge.textContent = chatState.unreadCount;
+        }
+        chatContainer.classList.add('has-unread');
     } else {
-        chatToggle.removeAttribute('data-count');
-        chatToggle.classList.remove('has-unread');
+        if (unreadBadge) {
+            unreadBadge.textContent = '';
+        }
+        chatContainer.classList.remove('has-unread');
     }
 }
 

@@ -71,22 +71,9 @@ html.is-fullscreen .chat-container {
     background-color: var(--primary-color-light);
 }
 
+/* Remove the chat-header arrow since we're using the toggle button now */
 .chat-header::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    right: var(--space-xl);
-    transform: translateY(-50%);
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid var(--text-secondary);
-    transition: transform var(--transition-fast) ease;
-}
-
-.chat-container.expanded .chat-header::after {
-    transform: translateY(-50%) rotate(180deg);
+    display: none;
 }
 
 .latest-message {
@@ -96,6 +83,13 @@ html.is-fullscreen .chat-container {
     text-overflow: ellipsis;
     color: var(--text-primary);
     font-size: 0.9rem;
+}
+
+/* Chat toggle and notification */
+.chat-controls {
+    display: flex;
+    align-items: center;
+    position: relative;
 }
 
 .chat-toggle {
@@ -116,26 +110,53 @@ html.is-fullscreen .chat-container {
     background-color: var(--accent-color);
 }
 
-.chat-toggle.has-unread::after {
-    content: attr(data-count);
+/* Add up/down arrow to chat toggle */
+.chat-toggle::before {
+    content: '';
+    display: block;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 8px solid var(--text-primary);
+    transition: transform var(--transition-fast) ease;
+}
+
+.chat-container.expanded .chat-toggle::before {
+    transform: rotate(180deg);
+}
+
+/* Separate unread badge */
+.chat-unread-badge {
     position: absolute;
-    top: -6px; /* Adjusted for better visibility */
-    right: -6px; /* Adjusted for better visibility */
-    min-width: 18px; /* Ensure minimum width */
-    height: 18px;
-    padding: 0 4px; /* Add some horizontal padding for multi-digit numbers */
-    background-color: var(--error-color); /* Use theme variable */
-    color: var(--text-primary); /* Use theme variable */
-    border-radius: 9px; /* Make it pill-shaped / circular */
-    font-size: 11px; /* Slightly larger font */
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    background-color: var(--error-color);
+    color: white;
+    border-radius: 8px;
+    font-size: 10px;
     font-weight: bold;
-    display: flex;
+    display: none; /* Hidden by default */
     align-items: center;
     justify-content: center;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3); /* Slightly more pronounced shadow */
-    z-index: 10; /* Ensure it's above other button content */
-    line-height: 1; /* Ensure text is centered vertically */
-    box-sizing: border-box; /* Ensure padding doesn't increase overall size beyond intent */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    z-index: 9999; /* Ensure it's on top of everything */
+    line-height: 1;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
+/* Show badge when has-unread is present */
+.chat-container.has-unread .chat-unread-badge {
+    display: flex;
+}
+
+/* Remove the old pseudo-element badge */
+.chat-toggle.has-unread::after {
+    display: none;
 }
 
 .chat-body {
