@@ -271,6 +271,7 @@ html.is-fullscreen .chat-container {
     padding: var(--space-md);
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     background-color: var(--primary-color-dark);
+    align-items: center;
 }
 
 .chat-input {
@@ -292,22 +293,31 @@ html.is-fullscreen .chat-container {
 }
 
 .chat-send {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     border-radius: var(--radius-circle);
-    background-color: var(--accent-color);
+    background-color: var(--secondary-color);
     border: none;
     margin-left: var(--space-md);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all var(--transition-fast) ease;
-    box-shadow: var(--shadow-sm);
+    transition: background-color var(--transition-fast) ease;
+    position: relative;
+}
+
+/* Add right arrow to send button */
+.chat-send::before {
+    content: '';
+    display: block;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    border-left: 8px solid var(--text-primary);
 }
 
 .chat-send:hover {
-    background-color: var(--accent-color-light);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+    background-color: var(--accent-color);
 }
