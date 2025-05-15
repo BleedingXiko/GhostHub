@@ -14,6 +14,8 @@ import { initCommandPopup } from './commandPopup.js'; // Import the command popu
 const STORAGE_KEY = 'ghosthub_chat_messages';
 const STORAGE_TIMESTAMP_KEY = 'ghosthub_chat_timestamp';
 const STORAGE_JOINED_KEY = 'ghosthub_chat_joined';
+const STORAGE_CHAT_POSITION_X = 'ghosthub_chat_position_x'; // Added for chat position
+const STORAGE_CHAT_POSITION_Y = 'ghosthub_chat_position_y'; // Added for chat position
 
 // Chat state
 const chatState = {
@@ -106,6 +108,9 @@ function initChat(socketInstance) {
     // Initialize command popup manager
     commandPopupManager = initCommandPopup(chatInput);
     
+    // Load saved chat position
+    loadChatPosition(); // Added to load position early
+    
     // Set up event listeners
     setupEventListeners();
     
@@ -193,12 +198,59 @@ function saveChatHistory() {
 }
 
 /**
+ * Save chat position to sessionStorage
+ */
+function saveChatPosition() {
+    if (chatContainer && chatContainer.style.left && chatContainer.style.top) {
+        try {
+            sessionStorage.setItem(STORAGE_CHAT_POSITION_X, chatContainer.style.left);
+            sessionStorage.setItem(STORAGE_CHAT_POSITION_Y, chatContainer.style.top);
+            // console.log(`Saved chat position: X=${chatContainer.style.left}, Y=${chatContainer.style.top}`);
+        } catch (error) {
+            console.error('Error saving chat position to sessionStorage:', error);
+        }
+    }
+}
+
+/**
+ * Load chat position from sessionStorage
+ */
+function loadChatPosition() {
+    if (!chatContainer) return;
+    try {
+        const positionX = sessionStorage.getItem(STORAGE_CHAT_POSITION_X);
+        const positionY = sessionStorage.getItem(STORAGE_CHAT_POSITION_Y);
+
+        if (positionX && positionY) {
+            chatContainer.style.left = positionX;
+            chatContainer.style.top = positionY;
+            // Ensure bottom and right are 'auto' so left/top positioning takes effect
+            chatContainer.style.bottom = 'auto';
+            chatContainer.style.right = 'auto';
+            // console.log(`Loaded chat position: X=${positionX}, Y=${positionY}`);
+        }
+    } catch (error) {
+        console.error('Error loading chat position from sessionStorage:', error);
+    }
+}
+
+/**
  * Clear chat history from sessionStorage
  */
 function clearChatHistory() {
     try {
         sessionStorage.removeItem(STORAGE_KEY); // Use sessionStorage
         sessionStorage.removeItem(STORAGE_TIMESTAMP_KEY); // Use sessionStorage
+        isDragging = false;
+        
+        // Remove active class
+        chatContainer.classList.remove('dragging');
+        
+        // Save position after drag
+        saveChatPosition(); // Added to save position
+
+        // Restore page scrolling
+        document.body.style.overflow = '';
     } catch (error) {
         console.error('Error clearing chat history from sessionStorage:', error); // Log sessionStorage
     }
@@ -479,6 +531,9 @@ function stopDrag() {
     // Remove active class
     chatContainer.classList.remove('dragging');
     
+    // Save position after drag
+    saveChatPosition(); // Added to save position
+
     // Restore page scrolling
     document.body.style.overflow = '';
     
@@ -512,6 +567,9 @@ function stopDragTouch(e) {
     // Remove active class
     chatContainer.classList.remove('dragging');
     
+    // Save position after drag
+    saveChatPosition(); // Added to save position
+
     // Restore page scrolling
     document.body.style.overflow = '';
     
