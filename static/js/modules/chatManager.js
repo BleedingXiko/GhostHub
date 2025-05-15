@@ -44,6 +44,7 @@ let offsetY = 0;
 let dragDistance = 0; // Track drag distance to distinguish between drag and click
 let touchStartTime = 0; // Track touch start time for tap detection
 let isTouchClick = false; // Flag to indicate if a touch was a click
+let wasDragged = false; // Flag to track if a drag operation actually moved the chat
 
 // Socket reference (will use the existing socket connection)
 let socket = null;
@@ -272,8 +273,8 @@ function setupEventListeners() {
     chatHeader.addEventListener('click', (e) => {
         // Don't toggle if clicking directly on the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            // Only toggle if not dragging or if drag distance is small (click vs drag)
-            if (!isDragging || dragDistance < 5) {
+            // Only toggle if not dragging and if we didn't just finish dragging
+            if (!isDragging && !wasDragged) {
                 // Prevent event from bubbling up to document
                 e.stopPropagation();
                 // Prevent default behavior
@@ -281,6 +282,8 @@ function setupEventListeners() {
                 // Toggle chat
                 toggleChat();
             }
+            // Reset wasDragged flag on click
+            wasDragged = false;
         }
     });
     
@@ -288,8 +291,8 @@ function setupEventListeners() {
     chatHeader.addEventListener('touchend', (e) => {
         // Don't toggle if touching the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            // Only toggle if it was a tap (short touch with minimal movement)
-            if (isTouchClick) {
+            // Only toggle if it was a tap (short touch with minimal movement) and wasn't dragged
+            if (isTouchClick && !wasDragged) {
                 console.log('Touch click detected on header');
                 // Prevent event from bubbling up to document
                 e.stopPropagation();
@@ -298,6 +301,8 @@ function setupEventListeners() {
                 // Toggle chat
                 toggleChat();
             }
+            // Reset wasDragged flag on touch end
+            wasDragged = false;
         }
     });
     
@@ -424,6 +429,7 @@ function drag(e) {
     // If drag distance is significant, it's not a click
     if (dragDistance > 5) {
         isTouchClick = false;
+        wasDragged = true; // Set dragged flag if we moved significantly
     }
     
     // Calculate new position
@@ -455,6 +461,7 @@ function dragTouch(e) {
     // If drag distance is significant, it's not a click
     if (dragDistance > 5) {
         isTouchClick = false;
+        wasDragged = true; // Set dragged flag if we moved significantly
     }
     
     // Calculate new position
@@ -519,12 +526,6 @@ function ensureInBoundsAndSetPosition(x, y, containerWidth, containerHeight) {
 function stopDrag() {
     if (!isDragging) return;
     
-    // If drag distance is small, treat it as a click
-    if (dragDistance < 5) {
-        console.log('Treating as click, not drag');
-        // We'll let the click handler handle this
-    }
-    
     // Reset dragging state
     isDragging = false;
     
@@ -532,14 +533,18 @@ function stopDrag() {
     chatContainer.classList.remove('dragging');
     
     // Save position after drag
-    saveChatPosition(); // Added to save position
+    saveChatPosition();
 
     // Restore page scrolling
     document.body.style.overflow = '';
     
-    // Small delay before allowing clicks to prevent accidental clicks after drag
+    // Reset drag distance after a small delay
     setTimeout(() => {
         dragDistance = 0;
+        // Keep wasDragged flag for a short time to prevent click events
+        setTimeout(() => {
+            wasDragged = false;
+        }, 300);
     }, 100);
 }
 
@@ -550,17 +555,6 @@ function stopDrag() {
 function stopDragTouch(e) {
     if (!isDragging) return;
     
-    // Calculate touch duration
-    const touchDuration = Date.now() - touchStartTime;
-    
-    // If drag distance is small and touch duration is short, treat it as a tap
-    if (dragDistance < 5 && touchDuration < 300) {
-        console.log('Treating as tap, not drag');
-        isTouchClick = true;
-    } else {
-        isTouchClick = false;
-    }
-    
     // Reset dragging state
     isDragging = false;
     
@@ -568,14 +562,18 @@ function stopDragTouch(e) {
     chatContainer.classList.remove('dragging');
     
     // Save position after drag
-    saveChatPosition(); // Added to save position
+    saveChatPosition();
 
     // Restore page scrolling
     document.body.style.overflow = '';
     
-    // Small delay before allowing clicks to prevent accidental clicks after drag
+    // Reset drag distance after a small delay
     setTimeout(() => {
         dragDistance = 0;
+        // Keep wasDragged flag for a short time to prevent click events
+        setTimeout(() => {
+            wasDragged = false;
+        }, 300);
     }, 100);
 }
 
