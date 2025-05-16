@@ -74,40 +74,64 @@ def display_server_info(config_name, port):
 
 def find_cloudflared_path():
     """
-    Find cloudflared executable in various locations.
-    
-    Returns path to executable or None if not found.
+    Cross-platform search for cloudflared executable.
+    Priority:
+      1. Environment variable CLOUDFLARED_PATH
+      2. shutil.which (PATH search)
+      3. Project root (cloudflared or cloudflared.exe)
+      4. System locations (/usr/local/bin etc)
+      5. PyInstaller bundled (_MEIPASS)
+    Returns: path to executable or None if not found.
     """
-    cloudflared_path = None
-    
-    # Check if running as executable (PyInstaller)
+    import platform
+    # 1. Environment variable override
+    env_path = os.environ.get('CLOUDFLARED_PATH')
+    if env_path and os.path.exists(env_path):
+        app_logger.info(f"Found cloudflared from CLOUDFLARED_PATH: {env_path}")
+        return env_path
+
+    # 2. Use shutil.which to search PATH
+    exe_names = ['cloudflared']
+    if platform.system() == 'Windows':
+        exe_names.append('cloudflared.exe')
+    for exe_name in exe_names:
+        found = shutil.which(exe_name)
+        if found:
+            app_logger.info(f"Found cloudflared in PATH: {found}")
+            return found
+
+    # 3. Project root (for bundled/manual copies)
+    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for exe_name in exe_names:
+        candidate = os.path.join(script_dir, exe_name)
+        if os.path.exists(candidate):
+            app_logger.info(f"Found cloudflared in project root: {candidate}")
+            return candidate
+
+    # 4. Common system locations
+    system_paths = ['/usr/local/bin/cloudflared', '/usr/bin/cloudflared']
+    if platform.system() == 'Windows':
+        system_paths.extend([
+            os.path.join(os.environ.get('ProgramFiles', ''), 'cloudflared', 'cloudflared.exe'),
+            os.path.join(os.environ.get('ProgramFiles(x86)', ''), 'cloudflared', 'cloudflared.exe')
+        ])
+    for path in system_paths:
+        if path and os.path.exists(path):
+            app_logger.info(f"Found cloudflared in system path: {path}")
+            return path
+
+    # 5. PyInstaller (_MEIPASS)
     if getattr(sys, 'frozen', False):
-        # Running as executable (PyInstaller)
-        # Check in the temporary _MEIPASS directory where bundled files are extracted
-        if hasattr(sys, '_MEIPASS'):
-            base_path = sys._MEIPASS
-        else:
-            # Fallback if _MEIPASS is not available (shouldn't happen with --onefile)
-            base_path = os.path.dirname(sys.executable)
-        potential_path = os.path.join(base_path, 'cloudflared.exe')
-        if os.path.exists(potential_path):
-            cloudflared_path = potential_path
-            app_logger.info(f"Found bundled cloudflared.exe at: {cloudflared_path}")
-        else:
-             app_logger.warning(f"cloudflared.exe not found in bundled files at: {base_path}")
-    else:
-        # Running as script
-        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        potential_path = os.path.join(script_dir, 'cloudflared.exe')
-        if os.path.exists(potential_path):
-            cloudflared_path = potential_path
-            
-    # Also check in /usr/local/bin for Linux environments
-    if not cloudflared_path and os.path.exists('/usr/local/bin/cloudflared'):
-        cloudflared_path = '/usr/local/bin/cloudflared'
-        app_logger.info(f"Found cloudflared at: {cloudflared_path}")
-            
-    return cloudflared_path
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        for exe_name in exe_names:
+            candidate = os.path.join(base_path, exe_name)
+            if os.path.exists(candidate):
+                app_logger.info(f"Found bundled cloudflared at: {candidate}")
+                return candidate
+    
+    app_logger.warning("cloudflared executable not found in any known location.")
+    return None
+
 
 def capture_tunnel_url(process):
     """

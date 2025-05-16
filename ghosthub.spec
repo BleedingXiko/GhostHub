@@ -29,7 +29,8 @@ a = Analysis(
         (templates_dir, 'templates'),
         # REMOVED: Instance folder will be created next to the executable
         # (instance_dir, 'instance') if path.exists(instance_dir) else ([], 'instance'),
-        # Include cloudflared.exe if it exists
+        # Include cloudflared(.exe) if it exists (cross-platform)
+        (path.join(base_dir, 'cloudflared'), '.') if path.exists(path.join(base_dir, 'cloudflared')) else ([],'.'),
         (path.join(base_dir, 'cloudflared.exe'), '.') if path.exists(path.join(base_dir, 'cloudflared.exe')) else ([],'.'),
     ] + opencv_datas, # Add opencv datas here
     hiddenimports=[
