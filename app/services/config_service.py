@@ -23,14 +23,15 @@ def get_default_config():
             "WS_RECONNECT_FACTOR": 1.5,
             "MEMORY_CLEANUP_INTERVAL": 60000,
             "MAX_CACHE_SIZE": 50,
+            "SAVE_CURRENT_INDEX": False,
             "SESSION_PASSWORD": ""
         },
         "javascript_config": {
             "main": {
                 "socket_reconnectionAttempts": 5,
                 "socket_reconnectionDelay": 2000,
-                "phase2_init_delay": 250,
-                "phase3_init_delay": 500
+                "phase2_init_delay": 62.5,
+                "phase3_init_delay": 125
             },
             "core_app": {
                 "media_per_page_desktop": 5,

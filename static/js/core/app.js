@@ -28,10 +28,14 @@ const MAX_CACHE_SIZE_PYTHON_DEFAULT = 50; // Default from python_config if not p
 const MAX_CACHE_SIZE_MOBILE_DEFAULT = 10;
 const MAX_CACHE_SIZE_DESKTOP_DEFAULT = 50;
 
-
-const MEDIA_PER_PAGE = MOBILE_DEVICE ? 
-    getConfigValue('javascript_config.core_app.media_per_page_mobile', MEDIA_PER_PAGE_MOBILE_DEFAULT) :
-    getConfigValue('javascript_config.core_app.media_per_page_desktop', MEDIA_PER_PAGE_DESKTOP_DEFAULT);
+// Make MEDIA_PER_PAGE a function to get the value on demand
+function getMediaPerPage() {
+    return getConfigValue('javascript_config.core_app.media_per_page_desktop', 
+               getConfigValue('javascript_config.core_app.media_per_page_mobile', 
+                              MEDIA_PER_PAGE_DESKTOP_DEFAULT
+                             )
+           );
+}
 
 const LOAD_MORE_THRESHOLD = MOBILE_DEVICE ?
     getConfigValue('javascript_config.core_app.load_more_threshold_mobile', LOAD_MORE_THRESHOLD_MOBILE_DEFAULT) :
@@ -209,7 +213,7 @@ export {
     spinnerContainer,
     syncToggleBtn,
     MOBILE_DEVICE,
-    MEDIA_PER_PAGE,
+    getMediaPerPage,
     LOAD_MORE_THRESHOLD,
     renderWindowSize,
     MAX_CACHE_SIZE,

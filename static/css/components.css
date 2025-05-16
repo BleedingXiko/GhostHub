@@ -135,6 +135,7 @@ input[type="text"]:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 2px rgba(var(--accent-color-rgb), 0.2);
+    background-color: rgba(var(--surface-color-rgb), 0.4); /* Subtle focus background */
 }
 
 /* Sync Toggle Button */

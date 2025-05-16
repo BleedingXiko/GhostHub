@@ -56,7 +56,8 @@ def get_mime_type(filename):
 
 # Thumbnail Generation Constants
 
-THUMBNAIL_DIR_NAME = ".thumbnails"
+THUMBNAIL_DIR_NAME = "thumbnails"
+GHOSTHUB_DIR_NAME = ".ghosthub"
 THUMBNAIL_SIZE = (256, 256)
 THUMBNAIL_FORMAT = "JPEG" # Use JPEG for good compression/quality balance
 
@@ -226,8 +227,12 @@ def process_category_thumbnails(category_path, all_files_metadata, force_refresh
         logger.warning(f"No files to process thumbnails for in {category_path}")
         return 0, 0, 0
     
-    # Ensure thumbnail directory exists
-    thumbnail_dir = os.path.join(category_path, THUMBNAIL_DIR_NAME)
+    # Ensure ghosthub directory exists
+    ghosthub_dir = os.path.join(category_path, GHOSTHUB_DIR_NAME)
+    os.makedirs(ghosthub_dir, exist_ok=True)
+    
+    # Ensure thumbnail directory exists inside ghosthub directory
+    thumbnail_dir = os.path.join(ghosthub_dir, THUMBNAIL_DIR_NAME)
     os.makedirs(thumbnail_dir, exist_ok=True)
     
     # Count image and video files
@@ -362,7 +367,8 @@ def find_thumbnail(category_path, category_id, category_name):
 
                     # Determine thumbnail path and filename
                     thumbnail_filename = original_filename + '.' + THUMBNAIL_FORMAT.lower()
-                    thumbnail_save_path = os.path.join(category_path, THUMBNAIL_DIR_NAME, thumbnail_filename)
+                    ghosthub_dir = os.path.join(category_path, GHOSTHUB_DIR_NAME)
+                    thumbnail_save_path = os.path.join(ghosthub_dir, THUMBNAIL_DIR_NAME, thumbnail_filename)
 
                     # Check if thumbnail exists or generate it
                     thumbnail_exists = os.path.exists(thumbnail_save_path)

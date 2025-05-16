@@ -7,12 +7,15 @@ import { app, MOBILE_DEVICE } from '../core/app.js';
 import { isSafeToToggleFullscreen } from './fullscreenManager.js';
 import { initCommandHandler } from './commandHandler.js';
 import { ensureFeatureAccess } from '../utils/authManager.js'; // Added for password protection
+import { initCommandPopup } from './commandPopup.js'; // Import the command popup module
 
 
 // Session storage keys
 const STORAGE_KEY = 'ghosthub_chat_messages';
 const STORAGE_TIMESTAMP_KEY = 'ghosthub_chat_timestamp';
 const STORAGE_JOINED_KEY = 'ghosthub_chat_joined';
+const STORAGE_CHAT_POSITION_X = 'ghosthub_chat_position_x'; // Added for chat position
+const STORAGE_CHAT_POSITION_Y = 'ghosthub_chat_position_y'; // Added for chat position
 
 // Chat state
 const chatState = {
@@ -41,12 +44,16 @@ let offsetY = 0;
 let dragDistance = 0; // Track drag distance to distinguish between drag and click
 let touchStartTime = 0; // Track touch start time for tap detection
 let isTouchClick = false; // Flag to indicate if a touch was a click
+let wasDragged = false; // Flag to track if a drag operation actually moved the chat
 
 // Socket reference (will use the existing socket connection)
 let socket = null;
 
 // Command handler reference
 let commandHandler = null;
+
+// Command popup reference
+let commandPopupManager = null;
 
 /**
  * Initialize the chat module
@@ -89,6 +96,22 @@ function initChat(socketInstance) {
     
     console.log('Chat UI elements found successfully');
     
+    // Expose chat manager functions to window.appModules
+    if (!window.appModules) {
+        window.appModules = {};
+    }
+    window.appModules.chatManager = {
+        expandChat,
+        collapseChat,
+        toggleChat
+    };
+    
+    // Initialize command popup manager
+    commandPopupManager = initCommandPopup(chatInput);
+    
+    // Load saved chat position
+    loadChatPosition(); // Added to load position early
+    
     // Set up event listeners
     setupEventListeners();
     
@@ -100,9 +123,6 @@ function initChat(socketInstance) {
     
     // Load chat history from sessionStorage
     loadChatHistory();
-
-    // Remove the beforeunload handler as sessionStorage handles clearing automatically
-    // setupBeforeUnloadHandler();
 
     // Join the chat room
     joinChat();
@@ -179,12 +199,59 @@ function saveChatHistory() {
 }
 
 /**
+ * Save chat position to sessionStorage
+ */
+function saveChatPosition() {
+    if (chatContainer && chatContainer.style.left && chatContainer.style.top) {
+        try {
+            sessionStorage.setItem(STORAGE_CHAT_POSITION_X, chatContainer.style.left);
+            sessionStorage.setItem(STORAGE_CHAT_POSITION_Y, chatContainer.style.top);
+            // console.log(`Saved chat position: X=${chatContainer.style.left}, Y=${chatContainer.style.top}`);
+        } catch (error) {
+            console.error('Error saving chat position to sessionStorage:', error);
+        }
+    }
+}
+
+/**
+ * Load chat position from sessionStorage
+ */
+function loadChatPosition() {
+    if (!chatContainer) return;
+    try {
+        const positionX = sessionStorage.getItem(STORAGE_CHAT_POSITION_X);
+        const positionY = sessionStorage.getItem(STORAGE_CHAT_POSITION_Y);
+
+        if (positionX && positionY) {
+            chatContainer.style.left = positionX;
+            chatContainer.style.top = positionY;
+            // Ensure bottom and right are 'auto' so left/top positioning takes effect
+            chatContainer.style.bottom = 'auto';
+            chatContainer.style.right = 'auto';
+            // console.log(`Loaded chat position: X=${positionX}, Y=${positionY}`);
+        }
+    } catch (error) {
+        console.error('Error loading chat position from sessionStorage:', error);
+    }
+}
+
+/**
  * Clear chat history from sessionStorage
  */
 function clearChatHistory() {
     try {
         sessionStorage.removeItem(STORAGE_KEY); // Use sessionStorage
         sessionStorage.removeItem(STORAGE_TIMESTAMP_KEY); // Use sessionStorage
+        isDragging = false;
+        
+        // Remove active class
+        chatContainer.classList.remove('dragging');
+        
+        // Save position after drag
+        saveChatPosition(); // Added to save position
+
+        // Restore page scrolling
+        document.body.style.overflow = '';
     } catch (error) {
         console.error('Error clearing chat history from sessionStorage:', error); // Log sessionStorage
     }
@@ -198,11 +265,7 @@ function clearChatHistory() {
 function setupEventListeners() {
     // Toggle chat expansion when clicking the toggle button
     chatToggle.addEventListener('click', (e) => {
-        // Prevent event from bubbling up to document
-        e.stopPropagation();
-        // Prevent default behavior
         e.preventDefault();
-        // Toggle chat
         toggleChat();
     });
     
@@ -210,8 +273,8 @@ function setupEventListeners() {
     chatHeader.addEventListener('click', (e) => {
         // Don't toggle if clicking directly on the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            // Only toggle if not dragging or if drag distance is small (click vs drag)
-            if (!isDragging || dragDistance < 5) {
+            // Only toggle if not dragging and if we didn't just finish dragging
+            if (!isDragging && !wasDragged) {
                 // Prevent event from bubbling up to document
                 e.stopPropagation();
                 // Prevent default behavior
@@ -219,6 +282,8 @@ function setupEventListeners() {
                 // Toggle chat
                 toggleChat();
             }
+            // Reset wasDragged flag on click
+            wasDragged = false;
         }
     });
     
@@ -226,8 +291,8 @@ function setupEventListeners() {
     chatHeader.addEventListener('touchend', (e) => {
         // Don't toggle if touching the toggle button (it has its own handler)
         if (!e.target.closest('#chat-toggle')) {
-            // Only toggle if it was a tap (short touch with minimal movement)
-            if (isTouchClick) {
+            // Only toggle if it was a tap (short touch with minimal movement) and wasn't dragged
+            if (isTouchClick && !wasDragged) {
                 console.log('Touch click detected on header');
                 // Prevent event from bubbling up to document
                 e.stopPropagation();
@@ -236,10 +301,12 @@ function setupEventListeners() {
                 // Toggle chat
                 toggleChat();
             }
+            // Reset wasDragged flag on touch end
+            wasDragged = false;
         }
     });
     
-    // Submit message on form submit
+    // Handle chat form submission
     chatForm.addEventListener('submit', (e) => {
         e.preventDefault();
         sendMessage();
@@ -362,14 +429,17 @@ function drag(e) {
     // If drag distance is significant, it's not a click
     if (dragDistance > 5) {
         isTouchClick = false;
+        wasDragged = true; // Set dragged flag if we moved significantly
     }
     
     // Calculate new position
     const x = e.clientX - offsetX;
     const y = e.clientY - offsetY;
     
-    // Apply new position
-    updatePosition(x, y);
+    // Apply new position and ensure bounds
+    if (chatContainer) { // Ensure chatContainer exists
+        ensureInBoundsAndSetPosition(x, y, chatContainer.offsetWidth, chatContainer.offsetHeight);
+    }
     
     // Prevent default behavior
     e.preventDefault();
@@ -391,14 +461,17 @@ function dragTouch(e) {
     // If drag distance is significant, it's not a click
     if (dragDistance > 5) {
         isTouchClick = false;
+        wasDragged = true; // Set dragged flag if we moved significantly
     }
     
     // Calculate new position
     const x = e.touches[0].clientX - offsetX;
     const y = e.touches[0].clientY - offsetY;
     
-    // Apply new position
-    updatePosition(x, y);
+    // Apply new position and ensure bounds
+    if (chatContainer) { // Ensure chatContainer exists
+        ensureInBoundsAndSetPosition(x, y, chatContainer.offsetWidth, chatContainer.offsetHeight);
+    }
     
     // Prevent default behavior
     e.preventDefault();
@@ -406,28 +479,43 @@ function dragTouch(e) {
 }
 
 /**
- * Update the container position
- * @param {number} x - The x position
- * @param {number} y - The y position
+ * Update the container position and ensure it is within viewport boundaries
+ * @param {number} x - The target x position
+ * @param {number} y - The target y position
+ * @param {number} containerWidth - The current width of the container
+ * @param {number} containerHeight - The current height of the container
  */
-function updatePosition(x, y) {
+function ensureInBoundsAndSetPosition(x, y, containerWidth, containerHeight) {
+    if (!chatContainer) return; // Added a guard
+    // console.log('[Desktop Debug] ensureInBoundsAndSetPosition - Input x:', x, 'y:', y, 'w:', containerWidth, 'h:', containerHeight);
+
     // Get viewport dimensions
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     
-    // Get container dimensions
-    const containerWidth = chatContainer.offsetWidth;
-    const containerHeight = chatContainer.offsetHeight;
+    // Use passed-in container dimensions
+    // const containerWidth = chatContainer.offsetWidth; // Now passed as parameter
+    // const containerHeight = chatContainer.offsetHeight; // Now passed as parameter
     
+    // console.log('[Desktop Debug] ensureInBoundsAndSetPosition - Viewport W/H:', viewportWidth, viewportHeight, 'Passed Container W/H:', containerWidth, containerHeight);
+
     // Constrain position to viewport
-    const constrainedX = Math.max(0, Math.min(x, viewportWidth - containerWidth));
-    const constrainedY = Math.max(0, Math.min(y, viewportHeight - containerHeight));
+    let constrainedX = Math.max(0, Math.min(x, viewportWidth - containerWidth));
+    let constrainedY = Math.max(0, Math.min(y, viewportHeight - containerHeight));
+
+    // If the container is larger than the viewport (e.g. zoomed in), allow it to be at 0,0
+    if (containerWidth > viewportWidth) {
+        constrainedX = 0;
+    }
+    if (containerHeight > viewportHeight) {
+        constrainedY = 0;
+    }
     
     // Apply position
     chatContainer.style.left = `${constrainedX}px`;
     chatContainer.style.top = `${constrainedY}px`;
     
-    // Remove bottom/right positioning
+    // Remove bottom/right positioning as we are explicitly setting left/top
     chatContainer.style.bottom = 'auto';
     chatContainer.style.right = 'auto';
 }
@@ -438,24 +526,25 @@ function updatePosition(x, y) {
 function stopDrag() {
     if (!isDragging) return;
     
-    // If drag distance is small, treat it as a click
-    if (dragDistance < 5) {
-        console.log('Treating as click, not drag');
-        // We'll let the click handler handle this
-    }
-    
     // Reset dragging state
     isDragging = false;
     
     // Remove active class
     chatContainer.classList.remove('dragging');
     
+    // Save position after drag
+    saveChatPosition();
+
     // Restore page scrolling
     document.body.style.overflow = '';
     
-    // Small delay before allowing clicks to prevent accidental clicks after drag
+    // Reset drag distance after a small delay
     setTimeout(() => {
         dragDistance = 0;
+        // Keep wasDragged flag for a short time to prevent click events
+        setTimeout(() => {
+            wasDragged = false;
+        }, 300);
     }, 100);
 }
 
@@ -466,29 +555,25 @@ function stopDrag() {
 function stopDragTouch(e) {
     if (!isDragging) return;
     
-    // Calculate touch duration
-    const touchDuration = Date.now() - touchStartTime;
-    
-    // If drag distance is small and touch duration is short, treat it as a tap
-    if (dragDistance < 5 && touchDuration < 300) {
-        console.log('Treating as tap, not drag');
-        isTouchClick = true;
-    } else {
-        isTouchClick = false;
-    }
-    
     // Reset dragging state
     isDragging = false;
     
     // Remove active class
     chatContainer.classList.remove('dragging');
     
+    // Save position after drag
+    saveChatPosition();
+
     // Restore page scrolling
     document.body.style.overflow = '';
     
-    // Small delay before allowing clicks to prevent accidental clicks after drag
+    // Reset drag distance after a small delay
     setTimeout(() => {
         dragDistance = 0;
+        // Keep wasDragged flag for a short time to prevent click events
+        setTimeout(() => {
+            wasDragged = false;
+        }, 300);
     }, 100);
 }
 
@@ -801,16 +886,35 @@ function expandChat() {
     chatState.unreadCount = 0;
     
     // Clear unread indicator
-    chatToggle.removeAttribute('data-count');
-    chatToggle.classList.remove('has-unread');
+    chatContainer.classList.remove('has-unread');
+    const unreadBadge = document.querySelector('.chat-unread-badge');
+    if (unreadBadge) {
+        unreadBadge.textContent = '';
+    }
+
+    // console.log('[Desktop Debug] expandChat: Before transitionend listener - offsetWidth:', chatContainer.offsetWidth, 'offsetHeight:', chatContainer.offsetHeight);
+
+    const handleTransitionEnd = () => {
+        // Ensure this handler only runs once and is removed
+        chatContainer.removeEventListener('transitionend', handleTransitionEnd);
+
+        if (chatContainer) {
+            const rect = chatContainer.getBoundingClientRect();
+            // console.log('[Desktop Debug] expandChat: Inside transitionend - rect.left:', rect.left, 'rect.top:', rect.top, 'rect.width:', rect.width, 'rect.height:', rect.height);
+            
+            ensureInBoundsAndSetPosition(rect.left, rect.top, rect.width, rect.height);
+            scrollToBottom();
+        }
+    };
+
+    chatContainer.addEventListener('transitionend', handleTransitionEnd, { once: true });
     
-    // Focus the input field
+    // Focus the input field - this can still be on a timer
     setTimeout(() => {
-        chatInput.focus();
+        if (chatInput) { // Added null check
+            chatInput.focus();
+        }
     }, 300);
-    
-    // Scroll to the bottom of the chat
-    scrollToBottom();
 }
 
 /**
@@ -829,6 +933,11 @@ function sendMessage() {
     const message = chatInput.value.trim();
     
     if (!message) return;
+    
+    // Close command popup if it's open
+    if (commandPopupManager && commandPopupManager.isPopupVisible()) {
+        commandPopupManager.hideCommandPopup();
+    }
     
     // Check if this is a command (starts with /)
     if (commandHandler && message.startsWith('/')) {
@@ -1065,12 +1174,18 @@ function updateLatestMessage(message) {
  * Update the unread message indicator
  */
 function updateUnreadIndicator() {
+    const unreadBadge = document.querySelector('.chat-unread-badge');
+    
     if (chatState.unreadCount > 0) {
-        chatToggle.setAttribute('data-count', chatState.unreadCount);
-        chatToggle.classList.add('has-unread');
+        if (unreadBadge) {
+            unreadBadge.textContent = chatState.unreadCount;
+        }
+        chatContainer.classList.add('has-unread');
     } else {
-        chatToggle.removeAttribute('data-count');
-        chatToggle.classList.remove('has-unread');
+        if (unreadBadge) {
+            unreadBadge.textContent = '';
+        }
+        chatContainer.classList.remove('has-unread');
     }
 }
 
@@ -1101,6 +1216,6 @@ export {
     leaveChat,
     toggleChat,
     displayLocalSystemMessage,
-    displayClickableCommandMessage
-    
+    displayClickableCommandMessage,
+    expandChat
 };

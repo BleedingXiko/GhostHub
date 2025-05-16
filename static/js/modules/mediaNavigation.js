@@ -19,8 +19,8 @@ import {
     performCacheCleanup
 } from '../utils/cacheManager.js';
 
-import { loadMoreMedia, preloadNextMedia, updateSwipeIndicators } from './mediaLoader.js';
-import { setupControls } from './uiController.js';
+import { loadMoreMedia, preloadNextMedia } from './mediaLoader.js';
+import { setupControls, updateSwipeIndicators } from './uiController.js';
 
 // Need access to the socket instance for state updates
 // Socket instance (initialized via initMediaNavigation)
@@ -125,9 +125,17 @@ function navigateMedia(direction, event) {
         return;
     }
     
+    // Check if command popup is open
+    if (window.appModules && window.appModules.commandPopup && 
+        typeof window.appModules.commandPopup.isPopupVisible === 'function' && 
+        window.appModules.commandPopup.isPopupVisible()) {
+        console.log('Navigation ignored: command popup is open');
+        return;
+    }
+    
     // Check if navigation is disabled (for guests in sync mode)
     if (app.state.navigationDisabled && (direction === 'next' || direction === 'prev')) {
-        console.log('Navigation ignored: user is a guest in sync mode');
+        console.log('Navigation ignored: navigation is currently disabled');
         return;
     }
     

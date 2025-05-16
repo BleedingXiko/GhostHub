@@ -1,48 +1,5 @@
 /* Media Styles */
 
-/* Fullscreen Button Styles */
-.fullscreen-btn {
-    position: absolute;
-    bottom: 120px; /* Moved up further to avoid floating chat container */
-    left: 20px; /* Moved to left side to avoid conflict with chat */
-    width: 50px;
-    height: 50px;
-    background: rgba(0, 0, 0, 0.7);
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-radius: 50%;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 80; /* Lower than chat container (9999) */
-    opacity: 0.8;
-    transition: opacity 0.3s ease, background-color 0.3s ease, transform 0.2s ease;
-    pointer-events: auto;
-    /* Make tap target larger for mobile */
-    touch-action: manipulation;
-}
-
-/* Always show fullscreen button on iOS */
-.fullscreen-btn {
-    opacity: 0.8;
-}
-
-/* Show on hover for non-iOS devices */
-#tiktok-container:hover .fullscreen-btn {
-    opacity: 1;
-    transform: scale(1.1);
-}
-
-.fullscreen-btn:hover {
-    background: rgba(0, 0, 0, 0.8);
-}
-
-.fullscreen-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
 /* Styles for fullscreen mode */
 video::-webkit-media-controls-fullscreen-button {
     display: none;

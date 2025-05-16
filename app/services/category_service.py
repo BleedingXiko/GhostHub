@@ -9,8 +9,10 @@ import uuid
 import logging
 import traceback
 from flask import current_app
+from app.config import Config # Added to check SAVE_CURRENT_INDEX
 from app.utils.file_utils import load_categories, save_categories
 from app.utils.media_utils import find_thumbnail
+from app.services import progress_service # Added for saved index
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +37,19 @@ class CategoryService:
                     category['id'],
                     category['name']
                 )
-                categories_with_details.append({
+                category_detail = {
                     **category,
                     'mediaCount': media_count,
                     'thumbnailUrl': thumbnail_url,
                     'containsVideo': contains_video # Add the containsVideo flag
-                })
+                }
+
+                if current_app.config.get('SAVE_CURRENT_INDEX', False):
+                    saved_index = progress_service.get_saved_index(category['id'])
+                    if saved_index is not None:
+                        category_detail['saved_index'] = saved_index
+                
+                categories_with_details.append(category_detail)
             except Exception as e:
                 logger.error(f"Error processing category '{category.get('name', 'N/A')}' (ID: {category.get('id', 'N/A')}): {str(e)}")
                 logger.debug(traceback.format_exc())

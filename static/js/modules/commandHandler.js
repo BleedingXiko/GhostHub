@@ -30,8 +30,22 @@ export function initCommandHandler(socketInstance, displayLocalMessageFn) {
   }
   socket = socketInstance;
   displayLocalMessage = displayLocalMessageFn;
-  console.log('Command handler initialized with modular command system');
-  return { processCommand };
+  
+  // The processCommand function is defined in this module's scope
+  // and uses the module-scoped socket and displayLocalMessage.
+  const handlerInstance = {
+    commands,
+    processCommand // Expose the processCommand function itself
+  };
+
+  // Expose commands and processCommand through window object
+  if (!window.appModules) {
+    window.appModules = {};
+  }
+  window.appModules.commandHandler = handlerInstance;
+  
+  console.log('Command handler initialized with modular command system and processCommand exposed.');
+  return handlerInstance; // Return the instance for direct use (e.g., by chatManager)
 }
 
 /**
@@ -42,15 +56,31 @@ export function initCommandHandler(socketInstance, displayLocalMessageFn) {
 export function processCommand(message) {
   if (!message.startsWith('/')) return false;
 
-  const match = message.match(/^\/(\w+)(?:\s+(.*))?$/);
-  if (!match) {
-    displayLocalMessage('Invalid command format');
+  // Trim the message to avoid issues with extra spaces
+  message = message.trim();
+  
+  // Fix potential double-slash issue 
+  if (message.startsWith('//')) {
+    message = message.replace('//', '/');
+  }
+  
+  // Simple first pass - just get the command name
+  const commandName = message.split(' ')[0].substring(1).toLowerCase();
+  
+  // Check if it's a valid command first
+  if (!commandName || !commands[commandName]) {
+    displayLocalMessage(`Unknown command: /${commandName}`);
     return true;
   }
-
-  const cmd = match[1].toLowerCase();
-  const arg = match[2] || '';
-
+  
+  // Now parse the full command with arguments
+  // Get everything after the command name as the argument
+  let arg = '';
+  if (message.length > commandName.length + 1) {
+    // +2 accounts for the slash and the space
+    arg = message.substring(commandName.length + 2).trim();
+  }
+  
   // Rate-limit
   const now = Date.now();
   RATE_LIMIT.commands = RATE_LIMIT.commands.filter(t => now - t < RATE_LIMIT.timeWindow);
@@ -60,11 +90,13 @@ export function processCommand(message) {
   }
   RATE_LIMIT.commands.push(now);
 
-  // Dispatch to modular command system
-  if (commands[cmd]) {
-    commands[cmd].execute(socket, displayLocalMessage, arg);
-  } else {
-    displayLocalMessage(`Unknown command: /${cmd}`);
+  // Execute the command
+  try {
+    commands[commandName].execute(socket, displayLocalMessage, arg);
+  } catch (error) {
+    console.error(`Error executing command /${commandName}:`, error);
+    displayLocalMessage(`Error executing command /${commandName}: ${error.message}`);
   }
+  
   return true;
 }

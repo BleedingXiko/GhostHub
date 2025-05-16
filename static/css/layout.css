@@ -247,11 +247,11 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.6); /* Darker overlay */
+    background-color: var(--overlay-color); /* Darker overlay */
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 1000; /* Ensure it's on top */
+    z-index: 970; /* Lowered below command popup (980) and chat (990) */
     opacity: 0;
     visibility: hidden;
     transition: opacity var(--transition-medium) ease, visibility 0s var(--transition-medium) linear;

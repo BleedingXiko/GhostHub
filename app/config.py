@@ -52,6 +52,7 @@ class Config:
     WS_RECONNECT_FACTOR = 1.5
     MEMORY_CLEANUP_INTERVAL = 60000  # ms
     MAX_CACHE_SIZE = 50
+    SAVE_CURRENT_INDEX = False # Added for saving current index
 
     # Tunneling settings
     TUNNEL_PROVIDER = "none"  # "none", "pinggy", "cloudflare"
@@ -167,7 +168,8 @@ _configurable_keys_info = {
     'TUNNEL_PROVIDER': str,
     'PINGGY_ACCESS_TOKEN': str,
     'TUNNEL_LOCAL_PORT': int,
-    'SESSION_PASSWORD': str
+    'SESSION_PASSWORD': str,
+    'SAVE_CURRENT_INDEX': lambda v: str(v).lower() == 'true'
 }
 
 for key, type_converter in _configurable_keys_info.items():

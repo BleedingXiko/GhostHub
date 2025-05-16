@@ -9,7 +9,7 @@ import {
     spinnerContainer, 
     categoryView, 
     mediaView,
-    MEDIA_PER_PAGE,
+    getMediaPerPage,
     MOBILE_DEVICE,
     MAX_CACHE_SIZE
 } from '../core/app.js';
@@ -23,7 +23,7 @@ import {
 
 import { renderMediaWindow } from './mediaNavigation.js';
 import { setupMediaNavigation } from './eventHandlers.js';
-import { setupControls } from './uiController.js';
+import { setupControls, createOrUpdateIndexingUI, updateSwipeIndicators } from './uiController.js';
 
 /**
  * Load and display a media category
@@ -38,31 +38,9 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     // Capture old map in case you want to preserve extra metadata
     const oldMap = new Map((app.state.fullMediaList || []).map(item => [item.url, item]));
   
-    // If same cat+idx and no forced_order → nothing to do
-    if (!forced_order &&
-        app.state.currentCategoryId === categoryId &&
-        app.state.currentMediaIndex === startIndex) {
-      console.log('No-op: already at that category/index');
-      return;
-    }
-    // If same category but diff index → just render that index
-    if (!forced_order &&
-        app.state.currentCategoryId === categoryId &&
-        app.state.currentMediaIndex !== startIndex) {
-      console.log(`Jumping to index ${startIndex} on same category`);
-      renderMediaWindow(startIndex);
-      return;
-    }
+    // Removed early return checks to ensure proper handling of saved indices
   
-    // If host in sync mode, broadcast cat change
-    if (app.state.syncModeEnabled && app.state.isHost) {
-      window.appModules.syncManager.sendSyncUpdate({
-        category_id: categoryId,
-        file_url:    null,
-        index:       0
-      }).then(ok => { if (!ok) console.warn('Sync update failed'); });
-    }
-  
+
     // Reset state
     app.state.currentCategoryId  = categoryId;
     app.state.currentPage        = 1;
@@ -71,7 +49,8 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     app.state.fullMediaList      = [];
     app.state.preloadQueue       = [];
     app.state.isPreloading       = false;
-    app.state.currentMediaIndex  = startIndex;
+    // Initialize currentMediaIndex with startIndex, it might be overridden by last_known_index
+    app.state.currentMediaIndex  = startIndex; 
   
     // Clear cache + abort
     app.mediaCache.clear();
@@ -87,8 +66,8 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     // Show spinner
     if (spinnerContainer) spinnerContainer.style.display = 'flex';
   
-    // Decide page size
-    const pageSize = window.innerWidth <= 768 ? 5 : MEDIA_PER_PAGE;
+    // Decide page size - Always use getMediaPerPage() from core/app.js
+    const pageSize = getMediaPerPage();
     const signal   = app.state.currentFetchController.signal;
   
     try {
@@ -142,8 +121,67 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
         app.state.hasMoreMedia = false; // This line might be reviewed depending on desired behavior after viewing a shared link.
       } else {
         // Normal first-page load
-        await loadMoreMedia(pageSize, signal, false);
+        const initialData = await loadMoreMedia(pageSize, signal, false);
+        let savedIndexToApply = null;
+        
+        // Handle saved index if enabled and available
+        if (initialData && window.appConfig?.python_config?.SAVE_CURRENT_INDEX && 
+            typeof initialData.last_known_index === 'number') {
+            
+            if (startIndex === 0) { 
+                savedIndexToApply = initialData.last_known_index;
+                console.log(`Found saved progress index: ${savedIndexToApply}`);
+            } else {
+                console.log(`Skipping saved progress due to explicit startIndex: ${startIndex}`);
+            }
+        }
+        
+        // Load pages until we reach the saved index or run out of attempts
+        if (savedIndexToApply !== null) {
+            const itemsPerPage = pageSize;
+            const pageNeeded = Math.floor(savedIndexToApply / itemsPerPage) + 1;
+            console.log(`Loading data for saved index ${savedIndexToApply} (page ${pageNeeded})`);
+            
+            let attemptCount = 0;
+            const maxAttempts = 20;
+            
+            while (attemptCount++ < maxAttempts) {
+                if (savedIndexToApply < app.state.fullMediaList.length) {
+                    console.log(`Loaded data for saved index (${app.state.fullMediaList.length} items)`);
+                    break;
+                }
+                
+                if (!app.state.hasMoreMedia) {
+                    console.warn(`No more media to load after ${attemptCount} attempts`);
+                    break;
+                }
+                
+                console.log(`Loading more data (attempt ${attemptCount})...`);
+                const pageResult = await loadMoreMedia(pageSize, signal, false);
+                
+                if (!pageResult?.files?.length) {
+                    console.warn(`Failed to load data on attempt ${attemptCount}`);
+                    if (app.state.hasMoreMedia) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } else {
+                        break;
+                    }
+                }
+            }
+            
+            // Apply the saved index if we have enough data, otherwise fall back to 0
+            app.state.currentMediaIndex = savedIndexToApply < app.state.fullMediaList.length 
+                ? savedIndexToApply 
+                : 0;
+                
+            if (app.state.currentMediaIndex !== savedIndexToApply) {
+                console.warn(`Could not load saved index ${savedIndexToApply}, using index 0`);
+            }
+        }
       }
+
+      // Don't do no-op check here - we haven't rendered the elements yet
+      // Even if we've loaded the data for saved index, the elements aren't in the DOM yet
   
       // Hide category view, show tiktok view
       categoryView.classList.add('hidden');
@@ -152,6 +190,57 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
   
       setupMediaNavigation();
       renderMediaWindow(app.state.currentMediaIndex);
+      
+      // Add a more robust check to ensure the media element for the saved index is actually rendered
+      // This is crucial for saved indices on different pages
+      setTimeout(() => {
+        const targetIndex = app.state.currentMediaIndex;
+        const mediaElement = tiktokContainer.querySelector(`.tiktok-media[data-index="${targetIndex}"]`);
+
+        // --- SYNC: After confirming the correct index is loaded and rendered, broadcast to guests ---
+        if (app.state.syncModeEnabled && app.state.isHost) {
+          window.appModules.syncManager.sendSyncUpdate({
+            category_id: app.state.currentCategoryId,
+            file_url:    null,
+            index:       targetIndex
+          }).then(ok => { if (!ok) console.warn('Sync update failed'); });
+        }
+        
+        if (!mediaElement) {
+          console.warn(`Media element for index ${targetIndex} not found in DOM after initial render. Forcing re-render...`);
+          
+          // Check if we need to load more data first
+          if (targetIndex >= app.state.fullMediaList.length && app.state.hasMoreMedia) {
+            console.warn(`Target index ${targetIndex} is beyond current data (${app.state.fullMediaList.length} items). Loading more data...`);
+            
+            // Load more data and then try rendering again
+            loadMoreMedia(pageSize, signal, false).then(() => {
+              // Double-check if we now have enough data
+              if (targetIndex < app.state.fullMediaList.length) {
+                console.log(`Successfully loaded data for index ${targetIndex}. Re-rendering...`);
+                renderMediaWindow(targetIndex);
+              } else {
+                console.error(`Failed to load data for index ${targetIndex} after additional attempt. Falling back to index 0.`);
+                // Only fall back to index 0 if we really can't load the target index
+                renderMediaWindow(0);
+              }
+            });
+          } else {
+            // We should have the data, so just force a re-render
+            console.log(`Data for index ${targetIndex} should be available. Forcing re-render...`);
+            renderMediaWindow(targetIndex);
+          }
+        } else {
+          console.log(`Media element for index ${targetIndex} successfully rendered.`);
+          
+          // Verify the element is properly active
+          if (!mediaElement.classList.contains('active')) {
+            console.warn(`Media element for index ${targetIndex} found but not active. Fixing...`);
+            tiktokContainer.querySelectorAll('.tiktok-media.active').forEach(el => el.classList.remove('active'));
+            mediaElement.classList.add('active');
+          }
+        }
+      }, 200); // Slightly longer delay to ensure DOM is fully updated
   
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -185,16 +274,16 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
     // Check if the signal has been aborted
     if (effectiveSignal && effectiveSignal.aborted) {
         console.log("loadMoreMedia skipped: signal was aborted.");
-        return;
+        return null;
     }
     
     if (!app.state.hasMoreMedia || app.state.isLoading) {
         console.log(`Load more skipped: hasMoreMedia=${app.state.hasMoreMedia}, isLoading=${app.state.isLoading}`);
-        return; // Don't load if no more items or already loading
+        return null; // Don't load if no more items or already loading
     }
 
     app.state.isLoading = true;
-    const limit = customLimit || MEDIA_PER_PAGE;
+    const limit = customLimit || getMediaPerPage();
     console.log(`Loading page ${pageToLoad} with limit ${limit}...`); // Use pageToLoad
     
     // Show loading indicator
@@ -220,7 +309,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             if (effectiveSignal && effectiveSignal.aborted) {
                 console.log("Fetch aborted during loadMoreMedia response check.");
                 app.state.isLoading = false; // Reset loading flag
-                return;
+                return null;
             }
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -333,6 +422,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             console.log("No more media files received from server.");
             app.state.hasMoreMedia = false; // No more files returned
         }
+        return data; // Return the fetched data
     } catch (error) {
         if (error.name === 'AbortError') {
             console.log('Fetch aborted (loadMoreMedia).');
@@ -342,6 +432,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             alert('Failed to load more media. Please try again later.');
             // Optionally set hasMoreMedia = false or implement retry logic
         }
+        return null; // Return null on error
     } finally {
         app.state.isLoading = false;
         console.log("Loading finished.");
@@ -723,60 +814,6 @@ function optimizeVideoElement(videoElement) {
 }
 
 /**
- * Create or update the indexing progress UI
- * @param {number} progress - The indexing progress (0-100)
- */
-function createOrUpdateIndexingUI(progress) {
-    // Create progress indicator if it doesn't exist
-    if (!app.state.indexingProgressElement) {
-        const progressElement = document.createElement('div');
-        progressElement.className = 'indexing-progress';
-        progressElement.style.position = 'fixed';
-        progressElement.style.top = '10px';
-        progressElement.style.left = '50%';
-        progressElement.style.transform = 'translateX(-50%)';
-        progressElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        progressElement.style.color = 'white';
-        progressElement.style.padding = '10px 20px';
-        progressElement.style.borderRadius = '5px';
-        progressElement.style.zIndex = '1000';
-        document.body.appendChild(progressElement);
-        app.state.indexingProgressElement = progressElement;
-    }
-    
-    // Update progress text
-    app.state.indexingProgressElement.textContent = `Indexing media files: ${progress}%`;
-}
-
-/**
- * Update navigation indicators
- * @param {number} currentIndex - Current position
- * @param {number} totalItems - Total available items
- */
-function updateSwipeIndicators(currentIndex, totalItems) {
-    // Create indicators if they don't exist
-    if (!tiktokContainer.querySelector('.swipe-indicator.up')) {
-        const upIndicator = document.createElement('div');
-        upIndicator.className = 'swipe-indicator up';
-        upIndicator.innerHTML = '⬆️';
-        tiktokContainer.appendChild(upIndicator);
-        
-        const downIndicator = document.createElement('div');
-        downIndicator.className = 'swipe-indicator down';
-        downIndicator.innerHTML = '⬇️';
-        tiktokContainer.appendChild(downIndicator);
-    }
-    
-    const upIndicator = tiktokContainer.querySelector('.swipe-indicator.up');
-    const downIndicator = tiktokContainer.querySelector('.swipe-indicator.down');
-    
-    // Show up arrow if not the first item
-    upIndicator.classList.toggle('visible', currentIndex > 0);
-    // Show down arrow if not the last item or if more media might be loading
-    downIndicator.classList.toggle('visible', currentIndex < totalItems - 1 || app.state.hasMoreMedia);
-}
-
-/**
  * Handle the case when no media files are found
  * @param {string} categoryId - The category ID
  * @param {number} pageSize - The page size for loading more media
@@ -861,7 +898,5 @@ export {
     loadMoreMedia,
     clearResources,
     preloadNextMedia,
-    updateSwipeIndicators,
-    optimizeVideoElement,
-    createOrUpdateIndexingUI
+    optimizeVideoElement
 };

@@ -9,7 +9,7 @@
     border: 1px solid var(--primary-color-light);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
-    z-index: 9999; /* Ensure it's above fullscreen content */
+    z-index: 990;
     transition: height var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
     overflow: hidden;
     backdrop-filter: blur(5px);
@@ -35,13 +35,13 @@
 :-moz-full-screen .chat-container,
 :-ms-fullscreen .chat-container {
     position: absolute;
-    z-index: 9999;
+    z-index: 990;
 }
 
 /* When document has fullscreen class */
 html.is-fullscreen .chat-container {
     position: fixed;
-    z-index: 9999;
+    z-index: 990;
 }
 
 .chat-container.collapsed {
@@ -71,22 +71,9 @@ html.is-fullscreen .chat-container {
     background-color: var(--primary-color-light);
 }
 
+/* Remove the chat-header arrow since we're using the toggle button now */
 .chat-header::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    right: var(--space-xl);
-    transform: translateY(-50%);
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid var(--text-secondary);
-    transition: transform var(--transition-fast) ease;
-}
-
-.chat-container.expanded .chat-header::after {
-    transform: translateY(-50%) rotate(180deg);
+    display: none;
 }
 
 .latest-message {
@@ -96,6 +83,13 @@ html.is-fullscreen .chat-container {
     text-overflow: ellipsis;
     color: var(--text-primary);
     font-size: 0.9rem;
+}
+
+/* Chat toggle and notification */
+.chat-controls {
+    display: flex;
+    align-items: center;
+    position: relative;
 }
 
 .chat-toggle {
@@ -116,26 +110,53 @@ html.is-fullscreen .chat-container {
     background-color: var(--accent-color);
 }
 
-.chat-toggle.has-unread::after {
-    content: attr(data-count);
+/* Add up/down arrow to chat toggle */
+.chat-toggle::before {
+    content: '';
+    display: block;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 8px solid var(--text-primary);
+    transition: transform var(--transition-fast) ease;
+}
+
+.chat-container.expanded .chat-toggle::before {
+    transform: rotate(180deg);
+}
+
+/* Separate unread badge */
+.chat-unread-badge {
     position: absolute;
-    top: -6px; /* Adjusted for better visibility */
-    right: -6px; /* Adjusted for better visibility */
-    min-width: 18px; /* Ensure minimum width */
-    height: 18px;
-    padding: 0 4px; /* Add some horizontal padding for multi-digit numbers */
-    background-color: #FF3B30; /* Bright red, non-variable */
-    color: white; /* White text, non-variable */
-    border-radius: 9px; /* Make it pill-shaped / circular */
-    font-size: 11px; /* Slightly larger font */
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    background-color: var(--error-color);
+    color: white;
+    border-radius: 8px;
+    font-size: 10px;
     font-weight: bold;
-    display: flex;
+    display: none; /* Hidden by default */
     align-items: center;
     justify-content: center;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3); /* Slightly more pronounced shadow */
-    z-index: 10; /* Ensure it's above other button content */
-    line-height: 1; /* Ensure text is centered vertically */
-    box-sizing: border-box; /* Ensure padding doesn't increase overall size beyond intent */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    z-index: 9999; /* Ensure it's on top of everything */
+    line-height: 1;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
+/* Show badge when has-unread is present */
+.chat-container.has-unread .chat-unread-badge {
+    display: flex;
+}
+
+/* Remove the old pseudo-element badge */
+.chat-toggle.has-unread::after {
+    display: none;
 }
 
 .chat-body {
@@ -171,31 +192,35 @@ html.is-fullscreen .chat-container {
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-md);
     background-color: var(--primary-color);
-    max-width: 80%;
     word-break: break-word;
     box-shadow: var(--shadow-sm);
     animation: message-fade-in var(--transition-normal) ease;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
 }
 
 .chat-user {
     font-weight: 700;
     color: var(--text-secondary);
     font-size: 0.8rem;
-    display: block;
     margin-bottom: 3px;
+    width: 100%;
 }
 
 .chat-text {
     color: var(--text-primary);
     font-size: 0.95rem;
+    flex-grow: 1;
+    margin-right: var(--space-sm);
 }
 
 .chat-time {
-    float: right;
     color: var(--text-tertiary);
     font-size: 0.7rem;
-    margin-top: var(--space-xs);
     margin-left: var(--space-md);
+    white-space: nowrap;
 }
 
 .chat-notification {
@@ -241,11 +266,122 @@ html.is-fullscreen .chat-container {
     transform: translateY(1px);
 }
 
+/* Command Popup Styles */
+.command-popup {
+    position: fixed;
+    background-color: rgba(var(--surface-color-rgb), 0.95);
+    border: 1px solid var(--primary-color-light);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    width: 90%;
+    max-width: 300px;
+    z-index: 980;
+    box-shadow: var(--shadow-lg);
+    font-size: 0.9rem;
+    transition: opacity var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1), 
+                transform var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    user-select: none;
+    transform: translateY(10px);
+    bottom: 60px;
+    left: 10px;
+    will-change: transform, opacity;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.command-popup.dragging {
+    opacity: 0.9;
+    box-shadow: var(--shadow-xl);
+    transition: none; /* Disable transitions during drag for better performance */
+    cursor: move;
+}
+
+.command-popup-header {
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: var(--space-sm);
+    padding-bottom: var(--space-sm);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: move;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.command-popup-header span:last-child {
+    cursor: pointer;
+    padding: 0 var(--space-sm);
+    color: var(--text-tertiary);
+    font-size: 1rem;
+    transition: color var(--transition-fast) ease;
+}
+
+.command-popup-header span:last-child:hover {
+    color: var(--text-primary);
+}
+
+.command-popup-list {
+    max-height: 220px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: var(--space-sm);
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary-color-light) transparent;
+}
+
+.command-popup-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.command-popup-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.command-popup-list::-webkit-scrollbar-thumb {
+    background-color: var(--primary-color-light);
+    border-radius: var(--radius-lg);
+}
+
+.command-popup-list .no-results {
+    padding: var(--space-sm);
+    color: var(--text-tertiary);
+    text-align: center;
+    font-style: italic;
+}
+
+.command-popup-list > div {
+    padding: var(--space-sm);
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    margin: 2px 0;
+    display: flex;
+    flex-direction: column;
+    transition: background-color var(--transition-fast) ease;
+}
+
+.command-popup-list > div:hover {
+    background-color: var(--primary-color);
+}
+
+.command-popup-list > div > div:first-child {
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+}
+
+.command-popup-list > div > div:last-child {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
 .chat-form {
     display: flex;
     padding: var(--space-md);
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     background-color: var(--primary-color-dark);
+    align-items: center;
 }
 
 .chat-input {
@@ -267,22 +403,31 @@ html.is-fullscreen .chat-container {
 }
 
 .chat-send {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     border-radius: var(--radius-circle);
-    background-color: var(--accent-color);
+    background-color: var(--secondary-color);
     border: none;
     margin-left: var(--space-md);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all var(--transition-fast) ease;
-    box-shadow: var(--shadow-sm);
+    transition: background-color var(--transition-fast) ease;
+    position: relative;
+}
+
+/* Add right arrow to send button */
+.chat-send::before {
+    content: '';
+    display: block;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    border-left: 8px solid var(--text-primary);
 }
 
 .chat-send:hover {
-    background-color: var(--accent-color-light);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+    background-color: var(--accent-color);
 }
