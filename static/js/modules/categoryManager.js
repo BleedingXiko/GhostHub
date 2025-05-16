@@ -52,7 +52,15 @@ async function loadCategories() {
             // Media Count Badge
             const badge = document.createElement('span');
             badge.className = 'media-count-badge';
-            badge.textContent = category.mediaCount;
+
+            if (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.SAVE_CURRENT_INDEX && typeof category.saved_index === 'number' && category.mediaCount > 0) {
+                // Adding 1 to saved_index because it's 0-based, but display should be 1-based
+                badge.textContent = `${category.saved_index + 1}/${category.mediaCount}`;
+                badge.title = `Last viewed: item ${category.saved_index + 1} of ${category.mediaCount}`;
+            } else {
+                badge.textContent = category.mediaCount;
+                badge.title = `Total items: ${category.mediaCount}`;
+            }
 
             // Media Type Icon (Updated Logic)
             const typeIcon = document.createElement('span');

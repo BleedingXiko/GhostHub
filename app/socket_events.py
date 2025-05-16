@@ -12,6 +12,7 @@ import gevent
 from flask import request, current_app
 from flask_socketio import emit, join_room, leave_room, disconnect
 from .services.sync_service import SyncService
+from .services import progress_service # Added for saving current index
 from .constants import (
     SYNC_ROOM, 
     CHAT_ROOM,
@@ -337,9 +338,14 @@ def register_socket_events(socketio):
             
             # Update the state in the service, now including media_order
             success = SyncService.update_session_state(session_id, category_id, index, media_order)
+
+            if current_app.config.get('SAVE_CURRENT_INDEX', False):
+                ps_success, ps_message = progress_service.save_progress(category_id, index)
+                if not ps_success:
+                    logger.warning(f"Failed to save current index for category {category_id}: {ps_message}")
             
             if not success:
-                logger.error(f"Failed to update state for session {session_id}")
+                logger.error(f"Failed to update session state for session {session_id}")
                 # Send error back to client if needed
                 emit(SE['CHAT_ERROR'], {
                     'message': 'Failed to save your view state'

@@ -39,20 +39,22 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     const oldMap = new Map((app.state.fullMediaList || []).map(item => [item.url, item]));
   
     // If same cat+idx and no forced_order → nothing to do
-    if (!forced_order &&
-        app.state.currentCategoryId === categoryId &&
-        app.state.currentMediaIndex === startIndex) {
-      console.log('No-op: already at that category/index');
-      return;
-    }
+    // This check might be too early if last_known_index needs to be applied.
+    // Defer this check until after potential last_known_index application.
+    // if (!forced_order &&
+    //     app.state.currentCategoryId === categoryId &&
+    //     app.state.currentMediaIndex === startIndex) {
+    //   console.log('No-op: already at that category/index');
+    //   return;
+    // }
     // If same category but diff index → just render that index
-    if (!forced_order &&
-        app.state.currentCategoryId === categoryId &&
-        app.state.currentMediaIndex !== startIndex) {
-      console.log(`Jumping to index ${startIndex} on same category`);
-      renderMediaWindow(startIndex);
-      return;
-    }
+    // if (!forced_order &&
+    //     app.state.currentCategoryId === categoryId &&
+    //     app.state.currentMediaIndex !== startIndex) {
+    //   console.log(`Jumping to index ${startIndex} on same category`);
+    //   renderMediaWindow(startIndex);
+    //   return;
+    // }
   
     // If host in sync mode, broadcast cat change
     if (app.state.syncModeEnabled && app.state.isHost) {
@@ -71,7 +73,8 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
     app.state.fullMediaList      = [];
     app.state.preloadQueue       = [];
     app.state.isPreloading       = false;
-    app.state.currentMediaIndex  = startIndex;
+    // Initialize currentMediaIndex with startIndex, it might be overridden by last_known_index
+    app.state.currentMediaIndex  = startIndex; 
   
     // Clear cache + abort
     app.mediaCache.clear();
@@ -142,7 +145,37 @@ async function viewCategory(categoryId, forced_order = null, startIndex = 0) {
         app.state.hasMoreMedia = false; // This line might be reviewed depending on desired behavior after viewing a shared link.
       } else {
         // Normal first-page load
-        await loadMoreMedia(pageSize, signal, false);
+        const initialData = await loadMoreMedia(pageSize, signal, false);
+        if (initialData && 
+            window.appConfig && window.appConfig.python_config && window.appConfig.python_config.SAVE_CURRENT_INDEX && 
+            typeof initialData.last_known_index === 'number') {
+            
+            // Only apply if not a specific startIndex was requested (e.g. from /myview command)
+            if (startIndex === 0) { 
+                app.state.currentMediaIndex = initialData.last_known_index;
+                console.log(`Set currentMediaIndex from saved progress: ${app.state.currentMediaIndex}`);
+            } else {
+                console.log(`Skipping saved progress due to explicit startIndex: ${startIndex}`);
+            }
+        }
+      }
+
+      // Re-check for no-op after potential application of last_known_index
+      if (!forced_order &&
+          app.state.currentCategoryId === categoryId && // This will be true here
+          tiktokContainer.querySelector(`.tiktok-media.active[data-index="${app.state.currentMediaIndex}"]`)) {
+            // Check if the target media element is already active and in DOM
+            const currentActiveElement = tiktokContainer.querySelector('.tiktok-media.active');
+            if (currentActiveElement && parseInt(currentActiveElement.dataset.index) === app.state.currentMediaIndex) {
+                console.log(`No-op: Category ${categoryId} at index ${app.state.currentMediaIndex} is already displayed.`);
+                if (spinnerContainer) spinnerContainer.style.display = 'none'; // Ensure spinner is hidden
+                // Ensure views are correctly set
+                categoryView.classList.add('hidden');
+                mediaView.classList.add('hidden'); // mediaView is the old one, tiktokContainer is new
+                tiktokContainer.classList.remove('hidden');
+                updateSwipeIndicators(app.state.currentMediaIndex, app.state.fullMediaList.length);
+                return;
+            }
       }
   
       // Hide category view, show tiktok view
@@ -185,12 +218,12 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
     // Check if the signal has been aborted
     if (effectiveSignal && effectiveSignal.aborted) {
         console.log("loadMoreMedia skipped: signal was aborted.");
-        return;
+        return null;
     }
     
     if (!app.state.hasMoreMedia || app.state.isLoading) {
         console.log(`Load more skipped: hasMoreMedia=${app.state.hasMoreMedia}, isLoading=${app.state.isLoading}`);
-        return; // Don't load if no more items or already loading
+        return null; // Don't load if no more items or already loading
     }
 
     app.state.isLoading = true;
@@ -220,7 +253,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             if (effectiveSignal && effectiveSignal.aborted) {
                 console.log("Fetch aborted during loadMoreMedia response check.");
                 app.state.isLoading = false; // Reset loading flag
-                return;
+                return null;
             }
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -333,6 +366,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             console.log("No more media files received from server.");
             app.state.hasMoreMedia = false; // No more files returned
         }
+        return data; // Return the fetched data
     } catch (error) {
         if (error.name === 'AbortError') {
             console.log('Fetch aborted (loadMoreMedia).');
@@ -342,6 +376,7 @@ async function loadMoreMedia(customLimit = null, signal = null, forceRefresh = f
             alert('Failed to load more media. Please try again later.');
             // Optionally set hasMoreMedia = false or implement retry logic
         }
+        return null; // Return null on error
     } finally {
         app.state.isLoading = false;
         console.log("Loading finished.");

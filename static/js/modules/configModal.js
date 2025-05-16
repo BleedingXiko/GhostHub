@@ -123,6 +123,30 @@ function populateConfigModal() {
     
     const tunnelConfigKeys = ['TUNNEL_PROVIDER', 'PINGGY_ACCESS_TOKEN', 'TUNNEL_LOCAL_PORT'];
 
+    // Add Delete All Saved Progress button
+    const deleteProgressButton = document.createElement('button');
+    deleteProgressButton.textContent = 'Delete All Saved Media Progress';
+    deleteProgressButton.className = 'btn btn-danger btn-small config-delete-progress-btn'; // Added class for styling/selection
+    deleteProgressButton.style.marginTop = '10px';
+    deleteProgressButton.style.marginBottom = '15px';
+    deleteProgressButton.addEventListener('click', async () => {
+        if (confirm('Are you sure you want to delete all saved media progress? This cannot be undone.')) {
+            try {
+                const response = await fetch('/api/progress/delete_all', { method: 'POST' });
+                const result = await response.json();
+                if (response.ok) {
+                    alert(result.message || 'All saved progress deleted successfully.');
+                } else {
+                    alert(`Error: ${result.error || 'Failed to delete progress.'}`);
+                }
+            } catch (error) {
+                console.error('Error deleting progress:', error);
+                alert('An error occurred while trying to delete progress.');
+            }
+        }
+    });
+    pythonSettingsContainer.appendChild(deleteProgressButton);
+
     // Handle SESSION_PASSWORD first
     const passwordValue = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty('SESSION_PASSWORD'))
                           ? window.appConfig.python_config.SESSION_PASSWORD

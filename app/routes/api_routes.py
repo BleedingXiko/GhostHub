@@ -11,9 +11,10 @@ import os
 from flask import Blueprint, jsonify, request, current_app, session
 from app.services.category_service import CategoryService
 from app.services.media_service import MediaService
-from app.services.sync_service import SyncService  # Import SyncService
-from app.services import config_service  # Import the new config_service
-from app.utils import server_utils  # For tunnel management
+from app.services.sync_service import SyncService
+from app.services import config_service
+from app.services import progress_service # Added for saving/loading current index
+from app.utils import server_utils
 
 # Only import tkinter if not running in Docker
 if os.getenv("DOCKER_ENV") != "true":
@@ -206,6 +207,13 @@ def list_media(category_id):
                 # Remove from pagination object to maintain backward compatibility
                 del pagination['indexing_progress']
 
+        # Add last known index if feature is enabled
+        if current_app.config.get('SAVE_CURRENT_INDEX', False):
+            last_known_index = progress_service.get_saved_index(category_id)
+            if last_known_index is not None:
+                response_data['last_known_index'] = last_known_index
+                logger.info(f"Including last_known_index: {last_known_index} for category {category_id}")
+
         return jsonify(response_data)
     except Exception as e:
         logger.error(f"Error listing media for category {category_id}: {str(e)}")
@@ -371,6 +379,25 @@ def admin_status():
         
     logger.debug(f"Admin status check: session_id={current_session_id}, is_admin={is_admin}, global_admin_id={current_app.ADMIN_SESSION_ID}, role_claimed_by_anyone={role_claimed_by_anyone}")
     return jsonify(isAdmin=is_admin, roleClaimedByAnyone=role_claimed_by_anyone)
+
+# --- Progress Endpoints ---
+@api_bp.route('/progress/delete_all', methods=['POST'])
+def delete_all_saved_progress():
+    """Deletes all saved progress data."""
+    # Consider adding admin check if this should be a protected action
+    # if not session.get('is_admin', False):
+    #     logger.warning(f"Unauthorized attempt to delete all progress by session: {request.cookies.get('session_id')}")
+    #     return jsonify({'error': 'Administrator privileges required.'}), 403
+    try:
+        success, message = progress_service.delete_all_progress()
+        if success:
+            return jsonify({'message': message}), 200
+        else:
+            return jsonify({'error': message}), 500
+    except Exception as e:
+        logger.error(f"Unexpected error deleting all progress: {str(e)}")
+        logger.debug(traceback.format_exc())
+        return jsonify({'error': 'An unexpected error occurred while deleting progress data'}), 500
 
 # API error handlers
 @api_bp.app_errorhandler(404)
