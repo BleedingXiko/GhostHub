@@ -71,6 +71,18 @@ else
     git clone --branch $BRANCH $REPO_URL $APP_DIR
 fi
 
+# ==== DOWNLOAD CLOUDFLARED TUNNEL BINARY (ARM64) ====
+CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
+CF_BIN="$APP_DIR/cloudflared"
+if [ ! -f "$CF_BIN" ]; then
+    echo "[*] Downloading cloudflared tunnel binary (for public sharing)..."
+    curl -L "$CF_URL" -o "$CF_BIN"
+    chmod +x "$CF_BIN"
+    echo "[*] cloudflared downloaded to $CF_BIN (for public tunnel support)"
+else
+    echo "[*] cloudflared already present in $APP_DIR, skipping download."
+fi
+
 # ==== INSTALL PYTHON DEPENDENCIES ====
 echo "[*] Installing Python dependencies from requirements.txt..."
 cd $APP_DIR
