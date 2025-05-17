@@ -15,24 +15,34 @@ opencv_datas, opencv_binaries, opencv_hiddenimports = collect_all('cv2')
 # Define paths for resources
 static_dir = path.join(base_dir, 'static')
 templates_dir = path.join(base_dir, 'templates')
-instance_dir = path.join(base_dir, 'instance')
+# instance_dir = path.join(base_dir, 'instance') # Not used directly in datas
+
+# Prepare datas list
+datas_list = [
+    (static_dir, 'static'),
+    (templates_dir, 'templates'),
+    # REMOVED: Instance folder will be created next to the executable
+    # (instance_dir, 'instance') # This was the original logic for instance
+]
+
+# Add cloudflared if it exists
+cloudflared_path_unix = path.join(base_dir, 'cloudflared')
+if path.exists(cloudflared_path_unix):
+    datas_list.append((cloudflared_path_unix, '.'))
+
+cloudflared_path_windows = path.join(base_dir, 'cloudflared.exe')
+if path.exists(cloudflared_path_windows):
+    datas_list.append((cloudflared_path_windows, '.'))
+
+# Add opencv_datas
+datas_list.extend(opencv_datas)
 
 # Create the analysis object
 a = Analysis(
     ['ghosthub.py'],
     pathex=[base_dir],
     binaries=opencv_binaries, # Add opencv binaries here
-    datas=[
-        # Include static files
-        (static_dir, 'static'),
-        # Include templates
-        (templates_dir, 'templates'),
-        # REMOVED: Instance folder will be created next to the executable
-        # (instance_dir, 'instance') if path.exists(instance_dir) else ([], 'instance'),
-        # Include cloudflared(.exe) if it exists (cross-platform)
-        (path.join(base_dir, 'cloudflared'), '.') if path.exists(path.join(base_dir, 'cloudflared')) else ([],'.'),
-        (path.join(base_dir, 'cloudflared.exe'), '.') if path.exists(path.join(base_dir, 'cloudflared.exe')) else ([],'.'),
-    ] + opencv_datas, # Add opencv datas here
+    datas=datas_list, # Use the constructed list
     hiddenimports=[
         # OpenCV and dependencies
         'cv2',
