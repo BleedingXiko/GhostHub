@@ -2,8 +2,14 @@ FROM python:3.9-slim-buster
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Set DEBIAN_FRONTEND to noninteractive to prevent prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies, build tools, and Python development headers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    cython3 \
     curl \
     wget \
     openssh-client \
@@ -16,12 +22,12 @@ RUN apt-get update && apt-get install -y \
     libv4l-dev \
     libxvidcore-dev \
     libx264-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create required directories with proper permissions
 RUN mkdir -p /app/instance/thumbnails && \
     chmod 777 /app/instance/thumbnails
-
 
 # Install Python dependencies
 COPY requirements.txt .
