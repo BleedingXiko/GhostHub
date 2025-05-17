@@ -19,20 +19,15 @@ Perfect for temporary sharing, personal libraries, or lightweight deployments wi
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
-> **New in v1.5:**
+> **New in v1.6:**
 >
-> -   Admin Lock Mode (first to lock becomes host)
->
-> -   Sync password protection
->
-> -   Live connected user count per category
->
-> -   Swipe-to-go-back gesture on mobile
->
-> -   `/view` command to view another users category and index
->
-> -   ARM64 Docker support
->
+> - Saved session progress per category (even with shuffle)
+> - Full **Pinggy** tunnel integration with live status and config UI  
+> - Dynamic category thumbnails fixed across environments (incl. Docker)
+> - New `/kick` command to remove users by session ID
+> - Slash command popup with instant filtering and improved input handling
+> - Chat and modal UI fully reworked for smoother mobile and desktop use
+> - Massive performance polish, drag/touch fixes, and config stability
 
 ---
 
