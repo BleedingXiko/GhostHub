@@ -92,6 +92,33 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
                     // Initialize media navigation with socket
                     initMediaNavigation(socket);
 
+                    // Listener for when the current user gets kicked
+                    socket.on('you_have_been_kicked', (data) => {
+                        console.warn('Received you_have_been_kicked event:', data);
+                        alert(`You have been kicked by an administrator: ${data.message}\nYour access to this session has been revoked.`);
+                        // Disable UI elements or overlay the screen
+                        // For simplicity, we'll just show an alert and log.
+                        // A more robust solution would involve uiController to freeze the UI.
+                        document.body.innerHTML = `<div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); color: white; display: flex; justify-content: center; align-items: center; text-align: center; font-size: 2em; z-index: 9999;">${data.message}<br/>Please close this tab.</div>`;
+                        // Consider also trying to close the socket connection from client-side if possible
+                        if (socket && typeof socket.disconnect === 'function') {
+                            socket.disconnect();
+                        }
+                    });
+
+                    // Listener for admin receiving confirmation of a kick action
+                    socket.on('admin_kick_confirmation', (data) => {
+                        console.log('Received admin_kick_confirmation:', data);
+                        if (window.appModules && window.appModules.chatManager && typeof window.appModules.chatManager.displayLocalMessage === 'function') {
+                            const messageType = data.success ? 'info' : 'error';
+                            window.appModules.chatManager.displayLocalMessage(data.message, messageType);
+                        } else {
+                            // Fallback if displayLocalMessage is not available
+                            alert(`Kick attempt: ${data.success ? 'Success' : 'Failed'}\nMessage: ${data.message}`);
+                        }
+                    });
+
+
                     // Listen for category activity updates
                     // Ensure app.socket is set by chatManager.initChat or use local socket
                     const activeSocket = app.socket || socket; 

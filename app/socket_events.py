@@ -9,10 +9,10 @@ Uses Flask-SocketIO with room-based broadcasting for targeted communication.
 import logging
 import time
 import gevent
-from flask import request, current_app
+from flask import request, current_app, session # Added session
 from flask_socketio import emit, join_room, leave_room, disconnect
 from .services.sync_service import SyncService
-from .services import progress_service # Added for saving current index
+from .services import progress_service
 from .constants import (
     SYNC_ROOM, 
     CHAT_ROOM,
@@ -35,11 +35,30 @@ def register_socket_events(socketio):
 
     @socketio.on(SE['CONNECT'])
     def handle_connect():
-        """Handles new client connections with improved error tracking."""
+        """Handles new client connections with improved error tracking and active connection management."""
+        client_id = request.sid
+        client_ip = request.remote_addr
+        flask_session_id = request.cookies.get('session_id')
+
+        if client_ip in current_app.blocked_ips:
+            logger.warning(f"Blocked IP {client_ip} (Client SID: {client_id}) attempted WebSocket connection. Disconnecting.")
+            emit(SE['YOU_HAVE_BEEN_KICKED'], {'message': 'Your IP has been temporarily blocked from this session.'}, room=client_id)
+            disconnect(sid=client_id)
+            return
+
         try:
-            client_id = request.sid
-            logger.info(f"Client connected: {client_id}")
+            logger.info(f"Client connected: {client_id} (IP: {client_ip}, Session: {flask_session_id})")
             
+            if flask_session_id:
+                current_app.active_connections[flask_session_id] = {
+                    'sid': client_id,
+                    'ip': client_ip,
+                    'user_id': flask_session_id[:8] # Store short user_id for easier lookup
+                }
+                logger.info(f"Added to active_connections: {flask_session_id} -> {current_app.active_connections[flask_session_id]}")
+            else:
+                logger.warning(f"Client {client_id} connected without a flask_session_id cookie.")
+
             # Initialize connection stats for this client
             client_connection_stats[client_id] = {
                 'connect_count': 1,
@@ -51,30 +70,49 @@ def register_socket_events(socketio):
             emit(SE['CONNECTION_STATUS'], {'status': 'connected', 'id': client_id}, room=client_id)
             
         except Exception as e:
-            logger.error(f"Error during client connection: {str(e)}")
+            logger.error(f"Error during client connection for {client_id} (IP: {client_ip}): {str(e)}")
             # Don't raise the exception - this would prevent the connection
 
     @socketio.on(SE['DISCONNECT'])
     def handle_disconnect(reason=None):
-        """Handles client disconnections with cleanup."""
+        """Handles client disconnections with cleanup, including active_connections."""
+        client_id = request.sid
+        flask_session_id = request.cookies.get('session_id') 
+        
+        log_message = f"Client disconnected: {client_id} (Session: {flask_session_id})"
+        if reason:
+            log_message += f" (Reason: {reason})"
+        logger.info(log_message)
+
         try:
-            client_id = request.sid
-            session_id = request.cookies.get('session_id') # Get session ID before disconnect
-            log_message = f"Client disconnected: {client_id} (Session: {session_id})"
-            if reason:
-                log_message += f" (Reason: {reason})"
-            logger.info(log_message)
-            
             # Clean up connection stats for this client
             if client_id in client_connection_stats:
                 del client_connection_stats[client_id]
                 
-            # Remove session state if it exists
-            if session_id:
-                SyncService.remove_session_state(session_id)
+            # Remove from active_connections
+            if flask_session_id and flask_session_id in current_app.active_connections:
+                del current_app.active_connections[flask_session_id]
+                logger.info(f"Removed from active_connections: {flask_session_id}")
+            elif flask_session_id:
+                logger.warning(f"Flask session ID {flask_session_id} not found in active_connections during disconnect for client {client_id}.")
+            else:
+                # If no flask_session_id, try to find by sid (less ideal)
+                found_key = None
+                for key, value in current_app.active_connections.items():
+                    if value['sid'] == client_id:
+                        found_key = key
+                        break
+                if found_key:
+                    del current_app.active_connections[found_key]
+                    logger.info(f"Removed from active_connections by SID lookup: {found_key} (Client SID: {client_id})")
+
+
+            # Remove session state if it exists (original SyncService cleanup)
+            if flask_session_id:
+                SyncService.remove_session_state(flask_session_id)
                 
         except Exception as e:
-            logger.error(f"Error during client disconnection: {str(e)}")
+            logger.error(f"Error during client disconnection for {client_id} (Session: {flask_session_id}): {str(e)}")
     
     @socketio.on_error_default
     def default_error_handler(e):
@@ -407,3 +445,96 @@ def register_socket_events(socketio):
                 pass # Ignore errors in the error handler
 
     logger.info("SocketIO event handlers registered with improved error handling.")
+
+    @socketio.on(SE['ADMIN_KICK_USER'])
+    def handle_admin_kick_user(data):
+        """Handles an admin's request to kick a user."""
+        admin_client_sid = request.sid
+        admin_flask_session_id = request.cookies.get('session_id')
+        
+        logger.info(f"Admin kick request received from admin {admin_flask_session_id} (SID: {admin_client_sid}) for target_user_id: {data.get('target_user_id')}")
+
+        # 1. Verify admin privileges
+        # Rely on the global ADMIN_SESSION_ID which is set via an HTTP route where session['is_admin'] is also set.
+        # This avoids potential issues with Flask session availability in SocketIO context if not perfectly synced.
+        is_true_admin = admin_flask_session_id is not None and \
+                        admin_flask_session_id == current_app.ADMIN_SESSION_ID
+        
+        if not is_true_admin:
+            logger.warning(f"Unauthorized kick attempt by non-admin or mismatched session: {admin_flask_session_id} (SID: {admin_client_sid}), global admin: {current_app.ADMIN_SESSION_ID}")
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': False, 
+                'message': 'Error: You do not have permission to perform this action.'
+            }, room=admin_client_sid)
+            return
+
+        target_user_id = data.get('target_user_id')
+        if not target_user_id or len(target_user_id) != 8: # Assuming user_id is first 8 chars of session_id
+            logger.warning(f"Invalid target_user_id from admin {admin_flask_session_id}: {target_user_id}")
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': False, 
+                'message': 'Error: Invalid target user ID format.'
+            }, room=admin_client_sid)
+            return
+
+        # 2. Find target user in active_connections
+        target_flask_session_id = None
+        target_connection_info = None
+        
+        # Iterate safely over a copy of items if modifications are possible, though here we just read
+        for f_sid, conn_info in list(current_app.active_connections.items()): 
+            if conn_info.get('user_id') == target_user_id:
+                target_flask_session_id = f_sid
+                target_connection_info = conn_info
+                break
+        
+        if not target_connection_info:
+            logger.info(f"Admin {admin_flask_session_id} tried to kick non-existent/inactive user: {target_user_id}")
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': False, 
+                'message': f"Error: User '{target_user_id}' not found or is not currently active."
+            }, room=admin_client_sid)
+            return
+
+        # 3. Prevent self-kick
+        if target_flask_session_id == admin_flask_session_id:
+            logger.info(f"Admin {admin_flask_session_id} attempted self-kick.")
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': False, 
+                'message': 'Error: You cannot kick yourself.'
+            }, room=admin_client_sid)
+            return
+
+        # 4. Perform Kick
+        target_sid = target_connection_info['sid']
+        target_ip = target_connection_info['ip']
+
+        try:
+            logger.info(f"Admin {admin_flask_session_id} is kicking user {target_user_id} (Session: {target_flask_session_id}, SID: {target_sid}, IP: {target_ip})")
+            
+            # Add IP to blocklist
+            current_app.blocked_ips.add(target_ip)
+            logger.info(f"IP {target_ip} added to blocklist. Current blocklist size: {len(current_app.blocked_ips)}")
+
+            # Notify the kicked user
+            emit(SE['YOU_HAVE_BEEN_KICKED'], {
+                'message': 'You have been kicked from the session by an administrator. Your IP has been temporarily blocked.'
+            }, room=target_sid)
+            
+            # Disconnect the user (allow a moment for the message to send)
+            gevent.sleep(0.1) # Small delay to help ensure message delivery before disconnect
+            disconnect(sid=target_sid)
+            logger.info(f"Disconnected user {target_user_id} (SID: {target_sid})")
+
+            # Confirm to admin
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': True, 
+                'message': f"User '{target_user_id}' (IP: {target_ip}) has been kicked and their IP blocked for this session."
+            }, room=admin_client_sid)
+
+        except Exception as e:
+            logger.error(f"Error during kick process for target {target_user_id} by admin {admin_flask_session_id}: {str(e)}")
+            emit(SE['ADMIN_KICK_CONFIRMATION'], {
+                'success': False, 
+                'message': f"Server error while trying to kick user: {str(e)}"
+            }, room=admin_client_sid)

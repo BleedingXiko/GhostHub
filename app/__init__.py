@@ -63,6 +63,8 @@ def create_app(config_name='default'):
     )
     app.config.from_object(config_by_name[config_name])
     app.ADMIN_SESSION_ID = None # Stores the session ID of the admin
+    app.blocked_ips = set() # Stores IPs temporarily blocked by admin
+    app.active_connections = {} # Maps session_id to {'sid': socketio_sid, 'ip': user_ip, 'user_id': short_id}
     
     # Increase upload size limit for media files
     app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
@@ -82,6 +84,16 @@ def create_app(config_name='default'):
     # Connect SocketIO to Flask app
     socketio.init_app(app)
     logger.info("Flask-SocketIO initialized with eventlet for WebSockets.")
+
+    # IP Blocking Middleware
+    @app.before_request
+    def block_kicked_ips():
+        # Use current_app to access app context members like blocked_ips
+        if request.remote_addr in app.blocked_ips: # Use app.blocked_ips directly
+            logger.warning(f"Blocked IP {request.remote_addr} attempted to access {request.path}")
+            # Consider returning a more user-friendly response or template
+            from flask import abort
+            abort(403, "Your IP address has been temporarily blocked from this session.")
 
     # Register route blueprints
     from .routes.main_routes import main_bp

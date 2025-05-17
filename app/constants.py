@@ -48,7 +48,12 @@ SOCKET_EVENTS = {
     'VIEW_INFO_RESPONSE': 'view_info_response',
 
     # Category activity heatmap
-    'CATEGORY_ACTIVITY_UPDATE': 'category_activity_update'
+    'CATEGORY_ACTIVITY_UPDATE': 'category_activity_update',
+
+    # Admin kick events
+    'ADMIN_KICK_USER': 'admin_kick_user',
+    'YOU_HAVE_BEEN_KICKED': 'you_have_been_kicked',
+    'ADMIN_KICK_CONFIRMATION': 'admin_kick_confirmation'
 }
 
 # File Types
