@@ -27,6 +27,25 @@ class CategoryService:
         Returns list of enriched category dictionaries.
         """
         categories = load_categories()
+
+        usb_root = '/media/pi'
+        auto_categories = []
+
+        if os.path.exists(usb_root):
+            for entry in os.scandir(usb_root):
+                if entry.is_dir():
+                    path = entry.path
+                    name = os.path.basename(path)
+
+                    # Skip if already saved manually
+                    if not any(cat.get('path') == path for cat in categories):
+                        auto_categories.append({
+                            'id': f'auto-{name}',
+                            'name': f'{name} (USB)',
+                            'path': path
+                        })
+        
+        categories.extend(auto_categories)
         categories_with_details = []
 
         for category in categories:
@@ -72,7 +91,24 @@ class CategoryService:
         Returns category dict or None if not found.
         """
         categories = load_categories()
-        return next((c for c in categories if c.get('id') == category_id), None)
+        
+        # Check saved categories first
+        match = next((c for c in categories if c.get('id') == category_id), None)
+        if match:
+            return match
+
+        # Fallback for auto-detected USB categories
+        if category_id.startswith('auto-'):
+            name = category_id.replace('auto-', '')
+            usb_path = f'/media/pi/{name}'
+            if os.path.exists(usb_path): # Assuming os is imported at the top of the file
+                return {
+                    'id': category_id,
+                    'name': name,
+                    'path': usb_path
+                }
+        
+        return None
 
     @staticmethod
     def add_category(name, path):
