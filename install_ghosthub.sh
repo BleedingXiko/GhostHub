@@ -16,9 +16,6 @@ sudo apt update && sudo apt upgrade -y
 echo "[*] Installing core dependencies..."
 sudo apt install -y python3 python3-pip git avahi-daemon udevil hostapd dnsmasq netfilter-persistent iptables-persistent
 
-echo "[*] Installing Python dependencies..."
-pip3 install flask flask-socketio gevent eventlet
-
 # ==== ACCESS POINT MODE ====
 echo "[*] Configuring static IP for wlan0..."
 sudo tee /etc/dhcpcd.conf > /dev/null <<EOF
@@ -73,6 +70,11 @@ if [ -d "$APP_DIR" ]; then
 else
     git clone --branch $BRANCH $REPO_URL $APP_DIR
 fi
+
+# ==== INSTALL PYTHON DEPENDENCIES ====
+echo "[*] Installing Python dependencies from requirements.txt..."
+cd $APP_DIR
+pip3 install -r requirements.txt
 
 # ==== SYSTEMD SERVICE FOR GHOSTHUB ====
 echo "[*] Creating systemd service for GhostHub..."
