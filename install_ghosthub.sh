@@ -7,7 +7,7 @@ BRANCH="pi"
 APP_DIR="$HOME/ghosthub"
 PORT=5000
 SSID="GhostHub"
-PASSPHRASE="ghosthub123"   # Change if you want
+PASSPHRASE="ghost123"   # Change if you want
 
 # ==== UPDATE & DEPENDENCIES ====
 echo "[*] Updating system..."
