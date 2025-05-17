@@ -85,7 +85,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/python3 $APP_DIR/run.py
+ExecStart=/usr/bin/python3 $APP_DIR/ghosthub.py
 Restart=always
 User=$USER
 Environment=PORT=$PORT
