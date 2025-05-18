@@ -4,7 +4,7 @@
   
 [![Live Demo](https://img.shields.io/badge/🌐%20Live%20Demo-ghosthub.net-blue?style=for-the-badge)](https://ghosthub.net)
 
-[![Version](https://img.shields.io/badge/Version-1.5-red?style=for-the-badge)](https://github.com/BleedingXiko/GhostHub/releases)
+[![Version](https://img.shields.io/badge/Version-1.6-red?style=for-the-badge)](https://github.com/BleedingXiko/GhostHub/releases)
 
 [![License](https://img.shields.io/github/license/BleedingXiko/ghosthub?style=for-the-badge)](https://github.com/BleedingXiko/ghosthub/blob/main/LICENSE)
 
