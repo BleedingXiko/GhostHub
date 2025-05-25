@@ -2,7 +2,7 @@
 
 <div align="center">
   
-[![Buy Now](https://img.shields.io/badge/%F0%9F%92%AB%20Coming%20Soon-GhostHub%20on%20a%20PI-blue?style=for-the-badge)](https://ghosthub.net)
+[![Buy Now](https://img.shields.io/badge/%F0%9F%92%AB%20Buy%20Now-GhostHub%20on%20a%20PI-blue?style=for-the-badge)](https://ghosthub.net)
 
 [![Version](https://img.shields.io/badge/Version-1.6-red?style=for-the-badge)](https://github.com/BleedingXiko/GhostHub/releases)
 
