@@ -6,6 +6,21 @@
 import { saveConfig } from '../utils/configManager.js';
 import { CONFIG_DESCRIPTIONS } from '../core/configDescriptions.js';
 
+/**
+ * Get default value for GhostStream settings
+ */
+function getGhoststreamDefault(key) {
+    const defaults = {
+        'GHOSTSTREAM_ENABLED': false,
+        'GHOSTSTREAM_SERVER': '',
+        'GHOSTSTREAM_AUTO_TRANSCODE': true,
+        'GHOSTSTREAM_DEFAULT_RESOLUTION': '1080p',
+        'GHOSTSTREAM_DEFAULT_CODEC': 'h264',
+        'GHOSTSTREAM_PREFER_ABR': false
+    };
+    return defaults[key];
+}
+
 // DOM Elements for Config Modal
 const configModal = document.getElementById('config-modal');
 const configToggleBtn = document.getElementById('config-toggle-btn'); // Will be used by uiController to trigger open
@@ -153,11 +168,16 @@ function populateConfigModal() {
                           : '';
     pythonSettingsContainer.appendChild(createConfigInput('SESSION_PASSWORD', passwordValue, 'python_config.'));
 
+    // Keys handled in separate sections
+    const ghoststreamConfigKeys = ['GHOSTSTREAM_ENABLED', 'GHOSTSTREAM_SERVER', 'GHOSTSTREAM_AUTO_TRANSCODE', 
+                                   'GHOSTSTREAM_DEFAULT_RESOLUTION', 'GHOSTSTREAM_DEFAULT_CODEC', 'GHOSTSTREAM_PREFER_ABR'];
+
     // Iterate over remaining CONFIG_DESCRIPTIONS for python_config keys
     for (const fullKey in CONFIG_DESCRIPTIONS) {
         if (fullKey.startsWith('python_config.') && fullKey !== 'python_config.SESSION_PASSWORD') {
             const key = fullKey.substring('python_config.'.length);
-            if (!tunnelConfigKeys.includes(key)) { // Exclude tunnel-specific keys handled elsewhere
+            // Exclude tunnel-specific and GhostStream keys (handled in their own sections)
+            if (!tunnelConfigKeys.includes(key) && !ghoststreamConfigKeys.includes(key)) {
                 const value = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty(key))
                               ? window.appConfig.python_config[key]
                               : undefined;
@@ -172,6 +192,173 @@ function populateConfigModal() {
     pythonHeader.addEventListener('click', () => {
         pythonSettingsContainer.classList.toggle('collapsed');
         pythonHeader.classList.toggle('collapsed');
+    });
+
+    // --- GhostStream Config Section ---
+    const ghoststreamHeader = document.createElement('h3');
+    ghoststreamHeader.className = 'config-section-header collapsed';
+    ghoststreamHeader.textContent = 'GhostStream (External Transcoding)';
+    configModalBody.appendChild(ghoststreamHeader);
+
+    const ghoststreamSettingsContainer = document.createElement('div');
+    ghoststreamSettingsContainer.className = 'config-section-settings collapsed';
+
+    const ghoststreamKeys = [
+        'GHOSTSTREAM_ENABLED',
+        'GHOSTSTREAM_SERVER', 
+        'GHOSTSTREAM_AUTO_TRANSCODE',
+        'GHOSTSTREAM_DEFAULT_RESOLUTION',
+        'GHOSTSTREAM_DEFAULT_CODEC',
+        'GHOSTSTREAM_PREFER_ABR'
+    ];
+
+    for (const key of ghoststreamKeys) {
+        const value = (window.appConfig && window.appConfig.python_config && window.appConfig.python_config.hasOwnProperty(key))
+                      ? window.appConfig.python_config[key]
+                      : getGhoststreamDefault(key);
+        ghoststreamSettingsContainer.appendChild(createConfigInput(key, value, 'python_config.'));
+    }
+
+    // Add GhostStream status indicator and test button
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'ghoststream-status-indicator';
+    statusDiv.style.marginTop = '10px';
+    statusDiv.style.padding = '8px';
+    statusDiv.style.borderRadius = '4px';
+    statusDiv.style.backgroundColor = 'rgba(255,255,255,0.1)';
+    
+    const statusLabel = document.createElement('div');
+    statusLabel.innerHTML = '<span class="status-label">Status:</span> <span class="status-value">Not checked</span>';
+    statusDiv.appendChild(statusLabel);
+    
+    const testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.textContent = 'Test Connection';
+    testBtn.style.marginTop = '8px';
+    testBtn.style.padding = '6px 12px';
+    testBtn.style.width = 'auto';
+    testBtn.addEventListener('click', async () => {
+        const statusValue = statusLabel.querySelector('.status-value');
+        statusValue.textContent = 'Testing...';
+        statusValue.style.color = '#fbbf24';
+        
+        // Get the current server URL from the input field
+        const serverInput = ghoststreamSettingsContainer.querySelector('[data-path="python_config.GHOSTSTREAM_SERVER"]');
+        const serverUrl = serverInput ? serverInput.value : '';
+        
+        try {
+            const response = await fetch('/api/ghoststream/test-connection', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_url: serverUrl })
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                statusValue.textContent = `Connected! (${data.response?.status || 'OK'})`;
+                statusValue.style.color = '#4ade80';
+                // Update GhostStream availability state
+                if (window.appModules?.ghoststreamManager?.setAvailable) {
+                    window.appModules.ghoststreamManager.setAvailable(true);
+                }
+            } else {
+                statusValue.textContent = data.error || 'Connection failed';
+                statusValue.style.color = '#f87171';
+                console.error('GhostStream test failed:', data);
+            }
+        } catch (err) {
+            statusValue.textContent = 'Request failed: ' + err.message;
+            statusValue.style.color = '#f87171';
+        }
+    });
+    statusDiv.appendChild(testBtn);
+    
+    ghoststreamSettingsContainer.appendChild(statusDiv);
+    
+    // Add Transcode All button
+    const transcodeAllDiv = document.createElement('div');
+    transcodeAllDiv.style.marginTop = '15px';
+    transcodeAllDiv.style.padding = '10px';
+    transcodeAllDiv.style.borderTop = '1px solid rgba(255,255,255,0.1)';
+    
+    const transcodeAllLabel = document.createElement('div');
+    transcodeAllLabel.style.marginBottom = '8px';
+    transcodeAllLabel.innerHTML = '<strong>Batch Transcode</strong><br><small>Pre-transcode all videos in current category to MP4 for faster playback</small>';
+    transcodeAllDiv.appendChild(transcodeAllLabel);
+    
+    const transcodeAllBtn = document.createElement('button');
+    transcodeAllBtn.type = 'button';
+    transcodeAllBtn.textContent = 'Transcode All Videos';
+    transcodeAllBtn.style.padding = '8px 16px';
+    transcodeAllBtn.style.width = 'auto';
+    transcodeAllBtn.style.marginRight = '10px';
+    
+    const transcodeStatus = document.createElement('span');
+    transcodeStatus.style.fontSize = '0.9em';
+    
+    transcodeAllBtn.addEventListener('click', async () => {
+        const categoryId = window.appModules?.app?.state?.currentCategoryId;
+        if (!categoryId) {
+            transcodeStatus.textContent = 'No category selected';
+            transcodeStatus.style.color = '#f87171';
+            return;
+        }
+        
+        transcodeAllBtn.disabled = true;
+        transcodeAllBtn.textContent = 'Starting...';
+        transcodeStatus.textContent = '';
+        
+        try {
+            const ghoststreamManager = window.appModules?.ghoststreamManager;
+            if (!ghoststreamManager) {
+                throw new Error('GhostStream manager not loaded');
+            }
+            
+            const result = await ghoststreamManager.transcodeAllInCategory(categoryId);
+            
+            if (result) {
+                if (result.queued > 0) {
+                    transcodeStatus.textContent = `Started ${result.queued} jobs`;
+                    transcodeStatus.style.color = '#4ade80';
+                    
+                    // Monitor progress
+                    ghoststreamManager.monitorBatchJobs(result.jobs, categoryId, (filename, status) => {
+                        if (status.status === 'all_complete') {
+                            transcodeStatus.textContent = 'All done!';
+                            transcodeAllBtn.textContent = 'Transcode All Videos';
+                            transcodeAllBtn.disabled = false;
+                        } else if (filename) {
+                            transcodeStatus.textContent = `${filename}: ${Math.round(status.progress)}%`;
+                        }
+                    });
+                } else {
+                    transcodeStatus.textContent = result.message || 'No videos need transcoding';
+                    transcodeStatus.style.color = '#fbbf24';
+                    transcodeAllBtn.textContent = 'Transcode All Videos';
+                    transcodeAllBtn.disabled = false;
+                }
+            } else {
+                transcodeStatus.textContent = 'Failed to start';
+                transcodeStatus.style.color = '#f87171';
+                transcodeAllBtn.textContent = 'Transcode All Videos';
+                transcodeAllBtn.disabled = false;
+            }
+        } catch (err) {
+            transcodeStatus.textContent = err.message;
+            transcodeStatus.style.color = '#f87171';
+            transcodeAllBtn.textContent = 'Transcode All Videos';
+            transcodeAllBtn.disabled = false;
+        }
+    });
+    
+    transcodeAllDiv.appendChild(transcodeAllBtn);
+    transcodeAllDiv.appendChild(transcodeStatus);
+    ghoststreamSettingsContainer.appendChild(transcodeAllDiv);
+
+    configModalBody.appendChild(ghoststreamSettingsContainer);
+    ghoststreamHeader.addEventListener('click', () => {
+        ghoststreamSettingsContainer.classList.toggle('collapsed');
+        ghoststreamHeader.classList.toggle('collapsed');
     });
 
     // --- JavaScript Config Sections ---

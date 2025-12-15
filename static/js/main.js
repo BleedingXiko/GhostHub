@@ -19,6 +19,7 @@ import * as syncManager from './modules/syncManager.js';
 import * as eventHandlers from './modules/eventHandlers.js';
 import * as chatManager from './modules/chatManager.js';
 import * as fullscreenManager from './modules/fullscreenManager.js';
+import * as ghoststreamManager from './modules/ghoststreamManager.js';
 import { initAdminControls } from './modules/adminController.js'; // Import admin controller
 // Import the init function specifically
 import { initMediaNavigation } from './modules/mediaNavigation.js'; 
@@ -33,7 +34,8 @@ window.appModules = {
     syncManager,
     eventHandlers,
     chatManager,
-    fullscreenManager
+    fullscreenManager,
+    ghoststreamManager
 };
 
 // Application initialization on DOM ready
@@ -55,6 +57,13 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
     // PHASE 1: Critical initialization
     initAdminControls(); // Initialize admin controls early
     categoryManager.loadCategories();
+    
+    // Initialize GhostStream (non-blocking)
+    ghoststreamManager.initGhostStream().then(status => {
+        if (status.enabled && status.available) {
+            console.log('GhostStream ready for transcoding');
+        }
+    }).catch(err => console.warn('GhostStream init error:', err));
     
     // Get phase delays from config, with fallbacks to original values
     const phase2Delay = getConfigValue('javascript_config.main.phase2_init_delay', 250);

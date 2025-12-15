@@ -24,7 +24,13 @@ def get_default_config():
             "MEMORY_CLEANUP_INTERVAL": 60000,
             "MAX_CACHE_SIZE": 50,
             "SAVE_CURRENT_INDEX": False,
-            "SESSION_PASSWORD": ""
+            "SESSION_PASSWORD": "",
+            "GHOSTSTREAM_ENABLED": False,
+            "GHOSTSTREAM_SERVER": "",
+            "GHOSTSTREAM_AUTO_TRANSCODE": True,
+            "GHOSTSTREAM_DEFAULT_RESOLUTION": "1080p",
+            "GHOSTSTREAM_DEFAULT_CODEC": "h264",
+            "GHOSTSTREAM_PREFER_ABR": False
         },
         "javascript_config": {
             "main": {

@@ -16,6 +16,14 @@ export const CONFIG_DESCRIPTIONS = {
     "python_config.MAX_CACHE_SIZE": "Max Cache Size (Server/Client): Maximum number of items for certain server-side caches. This value is also passed to the client to guide its media element cache size. Default: 50.",
     "python_config.SAVE_CURRENT_INDEX": "Save Current Index (boolean): If true, the application will remember the last viewed item in each category. Default: false.",
     "python_config.SESSION_PASSWORD": "Session Password: Set a password to protect access to categories. Leave blank to disable. Takes effect immediately.",
+    
+    // GhostStream Settings
+    "python_config.GHOSTSTREAM_ENABLED": "GhostStream Enabled: Enable GhostStream integration for external GPU transcoding. Requires a GhostStream server running on your network.",
+    "python_config.GHOSTSTREAM_SERVER": "GhostStream Server: Server address (e.g., '192.168.4.2:8765'). Leave empty for automatic mDNS discovery.",
+    "python_config.GHOSTSTREAM_AUTO_TRANSCODE": "Auto Transcode: Automatically transcode incompatible video formats (MKV, AVI, HEVC, etc.) for browser playback.",
+    "python_config.GHOSTSTREAM_DEFAULT_RESOLUTION": "Default Resolution: Target resolution for transcoding (4k, 1080p, 720p, 480p, original). Default: 1080p.",
+    "python_config.GHOSTSTREAM_DEFAULT_CODEC": "Default Codec: Video codec for transcoding (h264, h265, vp9). H.264 has best compatibility. Default: h264.",
+    "python_config.GHOSTSTREAM_PREFER_ABR": "Prefer ABR: Use Adaptive Bitrate streaming (multiple quality variants) instead of single-quality HLS. Better for variable networks.",
 
     // JavaScript Config - main
     "javascript_config.main.socket_reconnectionAttempts": "Main Socket Reconnect Attempts (Client): Max reconnection attempts for the primary client-side WebSocket (used for chat/general events). Default: 5.",

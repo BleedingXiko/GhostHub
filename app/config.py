@@ -60,6 +60,14 @@ class Config:
     TUNNEL_LOCAL_PORT = 5000
     SESSION_PASSWORD = ""  # Password for session access, empty means no password
     
+    # GhostStream settings (external transcoding server)
+    GHOSTSTREAM_ENABLED = False
+    GHOSTSTREAM_SERVER = ""  # e.g., "192.168.4.2:8765" - leave empty for mDNS auto-discovery
+    GHOSTSTREAM_AUTO_TRANSCODE = True  # Auto-transcode incompatible formats
+    GHOSTSTREAM_DEFAULT_RESOLUTION = "1080p"  # 4k, 1080p, 720p, 480p, original
+    GHOSTSTREAM_DEFAULT_CODEC = "h264"  # h264, h265, vp9
+    GHOSTSTREAM_PREFER_ABR = False  # Use Adaptive Bitrate streaming
+    
     # Path resolution for script/executable modes
     APP_ROOT = get_application_root()
     
@@ -169,7 +177,13 @@ _configurable_keys_info = {
     'PINGGY_ACCESS_TOKEN': str,
     'TUNNEL_LOCAL_PORT': int,
     'SESSION_PASSWORD': str,
-    'SAVE_CURRENT_INDEX': lambda v: str(v).lower() == 'true'
+    'SAVE_CURRENT_INDEX': lambda v: str(v).lower() == 'true',
+    'GHOSTSTREAM_ENABLED': lambda v: str(v).lower() == 'true',
+    'GHOSTSTREAM_SERVER': str,
+    'GHOSTSTREAM_AUTO_TRANSCODE': lambda v: str(v).lower() == 'true',
+    'GHOSTSTREAM_DEFAULT_RESOLUTION': str,
+    'GHOSTSTREAM_DEFAULT_CODEC': str,
+    'GHOSTSTREAM_PREFER_ABR': lambda v: str(v).lower() == 'true'
 }
 
 for key, type_converter in _configurable_keys_info.items():

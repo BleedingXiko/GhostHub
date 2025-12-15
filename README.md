@@ -19,15 +19,20 @@ Perfect for temporary sharing, personal libraries, or lightweight deployments wi
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
-> **New in v1.6:**
+> **New in v1.7:**
 >
+> - **GhostStream Integration** - Hardware-accelerated video transcoding via external GPU server
+> - MKV, HEVC, AVI and other formats now play natively via HLS streaming
+> - Batch "Transcode All" feature for pre-transcoding entire categories
+> - Auto-connect to GhostStream on startup
+>
+> **v1.6:**
 > - Saved session progress per category (even with shuffle)
 > - Full **Pinggy** tunnel integration with live status and config UI  
 > - Dynamic category thumbnails fixed across environments (incl. Docker)
 > - New `/kick` command to remove users by session ID
 > - Slash command popup with instant filtering and improved input handling
 > - Chat and modal UI fully reworked for smoother mobile and desktop use
-> - Massive performance polish, drag/touch fixes, and config stability
 
 ---
 
@@ -192,6 +197,27 @@ bin/build_exe.bat
 
 **Images:** jpg, jpeg, png, gif, bmp, tiff, webp, heic, etc.
 **Videos:** mp4, webm, mov, mkv, avi, ts, flv, etc.
+
+---
+
+## 🎬 GhostStream Integration
+
+GhostStream enables hardware-accelerated transcoding for videos that browsers can't play natively (MKV, HEVC, AVI, etc.).
+
+### Setup
+
+1. Run [GhostStream](https://github.com/BleedingXiko/GhostStream) on a PC with GPU (NVIDIA/AMD)
+2. In GhostHub Settings → GhostStream:
+   - Enable GhostStream
+   - Enter server URL (e.g., `192.168.1.100:8765`)
+   - Click "Test Connection"
+
+### Features
+
+- **Auto-connect** - GhostHub connects to GhostStream automatically on startup
+- **Live Transcoding** - MKV/HEVC videos stream via HLS in real-time
+- **Batch Transcode** - Pre-transcode entire categories with "Transcode All" button
+- **GPU Acceleration** - NVENC, AMF, QSV support for fast transcoding
 
 ---
 

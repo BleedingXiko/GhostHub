@@ -52,6 +52,27 @@ def save_config_route():
             current_app.config['SESSION_PASSWORD'] = new_config['python_config']['SESSION_PASSWORD']
             logger.info(f"Live SESSION_PASSWORD updated in app config.")
         
+        # Update live GhostStream configuration
+        if 'python_config' in new_config:
+            pc = new_config['python_config']
+            ghoststream_keys = ['GHOSTSTREAM_ENABLED', 'GHOSTSTREAM_SERVER', 'GHOSTSTREAM_AUTO_TRANSCODE',
+                               'GHOSTSTREAM_DEFAULT_RESOLUTION', 'GHOSTSTREAM_DEFAULT_CODEC', 'GHOSTSTREAM_PREFER_ABR']
+            for key in ghoststream_keys:
+                if key in pc:
+                    current_app.config[key] = pc[key]
+            
+            # Reconfigure GhostStream service if settings changed
+            if any(key in pc for key in ['GHOSTSTREAM_ENABLED', 'GHOSTSTREAM_SERVER']):
+                try:
+                    from app.services.ghoststream_service import ghoststream_service
+                    ghoststream_service.configure(
+                        enabled=pc.get('GHOSTSTREAM_ENABLED', current_app.config.get('GHOSTSTREAM_ENABLED', False)),
+                        server_url=pc.get('GHOSTSTREAM_SERVER', current_app.config.get('GHOSTSTREAM_SERVER', ''))
+                    )
+                    logger.info("GhostStream service reconfigured")
+                except Exception as e:
+                    logger.warning(f"Failed to reconfigure GhostStream service: {e}")
+        
         response_data = {
             'message': message,
             'isPasswordProtectionActive': current_app.config.get('SESSION_PASSWORD', '') != ''

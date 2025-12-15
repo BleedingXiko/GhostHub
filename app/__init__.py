@@ -66,6 +66,16 @@ def create_app(config_name='default'):
     app.blocked_ips = set() # Stores IPs temporarily blocked by admin
     app.active_connections = {} # Maps session_id to {'sid': socketio_sid, 'ip': user_ip, 'user_id': short_id}
     
+    # Load saved config from JSON file and apply to app.config
+    from .services import config_service
+    saved_config, config_error = config_service.load_config()
+    if config_error:
+        logger.warning(f"Config load warning: {config_error}")
+    if saved_config and 'python_config' in saved_config:
+        for key, value in saved_config['python_config'].items():
+            app.config[key] = value
+        logger.info(f"Loaded {len(saved_config['python_config'])} settings from saved config")
+    
     # Increase upload size limit for media files
     app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
     
@@ -100,11 +110,22 @@ def create_app(config_name='default'):
     from .routes.api_routes import api_bp
     from .routes.media_routes import media_bp
     from .routes.sync_routes import sync_bp
+    from .routes.ghoststream_routes import ghoststream_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(media_bp)
     app.register_blueprint(sync_bp, url_prefix='/api/sync')
+    app.register_blueprint(ghoststream_bp, url_prefix='/api/ghoststream')
+    
+    # Initialize GhostStream service
+    from .services.ghoststream_service import ghoststream_service
+    ghoststream_service.configure(
+        enabled=app.config.get('GHOSTSTREAM_ENABLED', False),
+        server_url=app.config.get('GHOSTSTREAM_SERVER', '')
+    )
+    if app.config.get('GHOSTSTREAM_ENABLED', False):
+        logger.info("GhostStream integration enabled")
 
     # Global middleware for session management
     @app.after_request

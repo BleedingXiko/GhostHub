@@ -21,6 +21,7 @@ import {
 
 import { loadMoreMedia, preloadNextMedia } from './mediaLoader.js';
 import { setupControls, updateSwipeIndicators } from './uiController.js';
+import * as ghoststreamManager from './ghoststreamManager.js';
 
 // Need access to the socket instance for state updates
 // Socket instance (initialized via initMediaNavigation)
@@ -81,16 +82,24 @@ function setupThumbnailClickListener() {
 
                     // Start loading and playing the video AFTER it's in the DOM
                     setTimeout(() => {
-                        videoElement.preload = 'auto'; // Now set preload to auto
-                        videoElement.muted = false;   // Unmute before playing
-                        videoElement.play().then(() => {
-                            console.log(`Video playback started for index: ${currentDataIndex}`);
-                        }).catch(err => {
-                            console.error(`Error playing video after click for index ${currentDataIndex}:`, err);
-                            // If unmuted play fails, try muted as a fallback (though less likely needed now)
-                            videoElement.muted = true;
-                            videoElement.play().catch(e2 => console.error(`Muted playback also failed for index ${currentDataIndex}:`, e2));
-                        });
+                        // Check if videoElement is an actual video or a container (for GhostStream)
+                        const actualVideo = videoElement.tagName === 'VIDEO' 
+                            ? videoElement 
+                            : videoElement.querySelector('video');
+                        
+                        if (actualVideo) {
+                            actualVideo.preload = 'auto';
+                            actualVideo.muted = false;
+                            actualVideo.play().then(() => {
+                                console.log(`Video playback started for index: ${currentDataIndex}`);
+                            }).catch(err => {
+                                console.error(`Error playing video after click for index ${currentDataIndex}:`, err);
+                                actualVideo.muted = true;
+                                actualVideo.play().catch(e2 => console.error(`Muted playback also failed for index ${currentDataIndex}:`, e2));
+                            });
+                        } else {
+                            console.log(`Video element not yet available for index ${currentDataIndex}, GhostStream loading...`);
+                        }
                     }, 50); // Small delay to ensure DOM is ready
                 } else {
                     console.error("Cannot replace thumbnail container - no parent node found.");
@@ -490,27 +499,155 @@ function createVideoElement(file, isActive) {
  */
 function createActualVideoElement(file, isActive) {
     console.log(`Creating actual video element for ${file.name}, isActive: ${isActive}`);
+    
+    // Debug GhostStream state
+    const gsReady = ghoststreamManager.isReady();
+    const gsNeedsTranscode = ghoststreamManager.needsTranscoding(file.name);
+    console.log(`GhostStream check: isReady=${gsReady}, needsTranscoding=${gsNeedsTranscode}`);
+    
+    // Check if this video needs GhostStream transcoding
+    if (gsReady && gsNeedsTranscode) {
+        console.log(`Video ${file.name} needs transcoding, checking for pre-transcoded version...`);
+        return createTranscodedVideoElement(file, isActive);
+    }
+    
+    return createDirectVideoElement(file, isActive);
+}
+
+/**
+ * Create video element using GhostStream transcoding
+ */
+function createTranscodedVideoElement(file, isActive) {
+    // Create video element directly - will be populated with HLS stream
+    const video = document.createElement('video');
+    video.className = 'tiktok-media active';
+    video.controls = true;
+    video.autoplay = true;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.style.background = '#000';
+    
+    // Start transcoding
+    const categoryId = app.state.currentCategoryId;
+    ghoststreamManager.startHlsStream(categoryId, file.name).then(job => {
+        if (!job || !job.stream_url) {
+            console.error('GhostStream failed, falling back to direct');
+            video.src = file.url;
+            return;
+        }
+        
+        // Wait for stream ready then attach HLS
+        ghoststreamManager.waitForReady(job.job_id, null, 60).then(status => {
+            const hlsUrl = status?.stream_url || job.stream_url;
+            
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(e => {});
+                });
+                video._hlsInstance = hls;
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = hlsUrl;
+                video.play().catch(e => {});
+            }
+        });
+    }).catch(err => {
+        console.error('GhostStream error:', err);
+        video.src = file.url;
+    });
+    
+    return video;
+}
+
+/**
+ * Create a video element that plays via GhostStream transcoding
+ */
+function createGhostStreamVideoElement(file, isActive) {
+    // Create a container for the video and status overlay
+    const container = document.createElement('div');
+    container.className = 'ghoststream-video-container';
+    container.style.width = '100%';
+    container.style.height = '100%';
+    container.style.background = '#000';
+    
+    // Add loading overlay
+    const overlay = ghoststreamManager.createStatusOverlay();
+    container.appendChild(overlay);
+    
+    // Start transcoding
+    const categoryId = app.state.currentCategoryId;
+    ghoststreamManager.startHlsStream(categoryId, file.name).then(job => {
+        if (!job) {
+            console.warn('GhostStream transcode failed, falling back to direct playback');
+            overlay.remove();
+            const directVideo = createDirectVideoElement(file, isActive);
+            container.appendChild(directVideo);
+            return;
+        }
+        
+        // Wait for stream to be ready
+        ghoststreamManager.waitForReady(job.job_id, (status) => {
+            ghoststreamManager.updateStatusOverlay(overlay, status);
+        }, 60).then(status => {
+            overlay.remove();
+            
+            if (status && status.stream_url) {
+                // Create HLS video element - don't pass poster, it covers the video
+                const hlsVideo = ghoststreamManager.createHlsVideoElement(status.stream_url, {
+                    controls: !MOBILE_DEVICE,
+                    autoplay: true,
+                    loop: true
+                });
+                // Don't use tiktok-media class - it has conflicting CSS (display:none, opacity:0)
+                hlsVideo.className = 'ghoststream-video';
+                container.appendChild(hlsVideo);
+                
+                // Force play
+                hlsVideo.play().catch(e => console.warn('HLS autoplay failed:', e));
+                
+                // Add fullscreen button
+                if (window.appModules?.fullscreenManager) {
+                    setTimeout(() => {
+                        window.appModules.fullscreenManager.addFullscreenButton(hlsVideo);
+                    }, 100);
+                }
+            } else {
+                // Fallback to direct playback
+                console.warn('GhostStream did not return stream URL, falling back');
+                const directVideo = createDirectVideoElement(file, isActive);
+                container.appendChild(directVideo);
+            }
+        });
+    }).catch(err => {
+        console.error('GhostStream error:', err);
+        overlay.remove();
+        const directVideo = createDirectVideoElement(file, isActive);
+        container.appendChild(directVideo);
+    });
+    
+    return container;
+}
+
+/**
+ * Create a direct video element (no transcoding)
+ */
+function createDirectVideoElement(file, isActive) {
     const mediaElement = document.createElement('video');
 
     // Set essential attributes
-    mediaElement.loop = true; // Always loop videos
+    mediaElement.loop = true;
     mediaElement.setAttribute('loop', 'true');
-    // ALWAYS create muted initially. Playback is handled by click or navigation.
     mediaElement.muted = true;
-
-    // Set preload to 'none' initially for ALL videos. It will be set to 'auto' in the click handler.
     mediaElement.preload = 'none';
-
-    // Explicitly remove autoplay attribute - playback is controlled manually
     mediaElement.removeAttribute('autoplay');
-    // if (isActive) { // Old logic removed
-    //     mediaElement.autoplay = true; // Removed
-    //     mediaElement.setAttribute('autoplay', 'true');
-    // }
     
     // Show controls on desktop, hide on mobile
-    mediaElement.controls = !MOBILE_DEVICE; // Show controls on desktop only
-    mediaElement.setAttribute('controlsList', 'nodownload'); // Remove download button
+    mediaElement.controls = !MOBILE_DEVICE;
+    mediaElement.setAttribute('controlsList', 'nodownload');
     
     // Set playsinline for all platforms
     mediaElement.playsInline = true;
@@ -521,49 +658,41 @@ function createActualVideoElement(file, isActive) {
     mediaElement.setAttribute('disableRemotePlayback', 'true');
     mediaElement.disablePictureInPicture = true;
     
-    // Use thumbnail as poster if available, otherwise use a data URL
+    // Use thumbnail as poster
     if (file.thumbnailUrl) {
         mediaElement.poster = file.thumbnailUrl;
     } else {
         mediaElement.poster = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxYTFhM2EiLz48L3N2Zz4=';
     }
     
-    // Add fetchpriority for active videos
     if (isActive) {
         mediaElement.setAttribute('fetchpriority', 'high');
     }
     
-    // Create a placeholder element that will be shown if loading fails
     const placeholder = createPlaceholderElement(file, 'video');
     
-    // Add error handling with simplified retry logic
     mediaElement.onerror = function() {
         console.error(`Error loading video: ${file.url}`, this.error);
         
         let retries = parseInt(this.getAttribute('data-retries') || '0');
-        const maxRetries = 2; // Reduced from 3 to 2
+        const maxRetries = 2;
         
         if (retries < maxRetries) {
             retries++;
             this.setAttribute('data-retries', retries);
-            
-            // Simplified retry - just set src directly instead of manipulating source elements
             this.src = `${file.url}${file.url.includes('?') ? '&' : '?'}retry=${retries}&_t=${Date.now()}`;
             this.load();
         } else {
-            // Replace with placeholder after max retries
             if (this.parentNode) {
                 this.parentNode.replaceChild(placeholder, this);
             }
         }
     };
     
-    // Add minimal performance monitoring - only log canplay for active videos
     if (isActive) {
         mediaElement.addEventListener('canplay', () => console.log(`Video canplay: ${file.name}`));
     }
     
-    // Add fullscreen button only for active videos
     if (isActive) {
         mediaElement.addEventListener('loadeddata', () => {
             setTimeout(() => {
@@ -574,10 +703,7 @@ function createActualVideoElement(file, isActive) {
         });
     }
     
-    // Set source directly instead of using source element
     mediaElement.src = file.url;
-    
-    // Force load
     mediaElement.load();
     
     return mediaElement;
