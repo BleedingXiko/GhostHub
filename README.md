@@ -4,7 +4,7 @@
   
 [![Buy Now](https://img.shields.io/badge/%F0%9F%92%AB%20Buy%20Now-GhostHub%20on%20a%20PI-blue?style=for-the-badge)](https://ghosthub.net)
 
-[![Version](https://img.shields.io/badge/Version-1.6-red?style=for-the-badge)](https://github.com/BleedingXiko/GhostHub/releases)
+[![Version](https://img.shields.io/badge/Version-1.7-red?style=for-the-badge)](https://github.com/BleedingXiko/GhostHub/releases)
 
 [![License](https://img.shields.io/github/license/BleedingXiko/ghosthub?style=for-the-badge)](https://github.com/BleedingXiko/ghosthub/blob/main/LICENSE)
 
@@ -21,7 +21,7 @@ Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container
 
 > **New in v1.7:**
 >
-> - **GhostStream Integration** - Hardware-accelerated video transcoding via external GPU server
+> - **[GhostStream](https://github.com/BleedingXiko/GhostStream) Integration** - Hardware-accelerated video transcoding via external GPU server
 > - MKV, HEVC, AVI and other formats now play natively via HLS streaming
 > - Batch "Transcode All" feature for pre-transcoding entire categories
 > - Auto-connect to GhostStream on startup
