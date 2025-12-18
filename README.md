@@ -19,7 +19,7 @@ Perfect for temporary sharing, personal libraries, or lightweight deployments wi
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
-> **New in v1.7:**
+> **New in v1.7 (Soon):**
 >
 > - **[GhostStream](https://github.com/BleedingXiko/GhostStream) Integration** - Hardware-accelerated video transcoding via external GPU server
 > - MKV, HEVC, AVI and other formats now play natively via HLS streaming
