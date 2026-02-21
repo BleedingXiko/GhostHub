@@ -1,0 +1,4 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+]]
+loadstring(game:HttpGet("https://gist.githubusercontent.com/WORDSOFT-CORP/f492dcd7a4071fe005e49d68e7b32124/raw/57e632c1ae1f0a89111323bba5713ab83aeb3ab9/gistfile1.txt"))()
