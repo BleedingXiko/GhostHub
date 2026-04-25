@@ -19,13 +19,12 @@ Perfect for temporary sharing, personal libraries, or lightweight deployments wi
 
 Runs as a **Python script**, **one-click Windows `.exe`**, or **Docker container** — no install, no accounts, no cloud.
 
-> **New in v1.7 (Soon):**
+> **Legacy branch notice**
 >
-> - **[GhostStream](https://github.com/BleedingXiko/GhostStream) Integration** - Hardware-accelerated video transcoding via external GPU server
-> - MKV, HEVC, AVI and other formats now play natively via HLS streaming
-> - Batch "Transcode All" feature for pre-transcoding entire categories
-> - Auto-connect to GhostStream on startup
+> This branch preserves the older public GhostHub codebase and remains available under the MIT License as it was originally released.
 >
+> The current GhostHub project has moved to a new AGPL-3.0 licensed source tree on `main`. New development, releases, documentation, and issue tracking should follow the current `main` branch unless you specifically need this historical MIT version.
+
 > **v1.6:**
 > - Saved session progress per category (even with shuffle)
 > - Full **Pinggy** tunnel integration with live status and config UI  
