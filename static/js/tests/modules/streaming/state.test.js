@@ -1,255 +1,190 @@
 /**
  * Streaming State Module Unit Tests
+ *
+ * Covers the real exports from streaming/state.js, not local plain-object
+ * scaffolds. Verifies setState behavior on the singleton StreamingStateModule,
+ * the per-category view metadata helpers (getCategoryView/setCategoryView/
+ * pruneCategoryViews), and the URL-rename helpers used after file moves.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  streamingState,
+  setCategoryView,
+  getCategoryView,
+  updateCategoryView,
+  clearCategoryViews,
+  pruneCategoryViews,
+  setVideoProgress,
+  getVideoProgress,
+  deleteVideoProgress,
+  clearVideoProgressMap,
+  updateContinueWatchingVideoUrl,
+  updateVideoProgressMapUrl,
+  MAX_CONTINUE_WATCHING,
+  MEDIA_PER_PAGE
+} from '../../../modules/layouts/streaming/state.js';
+
+function resetState() {
+  streamingState.setState({
+    categoriesData: [],
+    continueWatchingData: [],
+    whatsNewData: [],
+    videoProgressMap: {},
+    continueWatchingLoading: false,
+    whatsNewLoading: false,
+    mediaFilter: 'all',
+    categoryIdFilter: null,
+    subfolderFilter: null,
+    parentNameFilter: null,
+    categoryIdsFilter: null,
+    isLoading: false
+  });
+}
 
 describe('Streaming State', () => {
-  let state;
+  beforeEach(resetState);
+  afterEach(resetState);
 
-  beforeEach(() => {
-    state = {
-      categoryCache: new Map(),
-      continueWatching: [],
-      recentlyViewed: [],
-      featuredMedia: null,
-      isInitialized: false,
-      loadingCategories: new Set()
-    };
+  describe('constants', () => {
+    it('exports MEDIA_PER_PAGE and MAX_CONTINUE_WATCHING', () => {
+      expect(typeof MEDIA_PER_PAGE).toBe('number');
+      expect(typeof MAX_CONTINUE_WATCHING).toBe('number');
+    });
   });
 
-  describe('Category cache', () => {
-    it('should cache category data', () => {
-      state.categoryCache.set('movies', {
-        media: [{ url: 'movie1.mp4' }],
+  describe('category view metadata', () => {
+    beforeEach(() => {
+      streamingState.setState({
+        categoriesData: [
+          { id: 'cat-a', name: 'A' },
+          { id: 'cat-b', name: 'B' }
+        ]
+      });
+    });
+
+    it('stores and reads back per-category view metadata under the matching subfolder/filter pair', () => {
+      setCategoryView('cat-a', {
+        viewKey: 'streaming_row::cat-a',
         page: 1,
-        hasMore: true
+        hasMore: true,
+        status: 'ready',
+        subfolders: [{ name: 'Season 1' }],
+        asyncIndexing: false,
+        indexingProgress: 0
+      }, null, 'all');
+
+      const view = getCategoryView('cat-a', null, 'all');
+      expect(view).toBeTruthy();
+      expect(view.viewKey).toBe('streaming_row::cat-a');
+      expect(view.page).toBe(1);
+      expect(view.hasMore).toBe(true);
+      expect(view.subfolders).toEqual([{ name: 'Season 1' }]);
+    });
+
+    it('returns null when the requested subfolder or media filter does not match the stored view', () => {
+      setCategoryView('cat-a', { viewKey: 'vk', page: 1, hasMore: false, status: 'ready' }, 'Season 1', 'all');
+
+      expect(getCategoryView('cat-a', null, 'all')).toBeNull();
+      expect(getCategoryView('cat-a', 'Season 1', 'video')).toBeNull();
+      expect(getCategoryView('cat-a', 'Season 1', 'all')).not.toBeNull();
+    });
+
+    it('merges patches into an existing view via updateCategoryView', () => {
+      setCategoryView('cat-a', { viewKey: 'vk', page: 1, hasMore: true, status: 'ready' }, null, 'all');
+      updateCategoryView('cat-a', { page: 2, hasMore: false }, null, 'all');
+
+      const view = getCategoryView('cat-a', null, 'all');
+      expect(view.page).toBe(2);
+      expect(view.hasMore).toBe(false);
+      expect(view.viewKey).toBe('vk');
+    });
+
+    it('clears per-row view UI hints while preserving viewKey identity', () => {
+      setCategoryView('cat-a', { viewKey: 'vk-a', page: 2, hasMore: true, status: 'ready' }, null, 'all');
+      setCategoryView('cat-b', { viewKey: 'vk-b', page: 3, hasMore: true, status: 'ready' }, null, 'all');
+
+      clearCategoryViews();
+
+      // viewKey-identity is preserved (so CategoryRowsContainer fingerprint stays
+      // stable and rows don't unmount/remount), but page/hasMore/status reset.
+      const viewA = getCategoryView('cat-a', null, 'all');
+      const viewB = getCategoryView('cat-b', null, 'all');
+      expect(viewA).not.toBeNull();
+      expect(viewA.viewKey).toBe('vk-a');
+      expect(viewA.page).toBe(1);
+      expect(viewA.hasMore).toBe(false);
+      expect(viewA.status).toBe('idle');
+      expect(viewB).not.toBeNull();
+      expect(viewB.viewKey).toBe('vk-b');
+      expect(streamingState.state.categoriesData.map((c) => c.id)).toEqual(['cat-a', 'cat-b']);
+    });
+
+    it('pruneCategoryViews strips per-row UI hints for any category not in the keep list', () => {
+      setCategoryView('cat-a', { viewKey: 'vk-a', page: 4, hasMore: true, status: 'ready' }, null, 'all');
+      setCategoryView('cat-b', { viewKey: 'vk-b', page: 5, hasMore: true, status: 'ready' }, null, 'all');
+
+      pruneCategoryViews(['cat-a']);
+
+      // cat-a retains its hints; cat-b keeps viewKey identity but is reset.
+      const viewA = getCategoryView('cat-a', null, 'all');
+      const viewB = getCategoryView('cat-b', null, 'all');
+      expect(viewA).not.toBeNull();
+      expect(viewA.page).toBe(4);
+      expect(viewA.status).toBe('ready');
+      expect(viewB).not.toBeNull();
+      expect(viewB.viewKey).toBe('vk-b');
+      expect(viewB.page).toBe(1);
+      expect(viewB.status).toBe('idle');
+    });
+  });
+
+  describe('videoProgressMap helpers', () => {
+    it('round-trips entries via setVideoProgress / getVideoProgress', () => {
+      setVideoProgress('/media/cat/a.mp4', { video_timestamp: 30, video_duration: 120 });
+      expect(getVideoProgress('/media/cat/a.mp4')).toEqual({ video_timestamp: 30, video_duration: 120 });
+    });
+
+    it('deletes the entry under its canonical url and any url-encoded sibling', () => {
+      setVideoProgress('/media/cat/a%20b.mp4', { video_timestamp: 10, video_duration: 60 });
+      deleteVideoProgress('/media/cat/a b.mp4');
+      expect(streamingState.state.videoProgressMap['/media/cat/a%20b.mp4']).toBeUndefined();
+    });
+
+    it('clearVideoProgressMap empties the slice', () => {
+      setVideoProgress('/x.mp4', { video_timestamp: 1, video_duration: 2 });
+      clearVideoProgressMap();
+      expect(streamingState.state.videoProgressMap).toEqual({});
+    });
+  });
+
+  describe('rename helpers', () => {
+    it('renames continue-watching entries when a file is moved', () => {
+      streamingState.setState({
+        continueWatchingData: [
+          { videoUrl: '/media/cat/old.mp4', categoryId: 'cat' },
+          { videoUrl: '/media/cat/other.mp4', categoryId: 'cat' }
+        ]
       });
-      
-      expect(state.categoryCache.has('movies')).toBe(true);
+
+      updateContinueWatchingVideoUrl('/media/cat/old.mp4', '/media/cat/new.mp4');
+
+      const urls = streamingState.state.continueWatchingData.map((item) => item.videoUrl);
+      expect(urls).toEqual(['/media/cat/new.mp4', '/media/cat/other.mp4']);
     });
 
-    it('should retrieve cached category', () => {
-      state.categoryCache.set('movies', { media: [], page: 1 });
-      const cached = state.categoryCache.get('movies');
-      
-      expect(cached.page).toBe(1);
+    it('moves a videoProgressMap entry under the new URL key', () => {
+      setVideoProgress('/media/cat/old.mp4', { video_timestamp: 50 });
+      updateVideoProgressMapUrl('/media/cat/old.mp4', '/media/cat/new.mp4');
+      expect(streamingState.state.videoProgressMap['/media/cat/new.mp4']).toEqual({ video_timestamp: 50 });
+      expect(streamingState.state.videoProgressMap['/media/cat/old.mp4']).toBeUndefined();
     });
 
-    it('should update cache with new page', () => {
-      state.categoryCache.set('movies', { media: [1, 2], page: 1, hasMore: true });
-      
-      const existing = state.categoryCache.get('movies');
-      existing.media.push(3, 4);
-      existing.page = 2;
-      
-      expect(state.categoryCache.get('movies').media).toHaveLength(4);
-    });
-
-    it('should clear cache', () => {
-      state.categoryCache.set('a', {});
-      state.categoryCache.set('b', {});
-      state.categoryCache.clear();
-      
-      expect(state.categoryCache.size).toBe(0);
-    });
-  });
-
-  describe('Continue watching', () => {
-    it('should store continue watching list', () => {
-      state.continueWatching = [
-        { url: 'movie1.mp4', progress: 50 },
-        { url: 'movie2.mp4', progress: 30 }
-      ];
-      
-      expect(state.continueWatching).toHaveLength(2);
-    });
-
-    it('should sort by most recent', () => {
-      state.continueWatching = [
-        { url: 'a.mp4', lastWatched: 100 },
-        { url: 'b.mp4', lastWatched: 300 },
-        { url: 'c.mp4', lastWatched: 200 }
-      ];
-      
-      state.continueWatching.sort((a, b) => b.lastWatched - a.lastWatched);
-      
-      expect(state.continueWatching[0].url).toBe('b.mp4');
-    });
-
-    it('should limit to max items', () => {
-      const maxItems = 10;
-      state.continueWatching = Array(15).fill({ url: 'video.mp4' });
-      state.continueWatching = state.continueWatching.slice(0, maxItems);
-      
-      expect(state.continueWatching).toHaveLength(10);
-    });
-  });
-
-  describe('updateContinueWatchingVideoUrl', () => {
-    it('should update video URL when file is renamed', () => {
-      state.continueWatching = [
-        { url: '/media/cat1/old-name.mp4', progress: 50 },
-        { url: '/media/cat2/other.mp4', progress: 30 }
-      ];
-      
-      const oldUrl = '/media/cat1/old-name.mp4';
-      const newUrl = '/media/cat1/new-name.mp4';
-      
-      state.continueWatching.forEach(item => {
-        if (item.url === oldUrl) {
-          item.url = newUrl;
-        }
-      });
-      
-      expect(state.continueWatching[0].url).toBe(newUrl);
-      expect(state.continueWatching[1].url).toBe('/media/cat2/other.mp4');
-    });
-
-    it('should handle multiple entries with same old URL', () => {
-      state.continueWatching = [
-        { url: '/media/cat1/movie.mp4', progress: 50 },
-        { url: '/media/cat1/movie.mp4', progress: 75 }
-      ];
-      
-      const oldUrl = '/media/cat1/movie.mp4';
-      const newUrl = '/media/cat1/renamed.mp4';
-      
-      state.continueWatching.forEach(item => {
-        if (item.url === oldUrl) {
-          item.url = newUrl;
-        }
-      });
-      
-      expect(state.continueWatching[0].url).toBe(newUrl);
-      expect(state.continueWatching[1].url).toBe(newUrl);
-    });
-
-    it('should do nothing when old URL not found', () => {
-      state.continueWatching = [
-        { url: '/media/cat1/movie1.mp4', progress: 50 },
-        { url: '/media/cat2/movie2.mp4', progress: 30 }
-      ];
-      
-      const originalData = JSON.parse(JSON.stringify(state.continueWatching));
-      
-      const oldUrl = '/media/cat3/notfound.mp4';
-      const newUrl = '/media/cat3/new.mp4';
-      
-      state.continueWatching.forEach(item => {
-        if (item.url === oldUrl) {
-          item.url = newUrl;
-        }
-      });
-      
-      expect(state.continueWatching).toEqual(originalData);
-    });
-  });
-
-  describe('updateVideoProgressMapUrl', () => {
-    it('should update video progress map URL when file is renamed', () => {
-      state.videoProgressMap = {
-        '/media/cat1/old-name.mp4': { timestamp: 100, duration: 200 },
-        '/media/cat2/other.mp4': { timestamp: 50, duration: 100 }
-      };
-      
-      const oldUrl = '/media/cat1/old-name.mp4';
-      const newUrl = '/media/cat1/new-name.mp4';
-      
-      const entry = state.videoProgressMap[oldUrl];
-      if (entry) {
-        state.videoProgressMap[newUrl] = entry;
-        delete state.videoProgressMap[oldUrl];
-      }
-      
-      expect(state.videoProgressMap[newUrl]).toEqual({ timestamp: 100, duration: 200 });
-      expect(state.videoProgressMap[oldUrl]).toBeUndefined();
-      expect(state.videoProgressMap['/media/cat2/other.mp4']).toBeDefined();
-    });
-
-    it('should do nothing when old URL not in progress map', () => {
-      const originalMap = {
-        '/media/cat1/movie1.mp4': { timestamp: 100 },
-        '/media/cat2/movie2.mp4': { timestamp: 50 }
-      };
-      state.videoProgressMap = { ...originalMap };
-      
-      const oldUrl = '/media/cat3/notfound.mp4';
-      const newUrl = '/media/cat3/new.mp4';
-      
-      const entry = state.videoProgressMap[oldUrl];
-      if (entry) {
-        state.videoProgressMap[newUrl] = entry;
-        delete state.videoProgressMap[oldUrl];
-      }
-      
-      expect(state.videoProgressMap).toEqual(originalMap);
-    });
-  });
-
-  describe('Recently viewed', () => {
-    it('should store recently viewed', () => {
-      state.recentlyViewed = [
-        { url: 'photo1.jpg', viewedAt: Date.now() }
-      ];
-      
-      expect(state.recentlyViewed).toHaveLength(1);
-    });
-
-    it('should add to front of list', () => {
-      state.recentlyViewed = [{ url: 'old.jpg' }];
-      state.recentlyViewed.unshift({ url: 'new.jpg' });
-      
-      expect(state.recentlyViewed[0].url).toBe('new.jpg');
-    });
-  });
-
-  describe('Featured media', () => {
-    it('should store featured media', () => {
-      state.featuredMedia = {
-        url: '/media/featured.mp4',
-        title: 'Featured Movie',
-        description: 'A great movie'
-      };
-      
-      expect(state.featuredMedia.title).toBe('Featured Movie');
-    });
-
-    it('should handle null featured', () => {
-      state.featuredMedia = null;
-      expect(state.featuredMedia).toBeNull();
-    });
-  });
-
-  describe('Loading state', () => {
-    it('should track loading categories', () => {
-      state.loadingCategories.add('movies');
-      state.loadingCategories.add('photos');
-      
-      expect(state.loadingCategories.has('movies')).toBe(true);
-    });
-
-    it('should remove from loading when done', () => {
-      state.loadingCategories.add('movies');
-      state.loadingCategories.delete('movies');
-      
-      expect(state.loadingCategories.has('movies')).toBe(false);
-    });
-
-    it('should check if any loading', () => {
-      state.loadingCategories.add('movies');
-      
-      expect(state.loadingCategories.size > 0).toBe(true);
-    });
-  });
-
-  describe('Initialization', () => {
-    it('should track initialization', () => {
-      expect(state.isInitialized).toBe(false);
-      
-      state.isInitialized = true;
-      
-      expect(state.isInitialized).toBe(true);
+    it('is a no-op when the old URL is not present', () => {
+      setVideoProgress('/media/cat/x.mp4', { video_timestamp: 5 });
+      const before = { ...streamingState.state.videoProgressMap };
+      updateVideoProgressMapUrl('/media/cat/missing.mp4', '/media/cat/replaced.mp4');
+      expect(streamingState.state.videoProgressMap).toEqual(before);
     });
   });
 });

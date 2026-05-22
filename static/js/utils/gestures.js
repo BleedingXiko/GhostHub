@@ -79,11 +79,6 @@ function handleSwipeRightGoBack() {
         window.ragotModules.mediaNavigation.goBackToCategories();
         return true;
     }
-    // Fallback to loader module (legacy/cached)
-    if (window.ragotModules?.mediaLoader?.goBackToCategories) {
-        window.ragotModules.mediaLoader.goBackToCategories();
-        return true;
-    }
     return false;
 }
 

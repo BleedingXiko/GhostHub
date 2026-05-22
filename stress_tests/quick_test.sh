@@ -14,6 +14,8 @@ DURATION="${1:-30}"
 CLIENTS="${2:-10}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GHOSTHUB_URL="${GHOSTHUB_URL:-}"
+GHOSTHUB_SESSION_PASSWORD="${GHOSTHUB_SESSION_PASSWORD:-${GHOSTHUB_PASSWORD:-}}"
+GHOSTHUB_ADMIN_PASSWORD="${GHOSTHUB_ADMIN_PASSWORD:-}"
 MAX_TEMP=0
 MAX_MEM=0
 TOTAL_REQUESTS=0
@@ -59,6 +61,15 @@ check_ghosthub() {
     echo ""
     echo "Check if GhostHub is running: systemctl status ghosthub"
     exit 1
+}
+
+fetch_category_media() {
+    local cat_id="$1"
+    local limit="${2:-50}"
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"requests\":[{\"view\":\"quick_test\",\"viewKey\":\"quick_test::$cat_id::$limit\",\"category_id\":\"$cat_id\",\"page\":1,\"limit\":$limit,\"media_filter\":\"all\",\"hydrate\":\"true\"}]}" \
+        "$GHOSTHUB_URL/api/media/orders" 2>/dev/null
 }
 
 # Get system stats
@@ -155,7 +166,7 @@ test_sync_api() {
     # Test sync toggle on (with session cookie - this makes us the host)
     local toggle_resp=$(curl -s -X POST -H "Content-Type: application/json" \
         -H "Cookie: $cookie" \
-        -d '{"enabled": true, "media": {"category_id": "'"$cat_id"'", "file_url": "", "index": 0}}' \
+        -d '{"enabled": true, "media": {"category_id": "'"$cat_id"'", "viewKey": "sim::'"$cat_id"'::all", "viewType": "streaming_grid", "viewParams": {"category_id": "'"$cat_id"'", "media_filter": "all"}, "mediaId": "'"$cat_id"'::item_0"}}' \
         "$GHOSTHUB_URL/api/sync/toggle" 2>/dev/null)
     
     if echo "$toggle_resp" | grep -q '"active"'; then
@@ -171,7 +182,7 @@ test_sync_api() {
     # Test sync update (must use same session as host)
     local update_resp=$(curl -s -X POST -H "Content-Type: application/json" \
         -H "Cookie: $cookie" \
-        -d '{"category_id": "'"$cat_id"'", "file_url": "/test", "index": 1}' \
+        -d '{"category_id": "'"$cat_id"'", "viewKey": "sim::'"$cat_id"'::all", "viewType": "streaming_grid", "viewParams": {"category_id": "'"$cat_id"'", "media_filter": "all"}, "mediaId": "'"$cat_id"'::item_1"}' \
         "$GHOSTHUB_URL/api/sync/update" 2>/dev/null)
     if echo "$update_resp" | grep -q '"success"'; then
         ((success++))
@@ -210,12 +221,12 @@ test_streaming() {
     fi
     
     # Try to get media list
-    local media_resp=$(curl -s "$GHOSTHUB_URL/api/categories/$cat_id/media?limit=1" 2>/dev/null)
+    local media_resp=$(fetch_category_media "$cat_id" 1)
     
     local end=$(date +%s)
     local duration=$((end - start))
     
-    if echo "$media_resp" | grep -q '"files"'; then
+    if echo "$media_resp" | grep -q '"results"'; then
         echo -e "${GREEN}✓${NC} (${duration}s)"
         return 0
     else
@@ -301,7 +312,7 @@ test_network() {
     local bytes=0
     local count=0
     for i in $(seq 1 10); do
-        local resp=$(curl -s -w '%{size_download}' -o /dev/null "$GHOSTHUB_URL/api/categories/$cat_id/media?limit=50" 2>/dev/null)
+        local resp=$(fetch_category_media "$cat_id" 50 | wc -c | tr -d ' ')
         bytes=$((bytes + resp))
         ((count++))
     done
@@ -331,7 +342,7 @@ test_thumbnails() {
     
     for cat_id in $cats; do
         # Get first few media files
-        local files=$(curl -s "$GHOSTHUB_URL/api/categories/$cat_id/media?limit=5" 2>/dev/null | grep -o '"name":"[^"]*"' | head -5 | cut -d'"' -f4)
+        local files=$(fetch_category_media "$cat_id" 5 | grep -o '"name":"[^"]*"' | head -5 | cut -d'"' -f4)
         for file in $files; do
             ((total++))
             if curl -s -o /dev/null -w '' --connect-timeout 10 "$GHOSTHUB_URL/thumbnails/$cat_id/$file" 2>/dev/null; then
@@ -379,12 +390,27 @@ test_progress_stress() {
     # Establish session cookie by hitting the main page
     curl -s -H "Cookie: session_id=$session_id" "$GHOSTHUB_URL/" >/dev/null 2>&1
 
+    if [ -n "$GHOSTHUB_SESSION_PASSWORD" ]; then
+        curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Cookie: session_id=$session_id" \
+            -d "{\"password\":\"$GHOSTHUB_SESSION_PASSWORD\"}" \
+            "$GHOSTHUB_URL/api/validate_session_password" >/dev/null 2>&1
+    fi
+
     # Claim admin with this session
-    curl -s -X POST -H "Cookie: session_id=$session_id" \
+    local admin_payload="{}"
+    if [ -n "$GHOSTHUB_ADMIN_PASSWORD" ]; then
+        admin_payload="{\"password\":\"$GHOSTHUB_ADMIN_PASSWORD\"}"
+    fi
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Cookie: session_id=$session_id" \
+        -d "$admin_payload" \
         "$GHOSTHUB_URL/api/admin/claim" >/dev/null 2>&1
 
     # Create a test profile (progress saves require an active profile)
-    local profile_name="quick-stress-$$-$(date +%s)"
+    local profile_name="ghst-test-quick-$$-$(date +%s)"
     local profile_resp=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -H "Cookie: session_id=$session_id" \
@@ -410,7 +436,7 @@ test_progress_stress() {
         local resp=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -H "Cookie: session_id=$session_id" \
-            -d '{"index": '$i', "total_count": 100, "video_timestamp": '$i'.5}' \
+            -d '{"video_path":"/stress/quick/video_'$i'.mp4","index": '$i', "total_count": 100, "video_timestamp": '$i'.5, "video_duration": 3600.0}' \
             "$GHOSTHUB_URL/api/progress/$cat_id" 2>/dev/null)
         local http_code=$(echo "$resp" | tail -1)
 
@@ -422,7 +448,7 @@ test_progress_stress() {
 
         # Read progress (GET)
         curl -s -H "Cookie: session_id=$session_id" \
-            "$GHOSTHUB_URL/api/progress/$cat_id" >/dev/null 2>&1
+            "$GHOSTHUB_URL/api/progress/videos" >/dev/null 2>&1
         echo "R" >> /tmp/ghosthub_progress_test_$$
     done
 
@@ -479,7 +505,7 @@ test_category_scan_stress() {
                     # Fetch media for each category (pagination stress)
                     local cats=$(echo "$resp" | grep -o '"id":"[^"]*"' | head -3 | cut -d'"' -f4)
                     for cat_id in $cats; do
-                        curl -s "$GHOSTHUB_URL/api/categories/$cat_id/media?page=1&limit=50" >/dev/null 2>&1
+                        fetch_category_media "$cat_id" 50 >/dev/null 2>&1
                         echo "M" >> /tmp/ghosthub_scan_test_$$
                     done
                 fi
@@ -529,11 +555,11 @@ test_video_streaming_stress() {
         return 0
     fi
     
-    local video_name=$(curl -s "$GHOSTHUB_URL/api/categories/$cat_id/media?limit=10" 2>/dev/null | grep -o '"name":"[^"]*\.mp4"' | head -1 | cut -d'"' -f4)
+    local video_name=$(fetch_category_media "$cat_id" 10 | grep -o '"name":"[^"]*\.mp4"' | head -1 | cut -d'"' -f4)
     
     if [ -z "$video_name" ]; then
         # Try other video formats
-        video_name=$(curl -s "$GHOSTHUB_URL/api/categories/$cat_id/media?limit=10" 2>/dev/null | grep -oE '"name":"[^"]*\.(mkv|webm|mov)"' | head -1 | cut -d'"' -f4)
+        video_name=$(fetch_category_media "$cat_id" 10 | grep -oE '"name":"[^"]*\.(mkv|webm|mov)"' | head -1 | cut -d'"' -f4)
     fi
     
     if [ -z "$video_name" ]; then
@@ -625,7 +651,7 @@ test_worst_case() {
         
         if [ -n "$cat_id" ]; then
             for i in $(seq 1 $((CLIENTS / 2))); do
-                (curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 "$GHOSTHUB_URL/api/categories/$cat_id/media" 2>/dev/null >> "$tmp_results") &
+                (fetch_category_media "$cat_id" 50 >/dev/null && printf '200' || printf '500') >> "$tmp_results" &
             done
         fi
         
@@ -744,15 +770,67 @@ print_summary() {
     fi
 }
 
+# Sweep any leaked stress-test profiles (name prefix: ghst-test-).
+# Belt-and-suspenders for cases where the inline DELETE in a test never
+# ran — script killed, curl timeout, etc. Safe to call repeatedly.
+sweep_stress_profiles() {
+    [ -z "$GHOSTHUB_URL" ] && return 0
+    local cookie_jar
+    cookie_jar=$(mktemp -t ghst-sweep-XXXXXX 2>/dev/null) || return 0
+
+    curl -s -c "$cookie_jar" "${GHOSTHUB_URL}/" > /dev/null 2>&1 || {
+        rm -f "$cookie_jar"
+        return 0
+    }
+
+    local admin_payload='{}'
+    if [ -n "${GHOSTHUB_ADMIN_PASSWORD:-}" ]; then
+        admin_payload="{\"password\": \"$GHOSTHUB_ADMIN_PASSWORD\"}"
+    fi
+    curl -s -b "$cookie_jar" -c "$cookie_jar" \
+        -X POST -H "Content-Type: application/json" \
+        -d "$admin_payload" \
+        "${GHOSTHUB_URL}/api/admin/claim" > /dev/null 2>&1
+
+    local listing
+    listing=$(curl -s -b "$cookie_jar" "${GHOSTHUB_URL}/api/profiles" 2>/dev/null)
+    [ -z "$listing" ] && { rm -f "$cookie_jar"; return 0; }
+
+    local ids
+    ids=$(python3 - "$listing" <<'PY' 2>/dev/null
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+for profile in (data.get('profiles') or []):
+    name = profile.get('name') or ''
+    pid = profile.get('id')
+    if pid and name.startswith('ghst-test-'):
+        print(pid)
+PY
+    )
+
+    for pid in $ids; do
+        curl -s -b "$cookie_jar" -X DELETE \
+            "${GHOSTHUB_URL}/api/profiles/$pid" > /dev/null 2>&1
+    done
+
+    curl -s -b "$cookie_jar" -X POST \
+        "${GHOSTHUB_URL}/api/admin/release" > /dev/null 2>&1
+    rm -f "$cookie_jar"
+}
+
 # Cleanup temp files and server data
 cleanup_temp() {
     rm -f /tmp/ghosthub_quick_*.json 2>/dev/null || true
     rm -f /tmp/ghosthub_progress_test_* 2>/dev/null || true
     rm -f /tmp/ghosthub_scan_test_* 2>/dev/null || true
     rm -f /tmp/ghosthub_stream_test_* 2>/dev/null || true
-    
-    # Note: test profiles are cleaned up inline after each test.
-    # Never call DELETE /api/progress/all here — it would wipe real user data.
+
+    # Sweep any leaked test profiles. Inline DELETEs run per-test, but
+    # this catches profiles orphaned by killed runs / curl timeouts.
+    sweep_stress_profiles
 }
 
 # Main

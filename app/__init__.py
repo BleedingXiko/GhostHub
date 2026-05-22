@@ -6,6 +6,7 @@ Flask application initialization and configuration.
 import logging
 
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .app_bootstrap import (
     configure_flask_app,
@@ -34,6 +35,11 @@ def create_app(config_name='default'):
         instance_relative_config=True,
     )
     configure_flask_app(app, config_name)
+
+    # Trust X-Forwarded-For from the immediate (loopback) peer so the real
+    # client IP is used when GhostHub runs behind a reverse proxy on the same
+    # host. Without a proxy, no header is sent and remote_addr is unchanged.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
     socketio.init_app(app)
     install_specter(app, socketio)

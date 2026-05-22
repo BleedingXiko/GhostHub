@@ -33,8 +33,6 @@ export const SOCKET_EVENTS = Object.freeze({
     ADMIN_KICK_CONFIRMATION: 'admin_kick_confirmation',
     ADMIN_STATUS_UPDATE: 'admin_status_update',
     USB_MOUNTS_CHANGED: 'usb_mounts_changed',
-    CONTENT_VISIBILITY_CHANGED: 'content_visibility_changed',
-    FILE_RENAMED: 'file_renamed',
     TUNNEL_STATUS_UPDATE: 'tunnel_status_update',
     CATEGORY_UPDATED: 'category_updated',
     THUMBNAIL_STATUS_UPDATE: 'thumbnail_status_update',

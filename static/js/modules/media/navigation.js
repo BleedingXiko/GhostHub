@@ -28,7 +28,8 @@ import { createActualVideoElement } from './videoPlayer.js';
 import {
     initProgressSync,
     emitMyStateUpdate,
-    updateMediaSession
+    updateMediaSession,
+    isPlaybackProgressAllowed
 } from './progressSync.js';
 import {
     getVideoProgressSnapshot,
@@ -91,7 +92,7 @@ import {
 
 import { toggleAutoPlay } from '../playback/autoPlay.js';
 
-import { setupLayoutNavigation, cleanupLayoutNavigation, onLayoutMediaRendered, onLayoutViewerClosed, getCurrentLayout } from '../../utils/layoutUtils.js';
+import { setupLayoutNavigation, cleanupLayoutNavigation, onLayoutMediaRendered, onLayoutViewerClosed } from '../../utils/layoutUtils.js';
 
 import {
     requestWakeLock,
@@ -100,13 +101,43 @@ import {
 import { refreshAllLayouts } from '../../utils/liveVisibility.js';
 import { setAppState, getAppState } from '../../utils/appStateUtils.js';
 import { SOCKET_EVENTS } from '../../core/socketEvents.js';
+import { selectParams, selectRecordAt, selectRecordsForView, selectView } from './selectors.js';
+import {
+    clearViewerSession,
+    getCurrentViewerRecord,
+    getKnownViewerCount,
+    getViewerSession,
+    setViewerSession,
+} from './viewerState.js';
 
 // Module state
 let socket = null;
 let navigationLifecycle = null;
 
 function isModalOpen() {
-    return !!$('.modal:not(.hidden)');
+    const viewerOpen = !!window.ragotModules?.appDom?.mediaViewer &&
+        !window.ragotModules.appDom.mediaViewer.classList.contains('hidden');
+    return Array.from($$('.modal:not(.hidden)')).some((modal) =>
+        !(viewerOpen && modal.classList.contains('gallery-month-modal'))
+    );
+}
+
+function getActiveViewer() {
+    const viewer = getViewerSession();
+    const view = viewer ? selectView(viewer.viewKey) : null;
+    return { viewer, view, count: view?.orderedIds?.length || 0 };
+}
+
+function sendHostViewerUpdate(viewer, media) {
+    if (!window.ragotModules.appState.syncModeEnabled || !window.ragotModules.appState.isHost || !viewer) return;
+    const view = selectView(viewer.viewKey);
+    window.ragotModules?.syncManager?.sendSyncUpdate?.({
+        viewKey: viewer.viewKey,
+        viewType: view?.viewType || null,
+        viewParams: selectParams(viewer.viewKey),
+        mediaId: media?.id || null,
+        category_id: window.ragotModules.appState.currentCategoryId || null,
+    });
 }
 
 
@@ -187,27 +218,28 @@ function navigateMedia(direction, event) {
         return;
     }
 
-    let nextIndex = appState.currentMediaIndex;
-    const listLength = appState.fullMediaList.length;
+    const { viewer, view, count } = getActiveViewer();
+    if (!viewer) return;
+    let nextIndex = viewer.activeIndex;
     const currentMediaElement = $('.viewer-media.active', window.ragotModules.appDom.mediaViewer);
 
     // Cleanup old media elements
-    cleanupOffscreenMedia(currentMediaElement, listLength);
+    cleanupOffscreenMedia(currentMediaElement, count);
 
     if (direction === 'next') {
-        if (appState.hasMoreMedia && !appState.isLoading &&
-            appState.currentMediaIndex >= listLength - window.ragotModules.appRuntime.LOAD_MORE_THRESHOLD) {
+        if (view?.hasMore && !appState.isLoading &&
+            viewer.activeIndex >= count - window.ragotModules.appRuntime.LOAD_MORE_THRESHOLD) {
             setTimeout(() => loadMoreMedia(), 0);
         }
 
-        if (appState.currentMediaIndex < listLength - 1) {
-            nextIndex = appState.currentMediaIndex + 1;
-        } else if (!appState.hasMoreMedia) {
+        if (viewer.activeIndex < count - 1) {
+            nextIndex = viewer.activeIndex + 1;
+        } else if (!view?.hasMore) {
             return;
         }
     } else if (direction === 'prev') {
-        if (appState.currentMediaIndex > 0) {
-            nextIndex = appState.currentMediaIndex - 1;
+        if (viewer.activeIndex > 0) {
+            nextIndex = viewer.activeIndex - 1;
         } else {
             return;
         }
@@ -218,22 +250,27 @@ function navigateMedia(direction, event) {
     }
 
     // Capture and save video progress before navigating
-    const videoProgress = captureVideoProgress(currentMediaElement);
-    if (videoProgress) {
-        saveNavigationProgress(appState.currentCategoryId, appState.currentMediaIndex, videoProgress);
+    const canSaveProgress = isPlaybackProgressAllowed(appState);
+    const videoProgress = canSaveProgress ? captureVideoProgress(currentMediaElement) : null;
+    if (canSaveProgress && videoProgress) {
+        saveNavigationProgress(appState.currentCategoryId, viewer.activeIndex, videoProgress);
     }
 
     // Render new window if index changed
-    if (nextIndex !== appState.currentMediaIndex) {
+    if (nextIndex !== viewer.activeIndex) {
+        setViewerSession(viewer.viewKey, nextIndex, { categoryId: viewer.categoryId || appState.currentCategoryId });
         renderMediaWindow(nextIndex);
 
-        if (appState.fullMediaList?.[nextIndex]) {
-            updateMediaInfoOverlay(appState.fullMediaList[nextIndex]);
-            updateMediaSession(appState.fullMediaList[nextIndex]);
+        const currentRecord = selectRecordAt(viewer.viewKey, nextIndex);
+        if (currentRecord) {
+            updateMediaInfoOverlay(currentRecord);
+            updateMediaSession(currentRecord);
         }
 
         // Save index progress after navigation
-        saveIndexProgress(appState.currentCategoryId, nextIndex, videoProgress);
+        if (canSaveProgress) {
+            saveIndexProgress(appState.currentCategoryId, nextIndex, videoProgress);
+        }
     }
 }
 
@@ -242,9 +279,11 @@ function navigateMedia(direction, event) {
  * @private
  */
 function cleanupOffscreenMedia(currentMediaElement, listLength) {
-    const visibleIndices = new Set([window.ragotModules.appState.currentMediaIndex]);
-    if (window.ragotModules.appState.currentMediaIndex > 0) visibleIndices.add(window.ragotModules.appState.currentMediaIndex - 1);
-    if (window.ragotModules.appState.currentMediaIndex < listLength - 1) visibleIndices.add(window.ragotModules.appState.currentMediaIndex + 1);
+    const viewer = getViewerSession();
+    const activeIndex = viewer?.activeIndex || 0;
+    const visibleIndices = new Set([activeIndex]);
+    if (activeIndex > 0) visibleIndices.add(activeIndex - 1);
+    if (activeIndex < listLength - 1) visibleIndices.add(activeIndex + 1);
 
     requestAnimationFrame(() => {
         $$('.viewer-media', window.ragotModules.appDom.mediaViewer).forEach(el => {
@@ -362,9 +401,12 @@ function hideViewerSpinner() {
  * Capture and save the current playback state (index and video timestamp)
  */
 export async function saveCurrentState({ allowCompletionOnExit = false } = {}) {
+    if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) return;
+
     const currentMediaElement = $('.viewer-media.active', window.ragotModules.appDom.mediaViewer);
     const videoProgress = captureVideoProgress(currentMediaElement);
-    const index = window.ragotModules.appState.currentMediaIndex;
+    const viewer = getViewerSession();
+    const index = viewer?.activeIndex ?? 0;
     const categoryId = window.ragotModules.appState.currentCategoryId;
     const videoCompleted = allowCompletionOnExit && shouldMarkCompletedOnExit(
         videoProgress?.video_timestamp,
@@ -375,7 +417,7 @@ export async function saveCurrentState({ allowCompletionOnExit = false } = {}) {
         setAppState('savedVideoCategoryId', categoryId);
         setAppState('savedVideoIndex', index);
 
-        const currentMedia = window.ragotModules.appState.fullMediaList?.[index];
+        const currentMedia = viewer ? selectRecordAt(viewer.viewKey, index) : null;
         const progressUpdate = {
             index: index,
             thumbnail_url: currentMedia?.thumbnailUrl || currentMedia?.url
@@ -426,15 +468,13 @@ function captureVideoProgress(currentMediaElement) {
  * @private
  */
 async function saveNavigationProgress(categoryId, index, videoProgress, videoCompleted = false) {
-    const currentMedia = window.ragotModules.appState.fullMediaList?.[window.ragotModules.appState.currentMediaIndex];
-    const thumbnailUrl = currentMedia?.thumbnailUrl || currentMedia?.url;
-    const totalCount = window.ragotModules.appState.fullMediaList?.length || 0;
-    if (window.ragotModules.appState.syncModeEnabled) return;
+    if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) return;
 
-    // Gallery layout does NOT save progress
-    if (getCurrentLayout() === 'gallery') {
-        return;
-    }
+    const viewer = getViewerSession();
+    const currentMedia = viewer ? selectRecordAt(viewer.viewKey, viewer.activeIndex) : null;
+    const thumbnailUrl = currentMedia?.thumbnailUrl || currentMedia?.url;
+    const totalCount = getKnownViewerCount(window.ragotModules.appState);
+    if (window.ragotModules.appState.syncModeEnabled) return;
 
     await persistPlaybackProgress({
         socket,
@@ -447,9 +487,6 @@ async function saveNavigationProgress(categoryId, index, videoProgress, videoCom
         duration: videoProgress.video_duration,
         videoCompleted,
         isCritical: true,
-        mediaOrder: currentMedia?.url && window.ragotModules.appState.trackingMode === 'video'
-            ? window.ragotModules.appState.fullMediaList?.map(item => item?.url).filter(Boolean)
-            : null,
         optimisticLayout: true
     });
 }
@@ -458,12 +495,20 @@ async function saveNavigationProgress(categoryId, index, videoProgress, videoCom
  * Save index progress after navigation
  */
 async function saveIndexProgress(categoryId, nextIndex, videoProgress, critical = false) {
-    const totalCount = window.ragotModules.appState.fullMediaList?.length || 0;
-    const currentMedia = window.ragotModules.appState.fullMediaList?.[nextIndex];
+    if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) return;
+
+    const viewer = getViewerSession();
+    const totalCount = getKnownViewerCount(window.ragotModules.appState);
+    const currentMedia = viewer ? selectRecordAt(viewer.viewKey, nextIndex) : null;
+    const currentView = viewer ? selectView(viewer.viewKey) : null;
     const thumbnailUrl = currentMedia?.thumbnailUrl || currentMedia?.url;
 
     const payload = {
         category_id: categoryId,
+        viewKey: viewer?.viewKey || null,
+        viewType: currentView?.viewType || null,
+        viewParams: viewer ? selectParams(viewer.viewKey) : {},
+        mediaId: currentMedia?.id || null,
         index: nextIndex,
         total_count: totalCount,
         thumbnail_url: thumbnailUrl
@@ -501,11 +546,19 @@ async function saveIndexProgress(categoryId, nextIndex, videoProgress, critical 
  */
 export function renderMediaWindow(index) {
     if (index === null || index === undefined) {
-        index = window.ragotModules.appState.currentMediaIndex || 0;
+        index = getViewerSession()?.activeIndex || 0;
     }
     index = parseInt(index, 10);
 
     try {
+        const viewer = getViewerSession();
+        if (!viewer?.viewKey) {
+            toggleSpinner(true);
+            return;
+        }
+        const view = selectView(viewer.viewKey);
+        const knownCount = view?.orderedIds?.length || 0;
+
         // CLEANUP: Reset UI state before rendering new item
         // This mirrors goBackToCategories behavior for a clean transition
         window.ragotModules?.videoControls?.detachControls?.();
@@ -523,45 +576,41 @@ export function renderMediaWindow(index) {
         }
 
         // Spinner management
-        if (window.ragotModules.appState.fullMediaList.length === 0 || !window.ragotModules.appState.fullMediaList[index]) {
+        if (knownCount === 0 || !selectRecordAt(viewer.viewKey, index)) {
             toggleSpinner(true);
         } else if (window.ragotModules.appState.isLoading) {
             toggleSpinner(true);
         }
 
-        const previousIndex = window.ragotModules.appState.currentMediaIndex;
-        setAppState('currentMediaIndex', index);
+        const previousIndex = viewer.activeIndex;
+        setViewerSession(viewer.viewKey, index, { categoryId: viewer.categoryId || window.ragotModules.appState.currentCategoryId });
+        const activeRecord = selectRecordAt(viewer.viewKey, index);
 
-        if (window.ragotModules.appState.fullMediaList?.[index]) {
-            updateMediaInfoOverlay(window.ragotModules.appState.fullMediaList[index]);
-            updateMediaSession(window.ragotModules.appState.fullMediaList[index]);
+        if (activeRecord) {
+            updateMediaInfoOverlay(activeRecord);
+            updateMediaSession(activeRecord);
             if (window.ragotModules.appDom.mediaViewer) {
-                window.ragotModules.appDom.mediaViewer.setAttribute('data-media-type', window.ragotModules.appState.fullMediaList[index].type || 'unknown');
+                window.ragotModules.appDom.mediaViewer.setAttribute('data-media-type', activeRecord.type || 'unknown');
             }
         } else if (window.ragotModules.appDom.mediaViewer) {
             window.ragotModules.appDom.mediaViewer.removeAttribute('data-media-type');
         }
 
-        if (window.ragotModules.appState.currentCategoryId) {
-            emitMyStateUpdate(window.ragotModules.appState.currentCategoryId, window.ragotModules.appState.currentMediaIndex);
+        if (window.ragotModules.appState.currentCategoryId && isPlaybackProgressAllowed(window.ragotModules.appState)) {
+            emitMyStateUpdate(window.ragotModules.appState.currentCategoryId, index);
         }
 
         // Render window
         const startIndex = Math.max(0, index - window.ragotModules.appRuntime.renderWindowSize);
-        const endIndex = Math.min(window.ragotModules.appState.fullMediaList.length - 1, index + window.ragotModules.appRuntime.renderWindowSize);
+        const endIndex = Math.min(knownCount - 1, index + window.ragotModules.appRuntime.renderWindowSize);
 
         // Sync-host broadcast
-        if (window.ragotModules.appState.syncModeEnabled && window.ragotModules.appState.isHost && previousIndex !== index) {
-            const currentFile = window.ragotModules.appState.fullMediaList[index];
-            window.ragotModules?.syncManager?.sendSyncUpdate?.({
-                category_id: window.ragotModules.appState.currentCategoryId,
-                file_url: currentFile?.url,
-                index
-            });
+        if (window.ragotModules.appState.syncModeEnabled && window.ragotModules.appState.isHost) {
+            sendHostViewerUpdate({ ...viewer, activeIndex: index }, activeRecord);
         }
 
         for (let i = startIndex; i <= endIndex; i++) {
-            const file = window.ragotModules.appState.fullMediaList[i];
+            const file = selectRecordAt(viewer.viewKey, i);
             if (!file || file.type === 'error') continue;
 
             let mediaElement;
@@ -615,7 +664,7 @@ export function renderMediaWindow(index) {
 
         // Post-render chores
         const activeMedia = $('.viewer-media.active', window.ragotModules.appDom.mediaViewer);
-        if ((activeMedia && !isActiveMediaLoaded(activeMedia)) || window.ragotModules.appState.isLoading || window.ragotModules.appState.fullMediaList.length === 0) {
+        if ((activeMedia && !isActiveMediaLoaded(activeMedia)) || window.ragotModules.appState.isLoading || knownCount === 0) {
             if (window.ragotModules.appDom.spinnerContainer) {
                 window.ragotModules.appDom.spinnerContainer.style.display = 'flex';
                 if (!window.ragotModules.appDom.mediaViewer.contains(window.ragotModules.appDom.spinnerContainer)) window.ragotModules.appDom.mediaViewer.appendChild(window.ragotModules.appDom.spinnerContainer);
@@ -803,19 +852,16 @@ async function goBackToCategories() {
         window.ragotModules.videoControls.detachControls();
 
         // Host locally reverts to thumbnail
-        renderMediaWindow(window.ragotModules.appState.currentMediaIndex);
+        renderMediaWindow(getViewerSession()?.activeIndex || 0);
 
         // Sync: Notify guests to also revert to thumbnail (by re-sending current index)
         // Guests at this index will re-render, effectively closing the video player
         if (window.ragotModules.appState.syncModeEnabled && window.ragotModules.appState.isHost) {
-            const currentMedia = window.ragotModules.appState.fullMediaList[window.ragotModules.appState.currentMediaIndex];
+            const viewer = getViewerSession();
+            const currentMedia = getCurrentViewerRecord(window.ragotModules.appState);
             if (currentMedia) {
                 console.log('[Sync] Host reverting to thumbnail, sending update to guests');
-                window.ragotModules?.syncManager?.sendSyncUpdate?.({
-                    category_id: window.ragotModules.appState.currentCategoryId,
-                    file_url: currentMedia.url,
-                    index: window.ragotModules.appState.currentMediaIndex
-                });
+                sendHostViewerUpdate(viewer, currentMedia);
             }
         }
         return;
@@ -859,11 +905,8 @@ async function goBackToCategories() {
     }
 
     // Reset state
-    setAppState('currentMediaIndex', 0);
-    setAppState('fullMediaList', []);
-    setAppState('hasMoreMedia', true);
+    clearViewerSession();
     setAppState('isLoading', false);
-    setAppState('mediaUrlSet', new Set());
     window.ragotModules.appCache.clear();
 
     // Abort any pending fetches
@@ -876,9 +919,11 @@ async function goBackToCategories() {
     if (window.ragotModules.appState.syncModeEnabled && window.ragotModules.appState.isHost) {
         console.log('[Sync] Host going back to categories, notifying guests');
         window.ragotModules?.syncManager?.sendSyncUpdate?.({
+            viewKey: null,
+            viewType: null,
+            viewParams: {},
+            mediaId: null,
             category_id: null,
-            file_url: null,
-            index: -1
         });
     }
 

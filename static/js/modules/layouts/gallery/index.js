@@ -4,7 +4,7 @@
  *
  * Module Structure:
  * - state.js      - Centralized state management (GalleryStateModule extends Module)
- * - data.js       - API calls and data fetching
+ * - mediaDataSource.js - Manifest-backed API calls and data fetching
  * - lazyLoad.js   - IntersectionObserver image loading
  * - navigation.js - Media viewer navigation
  * - renderer.js   - Main render logic (GallerySidebarComponent, GalleryMobileTimelineComponent,
@@ -13,7 +13,7 @@
  * RAGOT Architecture:
  * GalleryLayoutModule (Module)
  *   └─ adopts galleryState (GalleryStateModule)
- *   └─ adopts GallerySidebarComponent           → syncs on allYearsData/mediaByDate/dateKeys
+ *   └─ adopts GallerySidebarComponent           → syncs on allYearsData/dateKeys
  *   └─ adopts GalleryMobileTimelineComponent    → syncs on allYearsData/dateKeys/selectedMobileYear
  *   └─ adopts GallerySelectionToolbarComponent  → syncs on selectedVersion (selectedCount)
  */
@@ -59,10 +59,10 @@ import {
     GalleryContainerComponent,
     GalleryMonthOverlayComponent
 } from './renderer.js';
-import { jumpToYear, jumpToDate, fetchMonthMedia } from './data.js';
+import { jumpToYear, jumpToDate, fetchMonthMedia } from './mediaDataSource.js';
 import { openViewer } from './navigation.js';
 import { registerLayoutHandler, urlsMatch } from '../../../utils/layoutUtils.js';
-import { buildThumbnailImageAttrs, setThumbnailImageState, createThumbnailLazyLoader, getAdaptiveRootMargin, isGeneratedThumbnailSrc, withThumbnailRetryParam } from '../../../utils/mediaUtils.js';
+import { buildThumbnailImageAttrs, setThumbnailImageState } from '../../../utils/mediaUtils.js';
 import { appendShowHiddenParam, syncShowHiddenFromEvent } from '../../../utils/showHiddenManager.js';
 import { Module, createElement, append, $, $$, attr } from '../../../libs/ragot.esm.min.js';
 import { createLayoutChangeLifecycle } from '../shared/layoutLifecycle.js';
@@ -99,7 +99,6 @@ export class GalleryLayoutModule extends Module {
         this._selectionToolbarComp = null;
         this._toolbarComp = null;
         this._overlayComp = null;
-        this._overlayLoader = null;
         this._overlayRequestId = 0;
         this._overlayAbortController = null;
         this._timelineCleanupRegistered = false;
@@ -147,7 +146,7 @@ export class GalleryLayoutModule extends Module {
 
         this._sidebarComp = new GallerySidebarComponent({
             allYearsData: galleryState.state.allYearsData,
-            mediaByDate: galleryState.state.mediaByDate,
+            mediaByDate: getMediaByDate(),
             dateKeys: getSortedDateKeys(),
             hasMoreDates: galleryState.state.hasMoreDates,
         });
@@ -202,11 +201,12 @@ export class GalleryLayoutModule extends Module {
         // Sync Sidebar from galleryState with change detection
         galleryState.subscribe((_slice, state) => {
             const dateKeys = getSortedDateKeys();
-            const { allYearsData, mediaByDate, hasMoreDates } = state;
+            const mediaByDate = getMediaByDate();
+            const { allYearsData, hasMoreDates } = state;
 
             if (
                 this._sidebarComp.state.allYearsData !== allYearsData ||
-                this._sidebarComp.state.mediaByDate !== mediaByDate ||
+                this._sidebarComp.state.dateKeys.join('|') !== dateKeys.join('|') ||
                 this._sidebarComp.state.dateKeys.length !== dateKeys.length ||
                 this._sidebarComp.state.hasMoreDates !== hasMoreDates
             ) {
@@ -220,9 +220,7 @@ export class GalleryLayoutModule extends Module {
         }, {
             owner: this,
             immediate: true,
-            // Fire only when sidebar-relevant slices change. allYearsData and
-            // mediaByDate are objects — compare by reference (setState replaces them).
-            selector: (s) => `${s.allYearsData}|${s.mediaByDate}|${s.hasMoreDates}`,
+            selector: (s) => `${s.allYearsData}|${s.timelineProjectionVersion}|${s.hasMoreDates}`,
         });
 
         this._mobileTimelineComp = new GalleryMobileTimelineComponent({
@@ -306,8 +304,7 @@ export class GalleryLayoutModule extends Module {
         }, {
             owner: this,
             immediate: true,
-            // Fire only when timeline-relevant slices change.
-            selector: (s) => `${s.allYearsData}|${s.selectedMobileYear}`,
+            selector: (s) => `${s.allYearsData}|${s.timelineProjectionVersion}|${s.selectedMobileYear}`,
         });
 
         this._selectionToolbarComp = new GallerySelectionToolbarComponent({
@@ -388,6 +385,7 @@ export class GalleryLayoutModule extends Module {
     async openMonthOverlay(year, month) {
         if (!this._overlayComp) return;
 
+
         const flatMonths = buildFlatMonthList(galleryState.state.allYearsData || []);
         const idx = flatMonths.findIndex(m => m.year === year && m.month === month);
         // "prev" = older month = higher index in newest-first list
@@ -401,84 +399,66 @@ export class GalleryLayoutModule extends Module {
             : null;
         const requestId = ++this._overlayRequestId;
 
+        const filter = galleryState.state.mediaFilter || 'all';
+        const categoryId = galleryState.state.categoryIdFilter || null;
+        const categoryIdsFilter = galleryState.state.categoryIdsFilter || null;
+        const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+        const viewKey = `gallery_month::${categoryId || ''}::${categoryIdsFilter?.join(',') || ''}::${filter}::${monthStr}`;
+
         this._overlayComp.setState({
             open: true,
             year,
             month,
-            media: [],
-            loading: true,
+            viewKey,
+            mediaIds: null,
             error: null,
             hasPrev,
             hasNext,
             allMonths: flatMonths
         });
 
-        const result = await fetchMonthMedia(year, month, {
-            signal: this._overlayAbortController?.signal
-        });
+        let result;
+        try {
+            result = await fetchMonthMedia(year, month, {
+                signal: this._overlayAbortController?.signal
+            });
+        } catch (err) {
+            console.error(`[GalleryMonthOverlay] Unexpected fetch error for ${year}-${month} (requestId: ${requestId}):`, err);
+            result = { error: String(err?.message || err) };
+        }
 
         // Guard: user may have navigated or closed while fetching
-        if (
-            result?.aborted ||
-            requestId !== this._overlayRequestId ||
-            !this._overlayComp?.state.open ||
-            this._overlayComp.state.year !== year ||
-            this._overlayComp.state.month !== month
-        ) {
+        if (requestId !== this._overlayRequestId) {
+            return;
+        }
+        if (!this._overlayComp?.state.open) {
+            return;
+        }
+        if (this._overlayComp.state.year !== year || this._overlayComp.state.month !== month) {
+            return;
+        }
+
+        if (result?.aborted) {
+            this._overlayComp.setState({
+                mediaIds: [],
+                error: 'Request was cancelled. Please try again.'
+            });
             return;
         }
 
         if (result?.error) {
             this._overlayComp.setState({
-                media: [],
-                loading: false,
+                mediaIds: [],
                 error: result.error
             });
             return;
         }
 
         this._overlayComp.setState({
-            media: result?.media || [],
-            loading: false,
+            viewKey: result?.viewKey || null,
+            mediaIds: result?.orderedIds || [],
             error: null
         });
-
-        // Observe overlay images with a dedicated loader rooted in the modal body
-        requestAnimationFrame(() => {
-            this._setupOverlayLazyLoad();
-        });
-    }
-
-    _setupOverlayLazyLoad() {
-        // Destroy previous overlay observer
-        if (this._overlayLoader) {
-            this._overlayLoader.destroy();
-            this._overlayLoader = null;
-        }
-
-        const el = this._overlayComp?.element;
-        if (!el) return;
-
-        const scrollRoot = el.querySelector('.modal__body, .modal-body');
-        const imgs = $$('img[data-src]', el);
-        if (!imgs.length) return;
-
-        this._overlayLoader = createThumbnailLazyLoader(galleryState, {
-            selector: '.gallery-item-thumbnail[data-src]',
-            root: scrollRoot || null,
-            rootMargin: getAdaptiveRootMargin({ low: 600, base: 800, high: 1200, saveDataFloor: 400 }),
-            concurrency: 6,
-            retry: {
-                maxAttempts: 3,
-                baseDelayMs: 2000,
-                backoffFactor: 2,
-                shouldRetry: (img) => isGeneratedThumbnailSrc(img.src || img.dataset?.src || ''),
-                getNextSrc: (_img, attempt, currentSrc) => withThumbnailRetryParam(currentSrc, attempt),
-                schedule: (fn, delayMs) => galleryState.timeout(fn, delayMs)
-            }
-        });
-
-        imgs.forEach(img => this._overlayLoader.observe(img));
     }
 
     navigateOverlay(direction) {
@@ -497,17 +477,13 @@ export class GalleryLayoutModule extends Module {
         this._overlayAbortController?.abort?.();
         this._overlayAbortController = null;
         this._overlayRequestId += 1;
-        if (this._overlayLoader) {
-            this._overlayLoader.destroy();
-            this._overlayLoader = null;
-        }
         if (!this._overlayComp) return;
         this._overlayComp.setState({
             open: false,
             year: null,
             month: null,
-            media: [],
-            loading: false,
+            viewKey: null,
+            mediaIds: [],
             error: null,
             hasPrev: false,
             hasNext: false
@@ -517,10 +493,6 @@ export class GalleryLayoutModule extends Module {
     unmountComponents() {
         this._overlayAbortController?.abort?.();
         this._overlayAbortController = null;
-        if (this._overlayLoader) {
-            this._overlayLoader.destroy();
-            this._overlayLoader = null;
-        }
         if (this._overlayComp) {
             setDateHeaderClickHandler(null);
             this._overlayComp.unmount();
@@ -638,7 +610,7 @@ async function init() {
         // Register layout handler for sync functionality
         registerLayoutHandler('gallery', {
             viewMedia: async (categoryId, mediaUrl, index) => {
-                await openViewer(categoryId, mediaUrl, index);
+                await openViewer(categoryId, mediaUrl, { index });
             },
             getCurrentState: () => {
                 // Gallery doesn't track current state like default layout

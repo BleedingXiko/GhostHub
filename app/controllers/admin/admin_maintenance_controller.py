@@ -89,12 +89,6 @@ class AdminMaintenanceController(Controller):
                     cleared['hidden_files'] = int(match.group(1))
 
             try:
-                from app.services.media import media_session_service
-                media_session_service.clear_session_tracker()
-            except Exception as exc:
-                logger.warning("Could not clear session trackers: %s", exc)
-
-            try:
                 success, index_count = clear_all_media_index()
                 if success:
                     cleared['media_index'] = index_count

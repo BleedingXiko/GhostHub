@@ -18,10 +18,12 @@ import {
     persistPlaybackProgress,
     shouldMarkCompletedOnExit
 } from './progressPersistence.js';
-import { getCurrentLayout } from '../../utils/layoutUtils.js';
+import { isPlaybackProgressAllowed } from './progressSync.js';
 import { toggleSpinner } from '../ui/controller.js';
 import { Module, css, attr, $$ } from '../../libs/ragot.esm.min.js';
 import { setAppState, getAppState } from '../../utils/appStateUtils.js';
+import { selectRecordAt } from './selectors.js';
+import { getKnownViewerCount, getViewerSession } from './viewerState.js';
 
 // Module state
 let socket = null;
@@ -97,8 +99,9 @@ export function activateThumbnailContainer(thumbnailContainer) {
     try {
         if (thumbnailContainer.dataset.fileInfo) {
             fileInfo = JSON.parse(thumbnailContainer.dataset.fileInfo);
-        } else if (currentDataIndex !== undefined && getAppState().fullMediaList[currentDataIndex]) {
-            fileInfo = getAppState().fullMediaList[currentDataIndex];
+        } else if (currentDataIndex !== undefined) {
+            const viewer = getViewerSession(getAppState());
+            fileInfo = viewer ? selectRecordAt(viewer.viewKey, Number.parseInt(currentDataIndex, 10)) : null;
         }
     } catch (err) {
         console.error('[ThumbnailHandler] Failed to get file info:', err);
@@ -293,30 +296,33 @@ function setupVideoPlayback(videoElement, fileInfo, currentDataIndex) {
     // Start playback (only for actual video elements). Retry across readiness events to avoid
     // "converted but paused" races on slower devices or stricter autoplay timing.
     if (videoElement.tagName === 'VIDEO') {
-        const attemptPlayback = () => {
-            if (playbackStarted || !videoElement.isConnected || !videoElement.paused) {
-                if (!videoElement.paused) playbackStarted = true;
-                return;
-            }
+        const isSyncGuest = getAppState().syncModeEnabled && !getAppState().isHost;
+        if (!isSyncGuest) {
+            const attemptPlayback = () => {
+                if (playbackStarted || !videoElement.isConnected || !videoElement.paused) {
+                    if (!videoElement.paused) playbackStarted = true;
+                    return;
+                }
 
-            videoElement.play().then(() => {
-                playbackStarted = true;
-                console.log(`Video playback started for index: ${currentDataIndex}`);
-            }).catch(() => {
-                videoElement.muted = true;
                 videoElement.play().then(() => {
                     playbackStarted = true;
-                    console.log(`Video playback started muted for index: ${currentDataIndex}`);
-                }).catch(() => { });
-            });
-        };
+                    console.log(`Video playback started for index: ${currentDataIndex}`);
+                }).catch(() => {
+                    videoElement.muted = true;
+                    videoElement.play().then(() => {
+                        playbackStarted = true;
+                        console.log(`Video playback started muted for index: ${currentDataIndex}`);
+                    }).catch(() => { });
+                });
+            };
 
-        attemptPlayback();
-        attr(videoElement, {
-            onCanPlay: attemptPlayback,
-            onLoadedData: attemptPlayback
-        });
-        videoLifecycle.on(videoElement, 'loadedmetadata', attemptPlayback);
+            attemptPlayback();
+            attr(videoElement, {
+                onCanPlay: attemptPlayback,
+                onLoadedData: attemptPlayback
+            });
+            videoLifecycle.on(videoElement, 'loadedmetadata', attemptPlayback);
+        }
     }
 
     // Stop the per-video lifecycle when the element is emptied (src cleared / navigated away).
@@ -332,6 +338,8 @@ function setupVideoPlayback(videoElement, fileInfo, currentDataIndex) {
  */
 function getResumeTimestamp(fileInfo, currentDataIndex) {
     const appState = getAppState();
+    if (!isPlaybackProgressAllowed(appState)) return null;
+
     const trackingMode = appState.trackingMode || 'category';
     const clickedIndex = parseInt(currentDataIndex, 10);
     let resumeTimestamp = null;
@@ -411,28 +419,35 @@ function setupProgressSaving(videoElement, fileInfo) {
     const attachStartedAt = Date.now();
     let maxKnownTimestamp = 0;
     const boundIndex = Number.parseInt(videoElement?.dataset?.index, 10);
-    const getBoundIndex = () => Number.isInteger(boundIndex) ? boundIndex : getAppState().currentMediaIndex;
+    const getBoundIndex = () => {
+        if (Number.isInteger(boundIndex)) return boundIndex;
+        return getViewerSession(getAppState())?.activeIndex ?? 0;
+    };
     const getBoundMedia = () => {
         const idx = getBoundIndex();
-        const list = getAppState().fullMediaList || [];
-        return list[idx] || fileInfo || null;
+        const viewer = getViewerSession(getAppState());
+        return (viewer ? selectRecordAt(viewer.viewKey, idx) : null) || fileInfo || null;
     };
 
     try {
         const appState = getAppState();
-        const trackingMode = appState.trackingMode || 'category';
-        if (trackingMode === 'video' && fileInfo?.url) {
-            let existing = appState.videoProgressMap?.[fileInfo.url];
-            if (!existing) {
-                const encodedUrl = encodeURI(fileInfo.url);
-                existing = appState.videoProgressMap?.[encodedUrl];
-            }
-            if (!existing && !hasActiveProfile()) {
-                existing = getVideoLocalProgress(fileInfo.url);
-            }
-            maxKnownTimestamp = Math.max(0, Number(existing?.video_timestamp ?? 0) || 0);
+        if (!isPlaybackProgressAllowed(appState)) {
+            maxKnownTimestamp = 0;
         } else {
-            maxKnownTimestamp = Math.max(0, Number(appState.savedVideoTimestamp) || 0);
+            const trackingMode = appState.trackingMode || 'category';
+            if (trackingMode === 'video' && fileInfo?.url) {
+                let existing = appState.videoProgressMap?.[fileInfo.url];
+                if (!existing) {
+                    const encodedUrl = encodeURI(fileInfo.url);
+                    existing = appState.videoProgressMap?.[encodedUrl];
+                }
+                if (!existing && !hasActiveProfile()) {
+                    existing = getVideoLocalProgress(fileInfo.url);
+                }
+                maxKnownTimestamp = Math.max(0, Number(existing?.video_timestamp ?? 0) || 0);
+            } else {
+                maxKnownTimestamp = Math.max(0, Number(appState.savedVideoTimestamp) || 0);
+            }
         }
     } catch (e) {
         maxKnownTimestamp = 0;
@@ -446,11 +461,7 @@ function setupProgressSaving(videoElement, fileInfo) {
         // Sync Mode: Never save progress to server for anyone
         // Guest progress stays in IndexedDB, Host progress is Master (should not be saved during sync to avoid noise)
         const appState = getAppState();
-        if (appState.syncModeEnabled) {
-            return;
-        }
-
-        if (getCurrentLayout() === 'gallery') {
+        if (!isPlaybackProgressAllowed(appState) || appState.syncModeEnabled) {
             return;
         }
 
@@ -460,7 +471,7 @@ function setupProgressSaving(videoElement, fileInfo) {
             const mediaUrl = currentMedia?.url || fileInfo?.url || null;
             const thumbnailUrl = currentMedia?.thumbnailUrl || currentMedia?.url || fileInfo?.thumbnailUrl || fileInfo?.url;
             const categoryId = appState.currentCategoryId;
-            const totalCount = appState.fullMediaList?.length || 0;
+            const totalCount = getKnownViewerCount(appState);
             let timestamp = videoElement.currentTime;
             const duration = videoElement.duration;
 
@@ -486,9 +497,6 @@ function setupProgressSaving(videoElement, fileInfo) {
                 duration,
                 videoCompleted,
                 isCritical,
-                mediaOrder: appState.trackingMode === 'video' && mediaUrl
-                    ? appState.fullMediaList?.map(item => item?.url).filter(Boolean)
-                    : null,
                 optimisticLayout: true
             });
         }

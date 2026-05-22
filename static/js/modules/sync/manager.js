@@ -6,14 +6,16 @@
 import { updateSyncToggleButton, disableNavigationControls, enableNavigationControls } from '../ui/controller.js';
 import { renderMediaWindow } from '../media/navigation.js';
 import { getConfigValue } from '../../utils/configManager.js';
-import { viewCategory } from '../media/loader.js';
+import { openCategoryViewer, openViewerFromView } from '../media/loader.js';
 import { ensureFeatureAccess } from '../../utils/authManager.js';
 import { navigateToMedia, getCurrentLayout } from '../../utils/layoutUtils.js';
 import { getCookieValue } from '../../utils/cookieUtils.js';
 import { Module, $, attr } from '../../libs/ragot.esm.min.js';
-import { setAppState, batchAppState, getAppState, createAppSelector } from '../../utils/appStateUtils.js';
+import { setAppState, getAppState, createAppSelector } from '../../utils/appStateUtils.js';
 import { toast } from '../../utils/notificationManager.js';
 import { SOCKET_EVENTS } from '../../core/socketEvents.js';
+import { selectIndexOf, selectParams, selectView } from '../media/selectors.js';
+import { getCurrentViewerRecord, getViewerSession } from '../media/viewerState.js';
 
 // Socket.IO instance (initialized later)
 let socket = null;
@@ -24,6 +26,10 @@ let playbackHeartbeatInterval = null; // Periodic sync for active video
 const syncLifecycle = new Module().start();
 let syncBeforeUnloadAttached = false;
 let syncSocketHandlers = null;
+const SYNC_STATUS_CACHE_TTL_MS = 5000;
+let syncStatusCache = null;
+let syncStatusCacheAt = 0;
+let syncStatusInFlight = null;
 const syncFlagsSelector = createAppSelector(
     [
         (state) => state.syncModeEnabled,
@@ -163,7 +169,7 @@ function setupSocketListeners(socketInstance) {
 
     syncSocketHandlers = {};
 
-    syncSocketHandlers.connect = () => {
+    syncSocketHandlers[SOCKET_EVENTS.CONNECT] = () => {
         console.log('WebSocket connected successfully:', socketInstance.id);
         isWebSocketConnected = true;
         updateSyncToggleButton();
@@ -184,7 +190,7 @@ function setupSocketListeners(socketInstance) {
         }, heartbeatIntervalDelay);
     };
 
-    syncSocketHandlers.disconnect = (reason) => {
+    syncSocketHandlers[SOCKET_EVENTS.DISCONNECT] = (reason) => {
         console.warn('WebSocket disconnected:', reason);
         isWebSocketConnected = false;
         updateSyncToggleButton();
@@ -205,7 +211,7 @@ function setupSocketListeners(socketInstance) {
         }
     };
 
-    syncSocketHandlers.connect_error = (error) => {
+    syncSocketHandlers[SOCKET_EVENTS.CONNECTION_ERROR] = (error) => {
         console.error('WebSocket connection error:', error);
         isWebSocketConnected = false;
         updateSyncToggleButton();
@@ -288,7 +294,7 @@ function setupSocketListeners(socketInstance) {
         }
     };
 
-    syncSocketHandlers.sync_state = (data) => {
+    syncSocketHandlers[SOCKET_EVENTS.SYNC_STATE] = (data) => {
         if (window.ragotModules.appState.syncModeEnabled && !window.ragotModules.appState.isHost) {
             handleSyncUpdate(data);
         }
@@ -304,7 +310,7 @@ function setupSocketListeners(socketInstance) {
         }
     };
 
-    syncSocketHandlers.sync_error = (error) => {
+    syncSocketHandlers[SOCKET_EVENTS.SYNC_ERROR] = (error) => {
         console.error('Received sync_error via WebSocket:', error.message);
         updateSyncStatusDisplay('error', `Sync Error: ${error.message}`, 5000);
     };
@@ -421,7 +427,18 @@ function disconnectWebSocket() {
 /**
  * Check if sync mode is enabled via HTTP (initial check or re-check).
  */
-async function checkSyncMode() {
+async function checkSyncMode(options = {}) {
+    const { force = false } = options;
+    const now = Date.now();
+    if (!force && syncStatusCache && (now - syncStatusCacheAt) < SYNC_STATUS_CACHE_TTL_MS) {
+        applySyncStatus(syncStatusCache);
+        return syncStatusCache;
+    }
+    if (!force && syncStatusInFlight) {
+        return syncStatusInFlight;
+    }
+
+    syncStatusInFlight = (async () => {
     try {
         console.log('Checking sync mode status via HTTP...');
         const response = await fetch('/api/sync/status');
@@ -432,7 +449,34 @@ async function checkSyncMode() {
 
         const data = await response.json();
         console.log('Sync status response:', data);
+        syncStatusCache = data;
+        syncStatusCacheAt = Date.now();
+        applySyncStatus(data);
+        return data;
+    } catch (error) {
+        console.error('Error checking sync mode:', error);
 
+        // Reset sync state on error
+        setAppState('syncModeEnabled', false);
+        setAppState('isHost', false);
+        updateSyncToggleButton();
+
+        // Update sync status indicator to show error
+        updateSyncStatusDisplay('error', 'Sync: Status Error');
+
+        // Ensure controls are enabled and WS disconnected on error
+        enableNavigationControls();
+        disconnectWebSocket();
+
+        return { active: false, is_host: false, error: error.message };
+    } finally {
+        syncStatusInFlight = null;
+    }
+    })();
+    return syncStatusInFlight;
+}
+
+function applySyncStatus(data) {
         const wasSyncEnabled = window.ragotModules.appState.syncModeEnabled;
         const wasHost = window.ragotModules.appState.isHost;
 
@@ -474,24 +518,6 @@ async function checkSyncMode() {
             enableNavigationControls();
         }
 
-        return data;
-    } catch (error) {
-        console.error('Error checking sync mode:', error);
-
-        // Reset sync state on error
-        setAppState('syncModeEnabled', false);
-        setAppState('isHost', false);
-        updateSyncToggleButton();
-
-        // Update sync status indicator to show error
-        updateSyncStatusDisplay('error', 'Sync: Status Error');
-
-        // Ensure controls are enabled and WS disconnected on error
-        enableNavigationControls();
-        disconnectWebSocket();
-
-        return { active: false, is_host: false, error: error.message };
-    }
 }
 
 /**
@@ -543,16 +569,16 @@ async function toggleSyncMode() {
         const session_id = getCookieValue('session_id');
         console.log(`[Sync] Initiating toggle with Session ID: ${session_id}`);
 
-        // Get current media info if viewing media
-        let mediaInfo = null;
-        if (window.ragotModules.appState.currentCategoryId && window.ragotModules.appState.fullMediaList.length > 0 && window.ragotModules.appState.currentMediaIndex >= 0) {
-            const currentFile = window.ragotModules.appState.fullMediaList[window.ragotModules.appState.currentMediaIndex];
-            mediaInfo = {
-                category_id: window.ragotModules.appState.currentCategoryId,
-                file_url: currentFile.url, // Note: file_url might not be strictly needed by backend here
-                index: window.ragotModules.appState.currentMediaIndex
-            };
-        }
+        const viewer = getViewerSession(window.ragotModules.appState);
+        const currentFile = getCurrentViewerRecord(window.ragotModules.appState);
+        const currentView = viewer ? selectView(viewer.viewKey) : null;
+        const mediaInfo = viewer && currentFile ? {
+            category_id: window.ragotModules.appState.currentCategoryId,
+            viewKey: viewer.viewKey,
+            viewType: currentView?.viewType || null,
+            viewParams: selectParams(viewer.viewKey),
+            mediaId: currentFile.id || null,
+        } : null;
 
         const newState = !window.ragotModules.appState.syncModeEnabled;
         console.log(`Requesting sync mode change to: ${newState ? 'ON' : 'OFF'}`);
@@ -574,6 +600,8 @@ async function toggleSyncMode() {
 
         const data = await response.json();
         console.log('Sync toggle response:', data);
+        syncStatusCache = data;
+        syncStatusCacheAt = Date.now();
 
         // Update state based on response (important!)
         setAppState('syncModeEnabled', data.active);
@@ -610,7 +638,7 @@ async function toggleSyncMode() {
         toast.error(`Failed to toggle sync mode: ${error.message}`);
 
         // Attempt to revert state based on a fresh check
-        await checkSyncMode(); // Re-check the actual status from server (this will call updateSyncToggleButton)
+        await checkSyncMode({ force: true }); // Re-check the actual status from server (this will call updateSyncToggleButton)
 
         // Update indicator to show error after re-check
         updateSyncStatusDisplay('error', 'Sync: Toggle Failed');
@@ -633,7 +661,7 @@ const INDEX_SYNC_THROTTLE = 100; // Min ms between index updates
 /**
  * Process sync update data received from the server (via WebSocket).
  * Uses layout wrapper to work across all layouts (default, streaming, gallery)
- * @param {Object} data - The sync data { category_id, file_url, index, playback_state }
+ * @param {Object} data - The sync data { category_id, viewKey, viewType, viewParams, mediaId, playback_state }
  * @param {boolean} force - Whether to force update regardless of current state
  */
 async function handleSyncUpdate(data, force = false) {
@@ -642,8 +670,7 @@ async function handleSyncUpdate(data, force = false) {
     console.log('[SyncManager] handleSyncUpdate called with data:', JSON.stringify(data));
 
     // Special case: host exited media viewer (going back to categories)
-    // category_id = null or index = -1 indicates "exit viewer"
-    if (data.category_id === null || data.index === -1) {
+    if (data.category_id === null || data.mediaId === null) {
         console.log('[SyncManager] Host exited media viewer, going back to categories');
 
         // Check if we're currently in the media viewer
@@ -665,15 +692,13 @@ async function handleSyncUpdate(data, force = false) {
         return;
     }
 
-    const receivedIndex = parseInt(data.index, 10);
-    const fileUrl = data.file_url;
+    const mediaId = data.mediaId || null;
     const receivedTimestamp = parseFloat(data.timestamp || data.video_timestamp || 0);
 
     // If host provided a timestamp (even 0), prioritize it for the guest
     if (!isNaN(receivedTimestamp)) {
         console.log(`[SyncManager] Host provided timestamp: ${receivedTimestamp}s`);
         setAppState('savedVideoTimestamp', receivedTimestamp);
-        setAppState('savedVideoIndex', receivedIndex);
         setAppState('savedVideoCategoryId', data.category_id);
     }
 
@@ -691,10 +716,12 @@ async function handleSyncUpdate(data, force = false) {
 
     // Check if we are already at the correct state to avoid unnecessary re-renders (which destroy the video player)
     const isSameCategory = window.ragotModules.appState.currentCategoryId === data.category_id;
-    const isSameIndex = window.ragotModules.appState.currentMediaIndex === receivedIndex;
+    const viewer = getViewerSession(window.ragotModules.appState);
+    const currentMedia = getCurrentViewerRecord(window.ragotModules.appState);
+    const isSameMedia = !!mediaId && currentMedia?.id === mediaId;
 
     // If we are already on the correct item, simply ensure the MODE (Video vs Thumbnail) is correct
-    if (isSameCategory && isSameIndex) {
+    if (isSameCategory && isSameMedia) {
         console.log('[SyncManager] Already on correct media, checking playback mode...');
         const controlsAttached = window.ragotModules?.videoControls?.isControlsAttached?.();
 
@@ -716,7 +743,7 @@ async function handleSyncUpdate(data, force = false) {
             if (controlsAttached) {
                 console.log('[SyncManager] Host in thumbnail mode (no playback state), detaching guest controls');
                 window.ragotModules.videoControls.detachControls();
-                renderMediaWindow(receivedIndex);
+                renderMediaWindow(viewer?.activeIndex || 0);
             }
         }
         // Mode 3: Host Paused (playbackState exists but !is_playing)
@@ -726,9 +753,9 @@ async function handleSyncUpdate(data, force = false) {
     }
 
     // Only navigate if we are on a different item
-    const success = await navigateToMedia(data.category_id, fileUrl, receivedIndex);
-    if (success) {
-        console.log(`[SyncManager] Successfully navigated to media via layout handler`);
+    const success = await navigateToState(data.category_id, mediaId, 'Sync', data);
+    if (success !== false) {
+        console.log(`[SyncManager] Successfully navigated to synced media`);
 
         // After navigation (which starts in Thumbnail Mode), checks if we need to auto-play
         if (hostIsPlaying) {
@@ -744,42 +771,86 @@ async function handleSyncUpdate(data, force = false) {
 }
 
 /**
- * Navigates the UI to a specific category and index.
+ * Navigates the UI to a specific category and media id.
  * @param {string} categoryId - The target category ID.
- * @param {number} index - The target media index.
+ * @param {string} mediaId - The target media id.
  * @param {string} context - Context for status messages (e.g., 'Sync', 'View').
  * @returns {Promise<void>} - A promise that resolves when navigation is complete
  */
-async function navigateToState(categoryId, index, context = 'Navigation') {
+async function navigateToState(categoryId, mediaId, context = 'Navigation', viewInfo = {}) {
     try {
         if (!categoryId) {
             console.warn(`[SyncManager] navigateToState called with invalid categoryId: ${categoryId}`);
-            return;
+            return false;
         }
 
-        const needsCategorySwitch = categoryId !== window.ragotModules.appState.currentCategoryId;
-        const receivedIndex = parseInt(index, 10);
-
-        if (needsCategorySwitch) {
-            window.ragotModules.mediaLoader.clearResources(false);
-            await viewCategory(categoryId);
-            await ensureMediaLoadedForIndex(receivedIndex);
-            renderMediaWindow(receivedIndex);
-        } else {
-            await ensureMediaLoadedForIndex(receivedIndex);
-            if (receivedIndex < window.ragotModules.appState.fullMediaList.length) {
-                renderMediaWindow(receivedIndex);
+        const { viewKey, viewType, viewParams = {} } = viewInfo || {};
+        if (viewKey && viewType) {
+            const ordering = window.ragotModules?.mediaOrdering;
+            if (ordering?.requestOrder) {
+                try {
+                    await ordering.requestOrder(viewKey, viewType, { ...viewParams, hydrate: 'true' });
+                    let index = selectIndexOf(viewKey, mediaId);
+                    if (index < 0) {
+                        const manifest = window.ragotModules?.mediaManifest;
+                        if (manifest) {
+                            await manifest.hydrate([mediaId]);
+                            const record = manifest.get(mediaId);
+                            if (record) {
+                                const view = selectView(viewKey);
+                                if (view && !view.orderedIds.includes(mediaId)) {
+                                    const nextOrderedIds = [...(view.orderedIds || []), mediaId];
+                                    ordering.ingestView(viewKey, {
+                                        ...view,
+                                        orderedIds: nextOrderedIds,
+                                    });
+                                    index = nextOrderedIds.length - 1;
+                                }
+                            }
+                        }
+                    }
+                    if (index >= 0) {
+                        await openViewerFromView({ sourceViewKey: viewKey, categoryId, startIndex: index });
+                        return true;
+                    }
+                    console.warn(`[SyncManager] Media ID ${mediaId} not found in view ${viewKey}, falling back to category-based loading.`);
+                } catch (viewError) {
+                    console.warn(`[SyncManager] View order request failed for ${viewKey}, falling back to category-based loading:`, viewError);
+                }
             }
         }
+
+        const viewerSession = getViewerSession(window.ragotModules.appState);
+        const viewerHidden = !window.ragotModules.appDom.mediaViewer || window.ragotModules.appDom.mediaViewer.classList.contains('hidden');
+        const needsCategorySwitch = categoryId !== window.ragotModules.appState.currentCategoryId;
+
+        if (needsCategorySwitch || !viewerSession || viewerHidden) {
+            window.ragotModules.mediaLoader.clearResources(false);
+            await openCategoryViewer({ categoryId, startRecordId: mediaId });
+            return true;
+        }
+
+        let viewer = getViewerSession(window.ragotModules.appState);
+        let index = viewer?.viewKey ? selectIndexOf(viewer.viewKey, mediaId) : -1;
+        if (index >= 0) {
+            renderMediaWindow(index);
+            return true;
+        }
+
+        // Fallback: if not found in current viewer page cache, load directly via startRecordId
+        window.ragotModules.mediaLoader.clearResources(false);
+        await openCategoryViewer({ categoryId, startRecordId: mediaId });
+        return true;
     } catch (error) {
         console.error(`Error in ${context} navigation:`, error);
+        return false;
     }
 }
 
 /**
  * Send a sync update to the server (Host only) - Uses WebSocket for speed.
  * Falls back to HTTP if WebSocket unavailable.
- * @param {Object} mediaInfo - The media info to sync { category_id, file_url, index }
+ * @param {Object} mediaInfo - The media info to sync { category_id, viewKey, viewType, viewParams, mediaId }
  * @returns {Promise<boolean>} - Whether the update was sent.
  */
 
@@ -788,7 +859,7 @@ async function sendSyncUpdate(mediaInfo) {
         return false;
     }
 
-    if (!mediaInfo || typeof mediaInfo.category_id === 'undefined' || typeof mediaInfo.index === 'undefined') {
+    if (!mediaInfo || typeof mediaInfo.category_id === 'undefined' || !mediaInfo.mediaId) {
         return false;
     }
 
@@ -804,8 +875,10 @@ async function sendSyncUpdate(mediaInfo) {
 
     const payload = {
         category_id: mediaInfo.category_id,
-        file_url: mediaInfo.file_url,
-        index: mediaInfo.index,
+        viewKey: mediaInfo.viewKey || null,
+        viewType: mediaInfo.viewType || null,
+        viewParams: mediaInfo.viewParams || {},
+        mediaId: mediaInfo.mediaId,
         timestamp: now / 1000
     };
 
@@ -829,93 +902,6 @@ async function sendSyncUpdate(mediaInfo) {
         return response.ok;
     } catch {
         return false;
-    }
-}
-
-/**
- * Helper function to ensure media for a specific index is loaded, loading more if necessary.
- * Enhanced to handle async loading scenarios during sync mode.
- * @param {number} index - The target media index.
- */
-async function ensureMediaLoadedForIndex(index) {
-    // Check if index is out of bounds and if more media *can* be loaded
-    if (index >= window.ragotModules.appState.fullMediaList.length && window.ragotModules.appState.hasMoreMedia) {
-        console.log(`Index ${index} is beyond current loaded media (${window.ragotModules.appState.fullMediaList.length}), calculating target page...`);
-
-        const itemsPerPage = window.ragotModules.appRuntime.getMediaPerPage() || 10; // Call window.ragotModules.appRuntime.getMediaPerPage()
-        const targetPage = Math.floor(index / itemsPerPage) + 1;
-        const currentPage = Math.floor(window.ragotModules.appState.fullMediaList.length / itemsPerPage); // Current max page loaded
-
-        // Only load if target page is beyond currently loaded pages
-        if (targetPage > currentPage) {
-            console.log(`Target index ${index} is on page ${targetPage}. Loading page...`);
-            try {
-                updateSyncStatusDisplay('loading', 'Sync: Loading Media...');
-
-                // First try to load the specific page containing the target index
-                await window.ragotModules.mediaLoader.loadMoreMedia(null, null, false, targetPage);
-                console.log(`Finished loading media up to page ${targetPage}. Total items: ${window.ragotModules.appState.fullMediaList.length}`);
-
-                // If we still don't have the index after loading the page, try a direct index request
-                // This is especially important for async loading scenarios
-                if (index >= window.ragotModules.appState.fullMediaList.length && window.ragotModules.appState.hasMoreMedia) {
-                    console.log(`Index ${index} still not loaded after page load, trying direct index request...`);
-                    updateSyncStatusDisplay('loading', 'Sync: Requesting Specific Media...');
-
-                    // Use a special parameter to request a specific index directly
-                    // This will be handled by the server to prioritize loading this specific index
-                    const cacheBuster = Date.now();
-                    const syncParam = '&sync=true';
-                    const indexParam = `&target_index=${index}`;
-
-                    try {
-                        const response = await fetch(`/api/categories/${window.ragotModules.appState.currentCategoryId}/media?page=1&limit=1${syncParam}${indexParam}&_=${cacheBuster}`);
-
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
-
-                        const data = await response.json();
-
-                        // If we got a specific file for the requested index
-                        if (data.target_file && data.target_index === index) {
-                            console.log(`Received specific file for index ${index}:`, data.target_file);
-
-                            batchAppState((state) => {
-                                // Pad with placeholders until the target slot exists.
-                                while (state.fullMediaList.length <= index) {
-                                    state.fullMediaList.push(null);
-                                }
-                                state.fullMediaList[index] = data.target_file;
-                            }, { source: 'syncManager.ensureMediaLoadedForIndex.applyTargetFile' });
-                            console.log(`Added specific file at index ${index}, list length now: ${window.ragotModules.appState.fullMediaList.length}`);
-                        } else if (data.files && data.files.length > 0) {
-                            // If we just got regular files, append them
-                            console.log(`Received ${data.files.length} regular files in direct index request`);
-                            const existingUrls = new Set(window.ragotModules.appState.fullMediaList.map(f => f && f.url));
-                            const newFiles = data.files.filter(f => !existingUrls.has(f.url));
-
-                            if (newFiles.length > 0) {
-                                batchAppState((state) => {
-                                    state.fullMediaList.push(...newFiles);
-                                }, { source: 'syncManager.ensureMediaLoadedForIndex.appendFiles' });
-                                console.log(`Added ${newFiles.length} new files, list length now: ${window.ragotModules.appState.fullMediaList.length}`);
-                            }
-                        }
-                    } catch (directIndexError) {
-                        console.error(`Error in direct index request:`, directIndexError);
-                        // Continue with what we have - don't throw here
-                    }
-                }
-
-            } catch (loadError) {
-                console.error(`Error loading target page ${targetPage} during sync:`, loadError);
-                updateSyncStatusDisplay('error', 'Sync: Error Loading Media', 3000);
-                throw loadError; // Re-throw to stop further processing in handleSyncUpdate
-            }
-        } else {
-            console.log(`Target index ${index} is on page ${targetPage}, which should already be loaded.`);
-        }
     }
 }
 
@@ -976,8 +962,9 @@ function sendPlaybackSync(action, currentTime, isPlaying = null) {
         isPlaying = activeVideo ? !activeVideo.paused : (action === 'play');
     }
 
-    // Include current media info so guests know what to play
-    const currentMedia = window.ragotModules.appState.fullMediaList?.[window.ragotModules.appState.currentMediaIndex];
+    const viewer = getViewerSession(window.ragotModules.appState);
+    const currentMedia = getCurrentViewerRecord(window.ragotModules.appState);
+    const currentView = viewer ? selectView(viewer.viewKey) : null;
     const payload = {
         action: action,
         currentTime: currentTime || 0,
@@ -986,11 +973,13 @@ function sendPlaybackSync(action, currentTime, isPlaying = null) {
     };
 
     // Add media info if available (needed for thumbnail-to-video conversion on guests)
-    if (window.ragotModules.appState.currentCategoryId && currentMedia) {
+    if (window.ragotModules.appState.currentCategoryId && currentMedia && viewer) {
         payload.category_id = window.ragotModules.appState.currentCategoryId;
-        payload.file_url = currentMedia.url;
-        payload.index = window.ragotModules.appState.currentMediaIndex;
-        console.log(`[Sync] Sending playback_sync with media: ${currentMedia.name || currentMedia.url} (index ${window.ragotModules.appState.currentMediaIndex}), playing=${isPlaying}`);
+        payload.viewKey = viewer.viewKey;
+        payload.viewType = currentView?.viewType || null;
+        payload.viewParams = selectParams(viewer.viewKey);
+        payload.mediaId = currentMedia.id || null;
+        console.log(`[Sync] Sending playback_sync with media: ${currentMedia.name || currentMedia.url}, playing=${isPlaying}`);
     } else {
         console.log(`[Sync] Sending playback_sync without media info: action=${action}, time=${currentTime}, playing=${isPlaying}`);
     }
@@ -1061,7 +1050,7 @@ async function waitForActiveVideoElement(timeoutMs = 5000, intervalMs = 60) {
 /**
  * Apply a playback sync event received from the host (Guest only).
  * If guest is showing a thumbnail, converts it to video first.
- * @param {Object} data - The playback sync data { action, currentTime, timestamp, category_id, file_url, index }
+ * @param {Object} data - The playback sync data { action, currentTime, timestamp, category_id, mediaId }
  */
 async function applyPlaybackSync(data) {
     console.log('[Sync] applyPlaybackSync called with data:', JSON.stringify(data));
@@ -1084,17 +1073,16 @@ async function applyPlaybackSync(data) {
     };
 
     try {
-        // If playback_sync includes media info, navigate to it first
-        // This fixes the issue where guest on different media doesn't know what to play
-        if (data.category_id && data.file_url && data.index !== undefined) {
+        if (data.category_id && data.mediaId) {
+            const currentMedia = getCurrentViewerRecord(window.ragotModules.appState);
             const needsNavigate = (
                 window.ragotModules.appState.currentCategoryId !== data.category_id ||
-                window.ragotModules.appState.currentMediaIndex !== parseInt(data.index, 10)
+                currentMedia?.id !== data.mediaId
             );
 
             if (needsNavigate) {
-                console.log(`[Sync] Playback sync includes media info, navigating first: cat=${data.category_id}, idx=${data.index}`);
-                const navSuccess = await navigateToMedia(data.category_id, data.file_url, parseInt(data.index, 10));
+                console.log(`[Sync] Playback sync includes media info, navigating first: cat=${data.category_id}, media=${data.mediaId}`);
+                const navSuccess = await navigateToState(data.category_id, data.mediaId, 'PlaybackSync', data);
 
                 if (!navSuccess) {
                     console.warn('[Sync] Failed to navigate to media from playback_sync');
@@ -1241,8 +1229,9 @@ async function applyPlaybackSync(data) {
                 // Guard against post-conversion timing races where play resolves late or gets interrupted.
                 scheduleSyncTimeout(() => {
                     if (videoElement && videoElement.paused) {
-                        console.log('[Sync] Post-play verification detected paused video, retrying play');
-                        executePlay();
+                        if (videoElement.readyState >= 2) {
+                            executePlay();
+                        }
                     } else {
                         finishSync();
                     }
@@ -1259,9 +1248,10 @@ async function applyPlaybackSync(data) {
                 // Only seek if we are outside the desync threshold (e.g., 5.0s)
                 // This prevents "flickering" loading spinners from the periodic heartbeat
                 const desyncAmount = Math.abs(videoElement.currentTime - targetTime);
+                let didSeek = false;
                 if (desyncAmount > 5.0) {
                     console.log(`[Sync] Desync detected (${desyncAmount.toFixed(2)}s). Seeking to align with host.`);
-                    safeSeek(videoElement, targetTime);
+                    didSeek = safeSeek(videoElement, targetTime);
                 } else {
                     console.log(`[Sync] Within sync threshold (${desyncAmount.toFixed(2)}s). Skipping heartbeat seek.`);
                 }
@@ -1269,10 +1259,19 @@ async function applyPlaybackSync(data) {
                 // If host is playing, we MUST ensure we are also playing after the seek.
                 // Many browsers pause or stay paused during a seek.
                 if (data.is_playing === true && videoElement.paused) {
-                    console.log('[Sync] Host is playing during seek, resuming guest playback');
-                    executePlay();
+                    if (didSeek && videoElement.seeking) {
+                        let seekedCalled = false;
+                        attr(videoElement, {
+                            onSeeked: () => {
+                                if (seekedCalled) return;
+                                seekedCalled = true;
+                                executePlay();
+                            }
+                        }, { additive: true });
+                    } else {
+                        executePlay();
+                    }
                 } else if (data.is_playing === false && !videoElement.paused) {
-                    console.log('[Sync] Host is paused during seek, pausing guest playback');
                     videoElement.pause();
                     finishSync(100);
                 } else {
@@ -1350,8 +1349,8 @@ export {
     toggleSyncMode,   // Called by UI button
     sendSyncUpdate,   // Called by media navigation when host changes media
     sendPlaybackSync, // Called by video event handlers for play/pause/seek sync
+    navigateToState,  // Called by chat shared-view handlers
     isPlaybackSyncInProgress, // Check if we're applying a sync (prevent loops)
-    ensureMediaLoadedForIndex, // Needed by chatManager for /myview links
     initSync,         // Initialize with socket instance
     cleanupSyncManager
 };

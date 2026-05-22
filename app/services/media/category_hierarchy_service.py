@@ -74,6 +74,11 @@ def add_missing_parent_categories(categories, show_hidden=False, drive_folder_la
                         "thumbnailUrl": None,
                         "containsVideo": bool(category.get("containsVideo", False)),
                         "auto_detected": True,
+                        # Marker for visibility filtering: a synthesized parent is a
+                        # pure aggregator (no direct media of its own). It should only
+                        # render when at least one descendant survives filtering —
+                        # otherwise it becomes a ghost when its only children are hidden.
+                        "_synthesized_parent": True,
                     }
 
                     try:

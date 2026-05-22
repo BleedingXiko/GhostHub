@@ -49,6 +49,7 @@ class ConfigController(Controller):
     def get_config(self):
         """Get full application configuration plus session/admin flags."""
         config_data, error = config_service.load_config()
+        config_data = dict(config_data or {})
         if error:
             logger.warning(
                 "Error loading configuration for API response: %s. Serving available config.",
@@ -58,7 +59,10 @@ class ConfigController(Controller):
         config_data['isPasswordProtectionActive'] = bool(
             get_runtime_config_value('SESSION_PASSWORD', ''),
         )
-        config_data['is_admin'] = is_current_admin_session()
+        is_admin = is_current_admin_session()
+        config_data['is_admin'] = is_admin
+        if not is_admin:
+            config_data.pop('python_config', None)
         return config_data
 
     def save_config(self):

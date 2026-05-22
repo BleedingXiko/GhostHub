@@ -33,7 +33,9 @@ export async function refreshAllLayouts(forceRefresh = false, secondaryOnly = fa
 
     const mediaViewerEl = $('#media-viewer');
     const viewerActive = mediaViewerEl && !mediaViewerEl.classList.contains('hidden');
-    if (viewerActive) {
+    const fileManagerEl = $('#file-manager-modal');
+    const fileManagerActive = fileManagerEl && !fileManagerEl.classList.contains('hidden');
+    if (viewerActive || fileManagerActive) {
         const appState = window.ragotModules?.appState;
         if (appState) {
             appState.needsMediaRefresh = true;
@@ -41,7 +43,7 @@ export async function refreshAllLayouts(forceRefresh = false, secondaryOnly = fa
                 appState.forceMediaRefresh = true;
             }
         }
-        console.log('[LiveVisibility] Deferring refresh while media viewer is open');
+        console.log(`[LiveVisibility] Deferring refresh while ${viewerActive ? 'media viewer' : 'file manager'} is open`);
         return;
     }
 

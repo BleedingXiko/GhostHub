@@ -361,16 +361,21 @@ class UploadSessionRuntimeService(Service):
                 from app.constants import BUS_EVENTS
 
                 category_id = _get_category_id_from_path(category_dir)
+                from app.services.storage.storage_path_service import get_media_url_from_path
+                media_url = get_media_url_from_path(target_path)
                 bus.emit(BUS_EVENTS['STORAGE_FILE_UPLOADED'], {
                     'target_dir': category_dir,
                     'target_path': target_path,
                     'filename': filename,
                     'category_id': category_id,
+                    'media_url': media_url,
+                    'timestamp': time.time(),
                 })
                 
                 bus.emit(BUS_EVENTS['STORAGE_BATCH_UPLOADED'], {
                     'success_count': 1,
-                    'uploaded_categories': [category_dir]
+                    'uploaded_categories': [category_dir],
+                    'timestamp': time.time(),
                 })
                 logger.info("Emitted bus events for chunked upload complete: %s", filename)
             except Exception as exc:

@@ -1,4 +1,4 @@
-import { getLazyLoadObserver, setLazyLoadObserver, galleryState } from './state.js';
+import { setLazyLoadObserver, galleryState } from './state.js';
 import { createThumbnailLazyLoader, getAdaptiveRootMargin, isGeneratedThumbnailSrc, withThumbnailRetryParam } from '../../../utils/mediaUtils.js';
 
 let _loader = null;
@@ -37,10 +37,6 @@ export function observeLazyImage(img) {
 
 export function resetLazyImage(img) {
     if (_loader) _loader.reset(img);
-}
-
-export function refreshLazyLoader() {
-    if (_loader) _loader.refresh();
 }
 
 /**

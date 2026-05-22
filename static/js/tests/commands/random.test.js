@@ -33,13 +33,22 @@ describe('Random Command', () => {
     window.ragotModules = {
       appState: {
         currentCategoryId: null,
-        fullMediaList: []
+        viewer: null
       },
       mediaLoader: {
-        viewCategory: vi.fn().mockResolvedValue(undefined)
+        openCategoryViewer: vi.fn().mockResolvedValue(undefined)
       },
       mediaNavigation: {
         renderMediaWindow: vi.fn()
+      },
+      mediaOrdering: {
+        selectView: vi.fn(() => ({ orderedIds: [], hasMore: false, viewMeta: {} })),
+        getOrder: vi.fn(() => ({ orderedIds: [], hasMore: false, viewMeta: {} })),
+      },
+      mediaManifest: {
+        getMany: vi.fn(() => []),
+        get: vi.fn(() => null),
+        recordsVersion: 1,
       }
     };
   });
@@ -85,7 +94,7 @@ describe('Random Command', () => {
 
     it('should handle missing mediaLoader', async () => {
       window.ragotModules = {
-        appState: { currentCategoryId: null, fullMediaList: [] },
+        appState: { currentCategoryId: null, viewer: null },
         mediaNavigation: {}
       };
       await random.execute(mockSocket, displayLocalMessage, '');
@@ -99,11 +108,13 @@ describe('Random Command', () => {
     describe('when in media view with loaded media', () => {
       beforeEach(() => {
         window.ragotModules.appState.currentCategoryId = 'cat1';
-        window.ragotModules.appState.fullMediaList = [
-          { url: '/media/1.mp4' },
-          { url: '/media/2.mp4' },
-          { url: '/media/3.mp4' }
-        ];
+        window.ragotModules.appState.viewer = { viewKey: 'viewer::cat1', activeIndex: 0 };
+        window.ragotModules.mediaOrdering.selectView.mockReturnValue({ orderedIds: ['1', '2', '3'], hasMore: false, viewMeta: {} });
+        window.ragotModules.mediaManifest.getMany.mockReturnValue([
+          { id: '1', url: '/media/1.mp4' },
+          { id: '2', url: '/media/2.mp4' },
+          { id: '3', url: '/media/3.mp4' }
+        ]);
         document.getElementById('media-viewer').classList.remove('hidden');
         document.getElementById('media-view').classList.remove('hidden');
       });
@@ -133,11 +144,7 @@ describe('Random Command', () => {
           'Jumped to a random item.',
           expect.objectContaining({ icon: 'checkCircle' })
         );
-        expect(window.ragotModules.mediaLoader.viewCategory).toHaveBeenCalledWith(
-          'cat2',
-          null,
-          0
-        );
+        expect(window.ragotModules.mediaLoader.openCategoryViewer).toHaveBeenCalledWith({ categoryId: 'cat2', startIndex: 0 });
       });
     });
 
@@ -186,11 +193,7 @@ describe('Random Command', () => {
 
         await random.execute(mockSocket, displayLocalMessage, '');
 
-        expect(window.ragotModules.mediaLoader.viewCategory).toHaveBeenCalledWith(
-          'hasMedia',
-          null,
-          0
-        );
+        expect(window.ragotModules.mediaLoader.openCategoryViewer).toHaveBeenCalledWith({ categoryId: 'hasMedia', startIndex: 0 });
       });
 
       it('should handle API errors', async () => {
@@ -215,10 +218,10 @@ describe('Random Command', () => {
 
         await random.execute(mockSocket, displayLocalMessage, '');
 
-        expect(window.ragotModules.mediaLoader.viewCategory).toHaveBeenCalled();
+        expect(window.ragotModules.mediaLoader.openCategoryViewer).toHaveBeenCalled();
       });
 
-      it('should call viewCategory with selected category', async () => {
+      it('should call openCategoryViewer with selected category', async () => {
         global.fetch = vi.fn().mockResolvedValue({
           ok: true,
           json: () =>
@@ -229,11 +232,7 @@ describe('Random Command', () => {
 
         await random.execute(mockSocket, displayLocalMessage, '');
 
-        expect(window.ragotModules.mediaLoader.viewCategory).toHaveBeenCalledWith(
-          'testCat',
-          null,
-          0
-        );
+        expect(window.ragotModules.mediaLoader.openCategoryViewer).toHaveBeenCalledWith({ categoryId: 'testCat', startIndex: 0 });
       });
     });
   });

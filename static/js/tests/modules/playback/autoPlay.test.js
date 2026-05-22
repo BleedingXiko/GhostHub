@@ -11,6 +11,8 @@ import {
     getAutoPlayInterval,
     updateAutoPlayIndicator
 } from '../../../modules/playback/autoPlay.js';
+import { mediaManifest } from '../../../modules/media/manifest.js';
+import { mediaOrdering } from '../../../modules/media/ordering.js';
 
 describe('Auto-Play Manager Module', () => {
     let mockNavigate;
@@ -27,15 +29,25 @@ describe('Auto-Play Manager Module', () => {
 
         // Mock appState service in registry
         window.__RAGOT_ALLOW_DIRECT_MUTATION__ = true;
+        mediaManifest.clear();
+        mediaOrdering.orders.clear();
+        mediaManifest.ingest({
+            'media::image1.jpg': { id: 'media::image1.jpg', type: 'image', name: 'image1.jpg', url: '/media/image1.jpg' },
+            'media::video1.mp4': { id: 'media::video1.mp4', type: 'video', name: 'video1.mp4', url: '/media/video1.mp4' },
+            'media::image2.jpg': { id: 'media::image2.jpg', type: 'image', name: 'image2.jpg', url: '/media/image2.jpg' }
+        }, []);
+        mediaOrdering.ingestView('autoplay-view', {
+            viewKey: 'autoplay-view',
+            viewType: 'streaming_grid',
+            orderedIds: ['media::image1.jpg', 'media::video1.mp4', 'media::image2.jpg'],
+            params: { category_id: 'media', media_filter: 'all' }
+        });
         window.ragotModules = {
             ...(window.ragotModules || {}),
+            mediaManifest,
+            mediaOrdering,
             appState: {
-                currentMediaIndex: 0,
-                fullMediaList: [
-                    { type: 'image', name: 'image1.jpg', url: '/media/image1.jpg' },
-                    { type: 'video', name: 'video1.mp4', url: '/media/video1.mp4' },
-                    { type: 'image', name: 'image2.jpg', url: '/media/image2.jpg' }
-                ]
+                viewer: { viewKey: 'autoplay-view', activeIndex: 0 }
             },
             appDom: {
                 mediaViewer: container
@@ -146,7 +158,7 @@ describe('Auto-Play Manager Module', () => {
     describe('handleAutoPlay - Images', () => {
         it('should set timer for image auto-advance', () => {
             toggleAutoPlay(10); // 10 seconds
-            window.ragotModules.appState.currentMediaIndex = 0; // First item is image
+            window.ragotModules.appState.viewer.activeIndex = 0; // First item is image
 
             handleAutoPlay(0);
 
@@ -204,7 +216,7 @@ describe('Auto-Play Manager Module', () => {
 
             document.getElementById('media-viewer').appendChild(video);
 
-            window.ragotModules.appState.currentMediaIndex = 1; // Video item
+            window.ragotModules.appState.viewer.activeIndex = 1; // Video item
             toggleAutoPlay(true);
 
             handleAutoPlay(1);
@@ -227,7 +239,7 @@ describe('Auto-Play Manager Module', () => {
 
             document.getElementById('media-viewer').appendChild(video);
 
-            window.ragotModules.appState.currentMediaIndex = 1;
+            window.ragotModules.appState.viewer.activeIndex = 1;
             toggleAutoPlay(true);
 
             handleAutoPlay(1);
@@ -254,7 +266,7 @@ describe('Auto-Play Manager Module', () => {
 
             document.getElementById('media-viewer').appendChild(video);
 
-            window.ragotModules.appState.currentMediaIndex = 1;
+            window.ragotModules.appState.viewer.activeIndex = 1;
             toggleAutoPlay(true);
 
             handleAutoPlay(1);
@@ -268,7 +280,7 @@ describe('Auto-Play Manager Module', () => {
             thumbnail.setAttribute('data-index', '1');
             document.getElementById('media-viewer').appendChild(thumbnail);
 
-            window.ragotModules.appState.currentMediaIndex = 1;
+            window.ragotModules.appState.viewer.activeIndex = 1;
             toggleAutoPlay(true);
 
             handleAutoPlay(1);
@@ -326,14 +338,14 @@ describe('Auto-Play Manager Module', () => {
 
     describe('Edge Cases', () => {
         it('should handle missing fullMediaList gracefully', () => {
-            window.ragotModules.appState.fullMediaList = null;
+            window.ragotModules.appState.viewer = null;
             toggleAutoPlay(true);
 
             expect(() => handleAutoPlay(0)).not.toThrow();
         });
 
-        it('should handle undefined currentMediaIndex', () => {
-            window.ragotModules.appState.currentMediaIndex = undefined;
+        it('should handle missing viewer session', () => {
+            window.ragotModules.appState.viewer = null;
 
             expect(() => toggleAutoPlay(true)).not.toThrow();
         });

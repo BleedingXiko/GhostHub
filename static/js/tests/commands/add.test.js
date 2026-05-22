@@ -11,6 +11,8 @@ vi.mock('../../utils/liveVisibility.js', () => ({
 
 import { add } from '../../commands/add.js';
 import { refreshAllLayouts } from '../../utils/liveVisibility.js';
+import { mediaManifest } from '../../modules/media/manifest.js';
+import { mediaOrdering } from '../../modules/media/ordering.js';
 
 describe('Add Command', () => {
   let mockSocket;
@@ -22,14 +24,25 @@ describe('Add Command', () => {
     mockDisplayMessage = vi.fn();
     global.fetch = vi.fn();
 
+    mediaManifest.clear();
+    mediaOrdering.orders.clear();
+    mediaManifest.ingest({
+      'movies::movie1.mp4': { id: 'movies::movie1.mp4', url: '/media/movie1.mp4', name: 'Movie 1', type: 'video' },
+      'movies::movie2.mp4': { id: 'movies::movie2.mp4', url: '/media/movie2.mp4', name: 'Movie 2', type: 'video' }
+    }, []);
+    mediaOrdering.ingestView('test-view', {
+      viewKey: 'test-view',
+      viewType: 'streaming_grid',
+      orderedIds: ['movies::movie1.mp4', 'movies::movie2.mp4'],
+      params: { category_id: 'movies', media_filter: 'all' }
+    });
+
     window.ragotModules = {
+      mediaManifest,
+      mediaOrdering,
       appState: {
         currentCategoryId: 'movies',
-        currentMediaIndex: 0,
-        fullMediaList: [
-          { url: '/media/movie1.mp4', name: 'Movie 1', type: 'video' },
-          { url: '/media/movie2.mp4', name: 'Movie 2', type: 'video' }
-        ]
+        viewer: { viewKey: 'test-view', activeIndex: 0 }
       }
     };
   });
@@ -73,7 +86,7 @@ describe('Add Command', () => {
     });
 
     it('should show error if no media index', async () => {
-      window.ragotModules.appState.currentMediaIndex = null;
+      window.ragotModules.appState.viewer = null;
 
       await add.execute(mockSocket, mockDisplayMessage, '');
 
@@ -84,7 +97,7 @@ describe('Add Command', () => {
     });
 
     it('should show error if index out of range', async () => {
-      window.ragotModules.appState.currentMediaIndex = 100;
+      window.ragotModules.appState.viewer.activeIndex = 100;
 
       await add.execute(mockSocket, mockDisplayMessage, '');
 

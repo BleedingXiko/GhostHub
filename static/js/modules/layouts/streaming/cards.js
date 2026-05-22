@@ -34,6 +34,15 @@ function setThumbnailLoadedState(img) {
     setThumbnailPlaceholderState(img, { visible: false, state: 'loaded' });
 }
 
+function shouldTrackThumbnailProgress(media, categoryId) {
+    if (!media?.url || media.type !== 'video') return false;
+    if (!media.thumbnailUrl) return true;
+
+    const status = ThumbnailProgress.getThumbnailStatus(categoryId);
+    if (!status || (status.status !== 'generating' && status.status !== 'pending')) return false;
+    return Boolean(status.mediaUrl && urlsMatch(status.mediaUrl, media.url));
+}
+
 // ── Continue Watching card ───────────────────────────────────────────────────
 
 /**
@@ -192,7 +201,6 @@ export function createMediaItemCard(media, categoryId, index, options = {}) {
     const displayTitle = filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
     const isVideo = media.type === 'video';
     const thumbnailUrl = isVideo ? (media.thumbnailUrl || null) : (media.thumbnailUrl || media.url);
-    const isThumbnailSized = thumbnailUrl && thumbnailUrl.includes('/thumbnails/');
     const shouldEager = forceEager && !!thumbnailUrl;
     const eagerMode = eagerModeOverride || 'direct';
     const finalThumbnailSrc = thumbnailUrl ? appendShowHiddenParam(thumbnailUrl) : null;
@@ -214,8 +222,23 @@ export function createMediaItemCard(media, categoryId, index, options = {}) {
         tabIndex: index === 0 ? 0 : -1,
         role: 'link',
         style: { '--card-index': index },
-        dataset: { categoryId, index, mediaUrl: media.url || '', mediaType: media.type || 'unknown' },
-        onClick: () => openViewerByUrl(categoryId, media.url)
+        dataset: {
+            categoryId,
+            index,
+            mediaUrl: media.url || '',
+            mediaType: media.type || 'unknown',
+            // Stable id beats URL: indexOf in the manifest's orderedIds is
+            // exact (no encoding/normalize ambiguity, no closure staleness).
+            recordId: media.id || '',
+        },
+        onClick: (e) => {
+            const el = e.currentTarget || card;
+            openViewerByUrl(
+                el.dataset.categoryId || categoryId,
+                el.dataset.mediaUrl || media.url,
+                el.dataset.recordId || media.id || null,
+            );
+        }
     });
 
     const thumbWrap = createThumbnailShell({
@@ -289,7 +312,7 @@ export function createMediaItemCard(media, categoryId, index, options = {}) {
     }
 
     // ThumbnailProgress tracking for videos still generating
-    if (isVideo && media.url && (media.thumbnailUrl === null || isThumbnailSized)) {
+    if (shouldTrackThumbnailProgress(media, categoryId)) {
         const progressContainer = $('.streaming-card-thumbnail-progress', card);
         if (progressContainer) {
             const progressBar = createSimpleProgressBar({ categoryId, showPercentage: true });

@@ -4,12 +4,14 @@ import {
   fetchCategories,
   fetchAllCategoryMedia,
   fetchCategoryMedia,
+  fetchCategoryMediaBatch,
   fetchNewestMedia,
   primeCategoryLoadingShells,
   getCategoryProgress
-} from '../../../modules/layouts/streaming/data.js';
+} from '../../../modules/layouts/streaming/mediaDataSource.js';
+import { selectRecordsForView } from '../../../modules/media/selectors.js';
 
-import { streamingState } from '../../../modules/layouts/streaming/state.js';
+import { getCategoryView, streamingState } from '../../../modules/layouts/streaming/state.js';
 import * as layoutUtils from '../../../utils/layoutUtils.js';
 import * as progressDB from '../../../utils/progressDB.js';
 import * as profileUtils from '../../../utils/profileUtils.js';
@@ -56,8 +58,50 @@ describe('Streaming Layout Data Fetching & Processing', () => {
       whatsNewLoading: false,
       mediaFilter: 'all',
       categoryIdFilter: null,
-      subfolderFilter: null
+      subfolderFilter: null,
+      whatsNewViewKey: null
     });
+    const orderPayload = {
+      orderedIds: ['cat-123::one.mp4', 'cat-123::two.jpg'],
+      records: {
+        'cat-123::one.mp4': { id: 'cat-123::one.mp4', categoryId: 'cat-123', relPath: 'one.mp4', name: 'one.mp4', type: 'video', url: '/media/cat-123/one.mp4' },
+        'cat-123::two.jpg': { id: 'cat-123::two.jpg', categoryId: 'cat-123', relPath: 'two.jpg', name: 'two.jpg', type: 'image', url: '/media/cat-123/two.jpg' }
+      },
+      missing: [],
+      hasMore: true,
+      viewMeta: {
+        total: 100,
+        subfolders: ['folder1'],
+        asyncIndexing: false,
+        indexingProgress: 100
+      }
+    };
+    window.ragotModules = {
+      mediaOrdering: {
+        requestOrder: vi.fn().mockResolvedValue(orderPayload),
+        ingestView: vi.fn(),
+        getOrder: vi.fn(() => orderPayload),
+        state: { version: 1 },
+        subscribe: vi.fn(() => () => {})
+      },
+      mediaManifest: {
+        pin: vi.fn(),
+        ingest: vi.fn(),
+        hydrate: vi.fn().mockResolvedValue([]),
+        get: vi.fn((id) => ({
+          id,
+          url: `/media/${id}`,
+          name: id.split('::').pop(),
+          categoryId: id.split('::')[0],
+          type: id.endsWith('.jpg') ? 'image' : 'video'
+        })),
+        getMany: vi.fn((ids) => ids.map((id) => window.ragotModules.mediaManifest.get(id)).filter(Boolean)),
+        has: vi.fn(() => false),
+        isMissing: vi.fn(() => false),
+        subscribe: vi.fn(() => () => {}),
+        recordsVersion: 1
+      }
+    };
   });
 
   describe('buildContinueWatchingData', () => {
@@ -200,69 +244,143 @@ describe('Streaming Layout Data Fetching & Processing', () => {
   });
 
   describe('fetchCategoryMedia', () => {
-    it('should properly format URL parameters for subfolders and pagination', async () => {
-      const mockResponse = {
-        ok: true,
-        json: async () => ({
-          files: [{ id: 'f1' }, { id: 'f2' }],
-          subfolders: ['folder1'],
-          pagination: { hasMore: true, total: 100 }
-        })
-      };
-      requestCache.cachedFetch.mockResolvedValue(mockResponse);
-
+    it('should request ordering and hydrate records for subfolders and pagination', async () => {
       const result = await fetchCategoryMedia('cat-123', 2, false, 'Movies/Action', { includeTotal: true });
 
-      expect(result.media.length).toBe(2);
+      expect(result.orderedIds.length).toBe(2);
       expect(result.hasMore).toBe(true);
       expect(result.subfolders).toContain('folder1');
       expect(result.total).toBe(100);
 
-      // Verify URL structure
-      const fetchCallUrl = requestCache.cachedFetch.mock.calls[0][0];
-      expect(fetchCallUrl).toContain('/api/categories/cat-123/media');
-      expect(fetchCallUrl).toContain('page=2');
-      expect(fetchCallUrl).toContain('subfolder=Movies%2FAction');
+      expect(window.ragotModules.mediaOrdering.requestOrder).toHaveBeenCalledWith(
+        expect.stringContaining('subfolder_grid::cat-123::Movies/Action'),
+        'subfolder_grid',
+        expect.objectContaining({
+          category_id: 'cat-123',
+          page: 2,
+          subfolder: 'Movies/Action',
+          media_filter: 'all',
+          hydrate: 'true'
+        }),
+        expect.any(Object)
+      );
+      expect(window.ragotModules.mediaManifest.hydrate).toHaveBeenCalledWith([
+        'cat-123::one.mp4',
+        'cat-123::two.jpg'
+      ]);
+    });
+
+    it('projects ordered ids through shared selectors', () => {
+      const viewKey = 'streaming_row::cat-123::::all::20';
+      window.ragotModules.mediaManifest.recordsVersion = 1;
+
+      const records = selectRecordsForView(viewKey);
+
+      expect(records).toHaveLength(2);
+      expect(window.ragotModules.mediaManifest.getMany).toHaveBeenCalledWith([
+        'cat-123::one.mp4',
+        'cat-123::two.jpg'
+      ]);
     });
 
     it('should fall back gracefully if the API fails', async () => {
-      requestCache.cachedFetch.mockResolvedValue({ ok: false }); // simulate failure
+      window.ragotModules.mediaOrdering.requestOrder.mockRejectedValue(new Error('boom'));
 
       const result = await fetchCategoryMedia('cat-404', 1);
 
-      expect(result.media).toEqual([]);
+      expect(result.orderedIds).toEqual([]);
       expect(result.hasMore).toBe(false);
       expect(result.total).toBeNull();
     });
 
     it('bypasses client request dedupe on visibility refresh without adding force_refresh', async () => {
-      const mockResponse = {
-        ok: true,
-        json: async () => ({
-          files: [{ id: 'f1' }],
-          subfolders: [],
-          pagination: { hasMore: false, total: 1 }
-        })
-      };
-
-      global.fetch = vi.fn().mockResolvedValue(mockResponse);
-
       const result = await fetchCategoryMedia('cat-123', 1, false, null, { bypassClientCache: true });
 
-      expect(result.media).toHaveLength(1);
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(result.orderedIds).toHaveLength(2);
       expect(requestCache.cachedFetch).not.toHaveBeenCalled();
-      expect(global.fetch.mock.calls[0][0]).not.toContain('force_refresh=true');
+      expect(window.ragotModules.mediaOrdering.requestOrder.mock.calls[0][3]).toEqual(
+        expect.objectContaining({ bypassClientCache: true })
+      );
+      expect(window.ragotModules.mediaOrdering.requestOrder.mock.calls[0][2].force_refresh).toBe('false');
+    });
+  });
+
+  describe('fetchCategoryMediaBatch', () => {
+    it('posts one batch request and ingests each returned view', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            viewKey: 'streaming_row::cat-123::::all::20',
+            orderedIds: ['cat-123::one.mp4'],
+            records: {
+              'cat-123::one.mp4': { id: 'cat-123::one.mp4', categoryId: 'cat-123', relPath: 'one.mp4' }
+            },
+            missing: [],
+            hasMore: false,
+            viewMeta: { subfolders: [] },
+            status: 'ready'
+          }]
+        })
+      });
+
+      const result = await fetchCategoryMediaBatch([{
+        viewType: 'streaming_row',
+        viewKey: 'streaming_row::cat-123::::all::20',
+        params: { view: 'streaming_row', category_id: 'cat-123', hydrate: 'true' }
+      }]);
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/media/orders', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ requests: [{ view: 'streaming_row', category_id: 'cat-123', hydrate: 'true' }] })
+      }));
+      expect(window.ragotModules.mediaManifest.ingest).toHaveBeenCalledWith(
+        { 'cat-123::one.mp4': { id: 'cat-123::one.mp4', categoryId: 'cat-123', relPath: 'one.mp4' } },
+        []
+      );
+      expect(window.ragotModules.mediaOrdering.ingestView).toHaveBeenCalledWith(
+        'streaming_row::cat-123::::all::20',
+        expect.objectContaining({ orderedIds: ['cat-123::one.mp4'], status: 'ready' })
+      );
+      expect(result[0].orderedIds).toEqual(['cat-123::one.mp4']);
+    });
+
+    it('does not ingest or pin failed batch items', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            viewKey: 'streaming_row::cat-123::::all::20',
+            orderedIds: [],
+            records: { stale: { id: 'stale' } },
+            missing: [],
+            status: 'error',
+            error: 'bad request'
+          }]
+        })
+      });
+
+      const result = await fetchCategoryMediaBatch([{
+        viewType: 'streaming_row',
+        viewKey: 'streaming_row::cat-123::::all::20',
+        params: { view: 'streaming_row', category_id: 'cat-123', hydrate: 'true' }
+      }]);
+
+      expect(window.ragotModules.mediaManifest.ingest).not.toHaveBeenCalled();
+      expect(window.ragotModules.mediaManifest.pin).not.toHaveBeenCalled();
+      expect(window.ragotModules.mediaOrdering.ingestView).not.toHaveBeenCalled();
+      expect(result[0].status).toBe('error');
+      expect(result[0].viewKey).toBe('streaming_row::cat-123::::all::20');
     });
   });
 
   describe('fetchCategories', () => {
-    it('prunes stale category caches during category-list refreshes', async () => {
+    it('drops stale category view metadata during category-list refreshes', async () => {
       streamingState.setState({
-        categoryMediaCache: {
-          'cat-live|sf:|mf:all': { media: [{ id: 'a' }], page: 1, hasMore: false, loading: false, subfolders: [] },
-          'cat-stale|sf:|mf:all': { media: [{ id: 'b' }], page: 1, hasMore: false, loading: false, subfolders: [] }
-        }
+        categoriesData: [
+          { id: 'cat-live', name: 'Live USB', viewKey: 'view-a', viewPage: 1, viewHasMore: false, viewStatus: 'ready', viewSubfolder: '', viewMediaFilter: 'all', subfolders: [] },
+          { id: 'cat-stale', name: 'Removed USB', viewKey: 'view-b', viewPage: 1, viewHasMore: false, viewStatus: 'ready', viewSubfolder: '', viewMediaFilter: 'all', subfolders: [] }
+        ]
       });
 
       global.fetch = vi.fn().mockResolvedValue({
@@ -279,13 +397,25 @@ describe('Streaming Layout Data Fetching & Processing', () => {
       });
 
       expect(categories).toEqual([{ id: 'cat-live', name: 'Live USB' }]);
-      expect(streamingState.state.categoryMediaCache['cat-live|sf:|mf:all']).toBeDefined();
-      expect(streamingState.state.categoryMediaCache['cat-stale|sf:|mf:all']).toBeUndefined();
+      expect(streamingState.state.categoriesData).toEqual([
+        {
+          id: 'cat-live',
+          name: 'Live USB',
+          viewKey: 'streaming_row::cat-live::::all::20',
+          viewPage: 1,
+          viewHasMore: false,
+          viewStatus: 'ready',
+          viewSubfolder: '',
+          viewMediaFilter: 'all',
+          subfolders: []
+        }
+      ]);
+      expect(getCategoryView('cat-stale', null, 'all')).toBeNull();
     });
   });
 
   describe('fetchAllCategoryMedia', () => {
-    it('should cache failed single-category subfolder loads under the subfolder key', async () => {
+    it('leaves an uncached single-category subfolder view untouched when the batch load fails', async () => {
       streamingState.setState({
         categoriesData: [{ id: 'cat-123', name: 'Movies' }],
         categoryIdFilter: 'cat-123',
@@ -293,24 +423,16 @@ describe('Streaming Layout Data Fetching & Processing', () => {
         mediaFilter: 'all'
       });
 
-      requestCache.cachedFetch.mockRejectedValue(new Error('boom'));
+      global.fetch = vi.fn().mockRejectedValue(new Error('boom'));
 
       await fetchAllCategoryMedia(false);
 
-      expect(streamingState.state.categoryMediaCache['cat-123|sf:Movies/Action|mf:all']).toEqual({
-        media: [],
-        page: 1,
-        hasMore: false,
-        loading: false,
-        subfolders: [],
-        asyncIndexing: false,
-        indexingProgress: 0
-      });
+      expect(getCategoryView('cat-123', 'Movies/Action', 'all')).toBeNull();
     });
   });
 
   describe('primeCategoryLoadingShells', () => {
-    it('creates loading cache entries for categories that do not have a row cache yet', () => {
+    it('creates fetching cache entries for categories that do not have a row cache yet', () => {
       streamingState.setState({
         categoriesData: [{ id: 'cat-1', name: 'Movies' }, { id: 'cat-2', name: 'Shows' }],
         mediaFilter: 'all'
@@ -318,20 +440,22 @@ describe('Streaming Layout Data Fetching & Processing', () => {
 
       primeCategoryLoadingShells();
 
-      expect(streamingState.state.categoryMediaCache['cat-1|sf:|mf:all']).toEqual({
-        media: [],
+      expect(getCategoryView('cat-1', null, 'all')).toEqual({
+        orderedIds: [],
+        viewKey: null,
         page: 1,
         hasMore: false,
-        loading: true,
+        status: 'fetching',
         subfolders: [],
         asyncIndexing: false,
         indexingProgress: 0
       });
-      expect(streamingState.state.categoryMediaCache['cat-2|sf:|mf:all']).toEqual({
-        media: [],
+      expect(getCategoryView('cat-2', null, 'all')).toEqual({
+        orderedIds: [],
+        viewKey: null,
         page: 1,
         hasMore: false,
-        loading: true,
+        status: 'fetching',
         subfolders: [],
         asyncIndexing: false,
         indexingProgress: 0
@@ -341,12 +465,12 @@ describe('Streaming Layout Data Fetching & Processing', () => {
 
   describe('fetchNewestMedia', () => {
     it('preserves the previous row snapshot while the latest media refresh is pending', async () => {
-      let resolveFetch;
+      let resolveOrder;
       const previousMedia = [{ id: 'old-1', name: 'Old upload' }];
       streamingState.setState({ whatsNewData: previousMedia });
 
-      global.fetch = vi.fn().mockReturnValue(new Promise((resolve) => {
-        resolveFetch = resolve;
+      window.ragotModules.mediaOrdering.requestOrder.mockReturnValue(new Promise((resolve) => {
+        resolveOrder = resolve;
       }));
 
       const refreshPromise = fetchNewestMedia(10, true);
@@ -354,17 +478,32 @@ describe('Streaming Layout Data Fetching & Processing', () => {
       expect(streamingState.state.whatsNewLoading).toBe(true);
       expect(streamingState.state.whatsNewData).toEqual(previousMedia);
 
-      resolveFetch({
-        ok: true,
-        json: async () => ({
-          media: [{ id: 'new-1', name: 'New upload' }]
-        })
-      });
+      const newestOrder = {
+        orderedIds: ['cat-123::new-1.mp4'],
+        records: {},
+        missing: [],
+        hasMore: false,
+        viewMeta: {}
+      };
+      window.ragotModules.mediaOrdering.getOrder.mockReturnValue(newestOrder);
+      resolveOrder(newestOrder);
 
       await refreshPromise;
 
+      expect(window.ragotModules.mediaOrdering.requestOrder).toHaveBeenCalledWith(
+        'whats_new::all::10',
+        'whats_new',
+        { limit: 10, media_filter: 'all', hydrate: 'true' },
+        { bypassClientCache: true }
+      );
+      expect(window.ragotModules.mediaManifest.pin).toHaveBeenCalledWith(
+        'whats_new::all::10',
+        ['cat-123::new-1.mp4']
+      );
+      expect(window.ragotModules.mediaManifest.hydrate).toHaveBeenCalledWith(['cat-123::new-1.mp4']);
       expect(streamingState.state.whatsNewLoading).toBe(false);
-      expect(streamingState.state.whatsNewData).toEqual([{ id: 'new-1', name: 'New upload' }]);
+      expect(streamingState.state.whatsNewViewKey).toBe('whats_new::all::10');
+      expect(streamingState.state.whatsNewData).toEqual([expect.objectContaining({ id: 'cat-123::new-1.mp4' })]);
     });
   });
 });

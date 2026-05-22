@@ -4,6 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mediaManifest } from '../../modules/media/manifest.js';
+import { mediaOrdering } from '../../modules/media/ordering.js';
 
 describe('AutoPlayManager', () => {
   let navigateMediaMock;
@@ -21,15 +23,28 @@ describe('AutoPlayManager', () => {
     
     // Mock app state service in registry
     window.__RAGOT_ALLOW_DIRECT_MUTATION__ = true;
+    mediaManifest.clear();
+    mediaOrdering.orders.clear();
+    mediaManifest.ingest({
+      'media::image1.jpg': { id: 'media::image1.jpg', url: '/media/image1.jpg', type: 'image', name: 'Image 1' },
+      'media::video1.mp4': { id: 'media::video1.mp4', url: '/media/video1.mp4', type: 'video', name: 'Video 1' },
+      'media::image2.jpg': { id: 'media::image2.jpg', url: '/media/image2.jpg', type: 'image', name: 'Image 2' }
+    }, []);
+    mediaOrdering.ingestView('autoplay-view', {
+      viewKey: 'autoplay-view',
+      viewType: 'streaming_grid',
+      orderedIds: ['media::image1.jpg', 'media::video1.mp4', 'media::image2.jpg'],
+      params: { category_id: 'media', media_filter: 'all' }
+    });
     window.ragotModules = {
       ...(window.ragotModules || {}),
+      mediaManifest,
+      mediaOrdering,
       appState: {
-        currentMediaIndex: 0,
-        fullMediaList: [
-          { url: '/media/image1.jpg', type: 'image', name: 'Image 1' },
-          { url: '/media/video1.mp4', type: 'video', name: 'Video 1' },
-          { url: '/media/image2.jpg', type: 'image', name: 'Image 2' }
-        ]
+        viewer: { viewKey: 'autoplay-view', activeIndex: 0 }
+      },
+      appDom: {
+        mediaViewer: document.getElementById('media-viewer')
       }
     };
     

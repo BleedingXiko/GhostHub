@@ -5,6 +5,8 @@
 
 import { ensureFeatureAccess } from '../utils/authManager.js'; // Import the new auth utility
 import { SOCKET_EVENTS } from '../core/socketEvents.js';
+import { getCurrentViewerRecord, getViewerSession } from '../modules/media/viewerState.js';
+import { selectParams, selectView } from '../modules/media/selectors.js';
 
 // Define the functions first
 async function executeMyView(socket, displayLocalMessage, arg) {
@@ -21,18 +23,27 @@ async function executeMyView(socket, displayLocalMessage, arg) {
   }
 
   const categoryId = appState.currentCategoryId;
-  const index = appState.currentMediaIndex;
+  const viewer = getViewerSession(appState);
+  const index = viewer?.activeIndex;
+  const currentRecord = getCurrentViewerRecord(appState);
   const sessionId = socket.id;
 
-  if (!categoryId || index == null) {
+  if (!categoryId || index == null || !viewer) {
     displayLocalMessage('No media open.', { icon: 'x', surface: 'chat' });
     return;
   }
 
+  const view = selectView(viewer.viewKey);
   // Emit to server for rebroadcast
   socket.emit(SOCKET_EVENTS.COMMAND, {
     cmd: 'myview',
-    arg: { category_id: categoryId, index },
+    arg: {
+      category_id: categoryId,
+      viewKey: viewer.viewKey,
+      viewType: view?.viewType || null,
+      viewParams: selectParams(viewer.viewKey),
+      mediaId: currentRecord?.id || null,
+    },
     from: sessionId
   });
   displayLocalMessage('View shared.', { icon: 'cast', surface: 'chat' });

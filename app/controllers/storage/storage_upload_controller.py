@@ -87,6 +87,18 @@ class StorageUploadController(Controller):
             from app.services.storage import standard_upload_service
 
             files = request.files.getlist('file')
+            client_ip = request.remote_addr
+            for file_storage in files:
+                upload_size = self._file_storage_size(file_storage)
+                # Same reasoning as the chunked path: wait for capacity
+                # rather than hard-failing, so the upload completes at the
+                # configured rate instead of getting bounced.
+                if upload_size and not rate_limit_service.wait_for_upload_capacity(
+                    client_ip, upload_size, timeout=30.0
+                ):
+                    return {
+                        'error': 'Upload rate limit exceeded. Please try again in a moment.',
+                    }, 429
             return standard_upload_service.upload_files(
                 files,
                 drive_path,
@@ -98,6 +110,23 @@ class StorageUploadController(Controller):
             logger.error("Error uploading file: %s", exc)
             logger.debug(traceback.format_exc())
             return {'error': 'Upload failed'}, 500
+
+    @staticmethod
+    def _file_storage_size(file_storage):
+        size = getattr(file_storage, 'content_length', None)
+        if size:
+            return int(size)
+        stream = getattr(file_storage, 'stream', None)
+        if not stream:
+            return 0
+        try:
+            current_pos = stream.tell()
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(current_pos)
+            return int(size)
+        except Exception:
+            return 0
 
     def negotiate_upload_settings(self):
         """Get optimal upload settings based on connection type."""
@@ -201,7 +230,12 @@ class StorageUploadController(Controller):
                 chunk_stream.seek(current_pos)
 
             client_ip = request.remote_addr
-            if not rate_limit_service.check_upload_limit(client_ip, chunk_size):
+            # Block-and-wait on the limiter instead of returning 429. Chunked
+            # uploads are already paced by the client; a hard rejection here
+            # makes the browser exhaust its retry budget and abort the file
+            # mid-stream, leaving nothing on disk. Waiting for tokens lets
+            # the upload proceed at the configured rate instead of failing.
+            if not rate_limit_service.wait_for_upload_capacity(client_ip, chunk_size, timeout=30.0):
                 return {
                     'error': 'Upload rate limit exceeded. Please try again in a moment.',
                 }, 429

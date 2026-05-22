@@ -205,11 +205,11 @@ print(
 def get_validation_python() -> str:
     """Return the interpreter GhostPack should use for dist validation."""
     candidates = []
-    candidates.append(Path(sys.executable))
     if sys.platform == "win32":
         candidates.append(PROJECT_ROOT / "venv" / "Scripts" / "python.exe")
     else:
         candidates.append(PROJECT_ROOT / "venv" / "bin" / "python")
+    candidates.append(Path(sys.executable))
 
     for candidate in candidates:
         candidate_path = Path(candidate)

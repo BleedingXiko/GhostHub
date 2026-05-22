@@ -74,7 +74,12 @@ class AdminVisibilityController(Controller):
                     update_cached_category(child)
 
                 registry.require('library_events').emit_category_updated(
-                    {'reason': 'category_hidden', 'category_id': category_id},
+                    {
+                        'reason': 'category_hidden',
+                        'category_id': category_id,
+                        'invalidateCategory': True,
+                        'timestamp': time.time(),
+                    },
                 )
 
                 logger.info("Admin %s hid category: %s", admin_session_id, category_id)
@@ -112,6 +117,8 @@ class AdminVisibilityController(Controller):
                         'duration_seconds': duration_seconds,
                         'session_only': True,
                         'show_hidden': True,
+                        'invalidateAll': True,
+                        'timestamp': time.time(),
                     },
                 )
 
@@ -168,6 +175,9 @@ class AdminVisibilityController(Controller):
                         'reason': 'category_unhidden',
                         'category_id': category_id if category_id else None,
                         'unhide_all': category_id is None,
+                        'invalidateCategory': category_id is not None,
+                        'invalidateAll': category_id is None,
+                        'timestamp': time.time(),
                     },
                 )
 
@@ -201,11 +211,11 @@ class AdminVisibilityController(Controller):
                     return {'success': False, 'error': message}, 500
 
                 self._refresh_category_cache(category_id)
-                self._emit_visibility_change({
-                    'type': 'file_hidden',
-                    'file_path': file_path,
-                    'category_id': category_id,
-                })
+                self._emit_media_record_invalidation(
+                    'file_hidden',
+                    category_id,
+                    file_path,
+                )
 
                 logger.info("Admin %s hid file: %s", admin_session_id, file_path)
                 return {'success': True, 'message': message}
@@ -240,16 +250,38 @@ class AdminVisibilityController(Controller):
                         message = f"{message} Parent category unhidden."
 
                 self._refresh_category_cache(category_id)
-                self._emit_visibility_change({
-                    'type': 'file_unhidden',
-                    'file_path': file_path,
-                })
+                self._emit_media_record_invalidation(
+                    'file_unhidden',
+                    category_id,
+                    file_path,
+                )
 
                 admin_session_id = get_request_session_id()
                 logger.info("Admin %s unhid file: %s", admin_session_id, file_path)
                 return {'success': True, 'message': message}
             except Exception as exc:
                 logger.error("Error unhiding file: %s", exc)
+                return {'success': False, 'error': str(exc)}, 500
+
+        @router.route('/files/batch-visibility', methods=['POST'])
+        @admin_required
+        def batch_file_visibility():
+            """Hide or unhide multiple files with one grouped refresh."""
+            try:
+                payload = expect_json()
+                action = payload.get('action')
+                files = payload.get('files')
+                if action not in {'hide', 'unhide'}:
+                    return {'success': False, 'error': 'action must be hide or unhide'}, 400
+                if not isinstance(files, list):
+                    return {'success': False, 'error': 'files must be a list'}, 400
+                if len(files) > 500:
+                    return {'success': False, 'error': 'Cannot update more than 500 files at once'}, 413
+
+                result = self._batch_file_visibility(action, files)
+                return {'success': result['updated'] > 0, **result}
+            except Exception as exc:
+                logger.error("Error updating file visibility batch: %s", exc)
                 return {'success': False, 'error': str(exc)}, 500
 
         @router.route('/media/action', methods=['POST'])
@@ -281,18 +313,10 @@ class AdminVisibilityController(Controller):
                 admin_session_id = get_request_session_id()
 
                 if action == 'delete':
-                    parent_folder = os.path.dirname(file_path)
-                    filename = os.path.basename(file_path)
                     success, message = storage_media_file_service.delete_file(file_path)
                     if not success:
                         return {'success': False, 'error': message}, 400
 
-                    self._emit_visibility_change({
-                        'type': 'file_deleted',
-                        'file_path': file_path,
-                        'filename': filename,
-                        'folder': parent_folder,
-                    })
                     self._refresh_category_cache(category_id)
                     return {'success': True, 'message': message}
 
@@ -311,16 +335,10 @@ class AdminVisibilityController(Controller):
                     if not success:
                         return {'success': False, 'error': message}, 400
 
-                    old_url = storage_path_service.get_media_url_from_path(file_path)
                     new_url = (
                         storage_path_service.get_media_url_from_path(new_path)
                         if new_path else None
                     )
-                    if old_url and new_url:
-                        registry.require('storage_events').emit_file_renamed(
-                            {'old_path': old_url, 'new_path': new_url},
-                            broadcast=True,
-                        )
                     self._refresh_category_cache(category_id)
                     return {
                         'success': True,
@@ -339,11 +357,11 @@ class AdminVisibilityController(Controller):
                     if not success:
                         return {'success': False, 'error': message}, 500
                     self._refresh_category_cache(category_id)
-                    self._emit_visibility_change({
-                        'type': 'file_hidden',
-                        'file_path': file_path,
-                        'category_id': category_id,
-                    })
+                    self._emit_media_record_invalidation(
+                        'file_hidden',
+                        category_id,
+                        file_path,
+                    )
                     logger.info(
                         "Admin %s hid file via quick action: %s",
                         admin_session_id,
@@ -355,10 +373,11 @@ class AdminVisibilityController(Controller):
                 if not success:
                     return {'success': False, 'error': message}, 500
                 self._refresh_category_cache(category_id)
-                self._emit_visibility_change({
-                    'type': 'file_unhidden',
-                    'file_path': file_path,
-                })
+                self._emit_media_record_invalidation(
+                    'file_unhidden',
+                    category_id,
+                    file_path,
+                )
                 logger.info(
                     "Admin %s unhid file via quick action: %s",
                     admin_session_id,
@@ -435,6 +454,8 @@ class AdminVisibilityController(Controller):
                         'reason': 'show_hidden_disabled',
                         'session_only': True,
                         'show_hidden': False,
+                        'invalidateAll': True,
+                        'timestamp': time.time(),
                     },
                 )
 
@@ -488,8 +509,47 @@ class AdminVisibilityController(Controller):
         for sid in session_store.list_session_sids(session_id):
             registry.require('library_events').emit_category_updated(payload, room=sid)
 
-    def _emit_visibility_change(self, payload):
-        registry.require('storage_events').emit_content_visibility_changed(payload)
+    def _emit_media_record_invalidation(self, reason, category_id, file_path):
+        stable_id = self._stable_media_id_for_file_path(category_id, file_path)
+        payload = {
+            'reason': reason,
+            'category_id': category_id,
+            'media_url': self._media_url_for_file_path(file_path),
+            'invalidateCategory': True,
+            'timestamp': time.time(),
+        }
+        if stable_id:
+            payload['invalidatedIds'] = [stable_id]
+        registry.require('library_events').emit_category_updated(payload)
+
+    def _media_url_for_file_path(self, file_path):
+        if not file_path:
+            return None
+        try:
+            from app.services.storage.storage_path_service import get_media_url_from_path
+
+            return get_media_url_from_path(file_path)
+        except Exception as exc:
+            logger.debug("Could not derive media URL for %s: %s", file_path, exc)
+            return None
+
+    def _stable_media_id_for_file_path(self, category_id, file_path):
+        if not category_id or not file_path:
+            return None
+        try:
+            from app.services.media.category_query_service import get_category_by_id
+
+            category = get_category_by_id(category_id)
+            category_root = category.get('path') if category else None
+            if not category_root:
+                return None
+            rel_path = os.path.relpath(file_path, category_root).replace(os.sep, '/')
+            if rel_path.startswith('..'):
+                return None
+            return f"{category_id}::{rel_path}"
+        except Exception as exc:
+            logger.debug("Could not derive stable media id for %s: %s", file_path, exc)
+            return None
 
     def _refresh_category_cache(self, category_id=None):
         from app.services.media.category_cache_service import (
@@ -501,6 +561,85 @@ class AdminVisibilityController(Controller):
             update_cached_category(category_id)
         else:
             invalidate_cache()
+
+    def _batch_file_visibility(self, action, files):
+        from app.services.media.hidden_content_service import (
+            hide_file as hidden_hide_file,
+            unhide_category as hidden_unhide_category,
+            unhide_file as hidden_unhide_file,
+        )
+        from app.services.storage.storage_drive_service import is_managed_storage_path
+
+        admin_session_id = get_request_session_id()
+        results = []
+        affected_category_ids = set()
+        invalidated_ids = []
+
+        for entry in files:
+            file_path = entry.get('file_path') if isinstance(entry, dict) else None
+            category_id = entry.get('category_id') if isinstance(entry, dict) else None
+            item = {'file_path': file_path, 'success': False}
+
+            try:
+                if not file_path:
+                    item['error'] = 'file_path is required'
+                elif not is_managed_storage_path(file_path):
+                    item['error'] = 'Access denied'
+                else:
+                    if not category_id:
+                        category_id = self._resolve_file_category_id(file_path)
+
+                    if action == 'hide':
+                        success, message = hidden_hide_file(file_path, category_id, admin_session_id)
+                    else:
+                        success, message = hidden_unhide_file(file_path)
+                        if success and category_id:
+                            hidden_unhide_category(category_id, cascade=False)
+
+                    if success:
+                        stable_id = self._stable_media_id_for_file_path(category_id, file_path)
+                        if category_id:
+                            affected_category_ids.add(category_id)
+                        if stable_id:
+                            invalidated_ids.append(stable_id)
+                        item.update({
+                            'success': True,
+                            'message': message,
+                            'category_id': category_id,
+                            'media_url': self._media_url_for_file_path(file_path),
+                        })
+                    else:
+                        item['error'] = message
+            except Exception as exc:
+                logger.debug("File visibility batch item failed for %s: %s", file_path, exc)
+                item['error'] = str(exc)
+            results.append(item)
+
+        for category_id in affected_category_ids:
+            self._refresh_category_cache(category_id)
+
+        reason = 'files_hidden' if action == 'hide' else 'files_unhidden'
+        for category_id in affected_category_ids:
+            registry.require('library_events').emit_category_updated({
+                'reason': reason,
+                'category_id': category_id,
+                'invalidatedIds': [
+                    media_id for media_id in invalidated_ids
+                    if media_id.startswith(f'{category_id}::')
+                ],
+                'force_refresh': True,
+                'invalidateCategory': True,
+                'timestamp': time.time(),
+            })
+
+        updated = sum(1 for item in results if item.get('success'))
+        return {
+            'updated': updated,
+            'failed': len(results) - updated,
+            'results': results,
+            'affected_category_ids': sorted(affected_category_ids),
+            'invalidated_media_ids': invalidated_ids,
+        }
 
     def _resolve_file_category_id(self, file_path):
         from app.services.media.category_query_service import get_all_categories_with_details

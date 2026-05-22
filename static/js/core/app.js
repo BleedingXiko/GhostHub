@@ -91,13 +91,9 @@ const INITIAL_APP_STATE = {
     activeProfileColor: null,
     activeProfileIcon: null,
     currentCategoryId: null,
-    currentPage: 1,
+    viewer: null,
     isLoading: false,
-    hasMoreMedia: true,
     asyncIndexingActive: false,
-    fullMediaList: [],
-    mediaUrlSet: new Set(), // O(1) lookup for duplicate detection
-    currentMediaIndex: 0,
     // Sync mode variables
     syncModeEnabled: false,
     isHost: false,
@@ -158,15 +154,11 @@ const app = {
         // Reset core state in one transactional batch.
         appStore.batch((state) => {
             state.currentCategoryId = null;
-            state.currentPage = 1;
-            state.hasMoreMedia = true;
+            state.viewer = null;
             state.asyncIndexingActive = false;
             state.isLoading = false;
-            state.fullMediaList = [];
-            state.mediaUrlSet.clear();
             state.preloadQueue = [];
             state.isPreloading = false;
-            state.currentMediaIndex = 0;
             state.navigationDisabled = false;
         }, { source: 'app.resetState' });
 
@@ -201,20 +193,7 @@ class CoreAppLifecycle extends Module {
         app.state.cleanupInterval = this.interval(() => {
             console.log('Mobile device: performing periodic cleanup');
 
-            // Clear any media that's not currently visible
-            if (app.state.currentMediaIndex !== null && app.state.fullMediaList.length > 0) {
-                const currentMedia = app.state.fullMediaList[app.state.currentMediaIndex];
-
-                // Only keep the current media in cache, clear everything else
-                app.mediaCache.clear();
-                if (currentMedia && currentMedia.url) {
-                    // Re-add just the current item if it exists
-                    const cachedItem = $(`[data-media-url="${currentMedia.url}"]`);
-                    if (cachedItem) {
-                        app.mediaCache.set(currentMedia.url, cachedItem.cloneNode(true));
-                    }
-                }
-            }
+            app.mediaCache.clear();
 
             // Force garbage collection hint
             app.state.lastCleanupTime = Date.now();

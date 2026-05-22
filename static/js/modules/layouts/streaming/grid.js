@@ -10,18 +10,19 @@
 
 import { createMediaItemCard, createSubfolderCard } from './cards.js';
 import { observeLazyImage } from './lazyLoad.js';
-import { fetchCategoryMedia } from './data.js';
+import { fetchCategoryMedia } from './mediaDataSource.js';
 import { isSubfolderFile } from '../../../utils/subfolderUtils.js';
 import { videoIcon, imageIcon, folderFilledIcon } from '../../../utils/icons.js';
-import { getRowHeaderMeta } from './rows.js';
+import { getRowHeaderMeta } from './rowShell.js';
 import { Component, VirtualScroller, createElement, append, $, $$ } from '../../../libs/ragot.esm.min.js';
 import { handleSubfolderClick as _handleSubfolderClick } from '../shared/subfolderNavigation.js';
+import { selectChunkRecords, selectRecordsForView, selectView, subscribeView } from '../../media/selectors.js';
 import {
     getCategoryIdFilter,
     getSubfolderFilter,
     getMediaFilter,
-    getCategoryCache,
-    updateCategoryCache,
+    getCategoryView,
+    updateCategoryView,
     setGridMode,
     setGridTotalItems,
     getGridTotalItems
@@ -75,8 +76,12 @@ export class StreamingGridComponent extends Component {
 
         this._fetchedPages = new Map();
         this._pendingFetches = new Set();
+        this._staleRefreshPromise = null;
         this._unregisterSet = new Set();
         this._vs = null;
+        this._viewSubscription = null;
+        this._lastShapeSignature = null;
+        this._lastOrderedIdsRef = null;
     }
 
     // ── Render ─────────────────────────────────────────────────────────────
@@ -84,11 +89,11 @@ export class StreamingGridComponent extends Component {
     render() {
         const { category, cache, categoryId, subfolder } = this._resolveRenderData();
 
-        const media = cache.media || [];
-        const subfolders = cache.subfolders || [];
+        const media = selectRecordsForView(cache?.viewKey);
+        const subfolders = this._subfoldersForRender(cache);
         const totalItems = getGridTotalItems() || 0;
 
-        this._fetchedPages.set(1, media);
+        this._fetchedPages.set(1, this._canonicalChunk(0, cache?.viewKey));
 
         const directItems = (subfolder || subfolders.length === 0)
             ? media
@@ -155,9 +160,9 @@ export class StreamingGridComponent extends Component {
         setGridMode(true);
 
         const cache = this._cache;
-        const media = cache.media || [];
+        const media = selectRecordsForView(cache?.viewKey);
         const subfolder = this._subfolder;
-        const subfolders = cache.subfolders || [];
+        const subfolders = this._subfoldersForRender(cache);
         const directItems = (subfolder || subfolders.length === 0)
             ? media
             : media.filter(m => !isSubfolderFile(m));
@@ -176,9 +181,9 @@ export class StreamingGridComponent extends Component {
             childPoolSize: MAX_RENDERED_CHUNKS,
             initialChunks: 1,
             totalItems: () => {
-                const c = getCategoryCache(this._categoryId, this._subfolder, getMediaFilter());
+                const c = getCategoryView(this._categoryId, this._subfolder, getMediaFilter());
                 if (!c) return totalDirect;
-                const total = getGridTotalItems() || (c.media ? c.media.length : 0);
+                const total = getGridTotalItems() || selectRecordsForView(c?.viewKey).length;
                 return c.hasMore ? total + CARDS_PER_CHUNK : total;
             },
 
@@ -216,15 +221,22 @@ export class StreamingGridComponent extends Component {
 
         // Mount VS sentinels into wrapper (outside the CSS grid)
         this._vs.mount(this.element);
+        this._lastShapeSignature = this._shapeSignature(cache);
+        this._lastOrderedIdsRef = selectView(cache?.viewKey)?.orderedIds || [];
+        this._subscribeView(cache?.viewKey);
     }
 
     onStop() {
+        this._viewSubscription?.unsubscribe?.();
+        this._viewSubscription = null;
         setGridMode(false);
         setGridTotalItems(0);
         this._unregisterSet.forEach(fn => { try { fn(); } catch (_) { /* ignore */ } });
         this._unregisterSet.clear();
         if (this._vs) { this._vs.unmount(); this._vs = null; }
         this._gridEl = null;
+        this._lastShapeSignature = null;
+        this._lastOrderedIdsRef = null;
     }
 
     // ── Public: rebind to new category without remounting ─────────────────
@@ -243,8 +255,12 @@ export class StreamingGridComponent extends Component {
         this._subfolder = getSubfolderFilter();
         this._category = category;
         this._cache = cache;
+        this._lastShapeSignature = this._shapeSignature(cache);
+        this._lastOrderedIdsRef = selectView(cache?.viewKey)?.orderedIds || [];
         this._fetchedPages = new Map();
         this._pendingFetches = new Set();
+        this._staleRefreshPromise = null;
+        this._subscribeView(cache?.viewKey);
 
         // Unregister old card listeners before replacing chunk content
         this._unregisterSet.forEach(fn => { try { fn(); } catch (_) { /* ignore */ } });
@@ -252,8 +268,8 @@ export class StreamingGridComponent extends Component {
 
         // ── Patch header in-place ──
         const headerMeta = getRowHeaderMeta(category, this._subfolder);
-        const media = cache.media || [];
-        const subfolders = cache.subfolders || [];
+        const media = selectRecordsForView(cache?.viewKey);
+        const subfolders = this._subfoldersForRender(cache);
         const totalItems = getGridTotalItems() || 0;
         const directItems = (this._subfolder || subfolders.length === 0)
             ? media
@@ -314,7 +330,7 @@ export class StreamingGridComponent extends Component {
         // ── Recycle and rebind VS ──
         if (!this._vs || !grid) return;
 
-        this._fetchedPages.set(1, media);
+        this._fetchedPages.set(1, this._canonicalChunk(0, cache?.viewKey));
         const totalDirect = totalItems > 0
             ? Math.max(totalItems, filteredItems.length)
             : (cache.hasMore ? filteredItems.length + CARDS_PER_CHUNK : filteredItems.length);
@@ -324,9 +340,9 @@ export class StreamingGridComponent extends Component {
             chunkContainer: grid,
             root: this._scrollRoot,
             totalItems: () => {
-                const c = getCategoryCache(this._categoryId, this._subfolder, getMediaFilter());
+                const c = getCategoryView(this._categoryId, this._subfolder, getMediaFilter());
                 if (!c) return totalDirect;
-                const total = getGridTotalItems() || (c.media ? c.media.length : 0);
+                const total = getGridTotalItems() || selectRecordsForView(c?.viewKey).length;
                 return c.hasMore ? total + CARDS_PER_CHUNK : total;
             },
             renderChunk: async (chunkIndex) => {
@@ -346,6 +362,85 @@ export class StreamingGridComponent extends Component {
         }, this.element);
     }
 
+    _subscribeView(viewKey) {
+        if (this._viewSubscription?.viewKey === viewKey) return;
+        this._viewSubscription?.unsubscribe?.();
+        this._viewSubscription = null;
+        if (!viewKey) return;
+        const unsubscribe = subscribeView(viewKey, () => {
+            this._cache = getCategoryView(this._categoryId, this._subfolder, getMediaFilter()) || this._cache;
+            const signature = this._shapeSignature(this._cache);
+            if (signature === this._lastShapeSignature) return;
+
+            // Mirror CategoryRowComponent: distinguish append-only growth
+            // (pagination) from genuine shape change (rename, delete, sort,
+            // visibility). vs.reset() only repositions sentinels — it does
+            // NOT re-render mounted chunk DOM. So a rename leaves stale
+            // dataset.mediaUrl / dataset.recordId / onClick closures on
+            // every mounted card until the user scrolls them out.
+            const prevIds = this._lastOrderedIdsRef || [];
+            const nextIds = selectView(this._cache?.viewKey)?.orderedIds || [];
+            const isAppendOnly = nextIds.length > prevIds.length &&
+                prevIds.every((id, i) => id === nextIds[i]);
+
+            this._lastShapeSignature = signature;
+            this._lastOrderedIdsRef = nextIds;
+
+            if (isAppendOnly) {
+                this._vs?.reset?.();
+                return;
+            }
+            this._rebuildChunks();
+        }, { owner: this });
+        this._viewSubscription = { viewKey, unsubscribe };
+    }
+
+    _rebuildChunks() {
+        // Drop cached pages so _getChunkItems re-projects from the manifest
+        // with the fresh orderedIds.
+        this._fetchedPages = new Map();
+        // Release any card-listener registrations on the chunks we're about
+        // to wipe so they don't leak.
+        this._unregisterSet.forEach((fn) => { try { fn(); } catch (_) { /* ignore */ } });
+        this._unregisterSet.clear();
+
+        const grid = this._gridEl;
+        if (!grid || !this._vs) return;
+        // Preserve the subfolder section; strip every chunk + sentinel + placeholder.
+        const sfSection = grid.querySelector('.streaming-grid-subfolders');
+        Array.from(grid.children).forEach((child) => {
+            if (child !== sfSection) child.remove();
+        });
+        // recycle() drops VS-tracked chunk state without tearing down config;
+        // rebind() with the current callbacks repositions sentinels and lets
+        // IO re-request chunks against the new ordering.
+        this._vs.recycle();
+        this._vs.rebind({
+            chunkContainer: grid,
+            root: this._scrollRoot,
+            totalItems: () => {
+                const c = getCategoryView(this._categoryId, this._subfolder, getMediaFilter());
+                if (!c) return 0;
+                const total = getGridTotalItems() || selectRecordsForView(c?.viewKey).length;
+                return c.hasMore ? total + CARDS_PER_CHUNK : total;
+            },
+            renderChunk: async (chunkIndex) => {
+                const items = await this._getChunkItems(chunkIndex);
+                if (!items || items.length === 0) return null;
+                const chunk = createElement('div', { style: { display: 'contents' } });
+                items.forEach((m, idx) => {
+                    const card = createMediaItemCard(m, this._categoryId, chunkIndex * CARDS_PER_CHUNK + idx, {
+                        forceEager: chunkIndex === 0 && idx < 12,
+                        unregisterSet: this._unregisterSet
+                    });
+                    append(chunk, card);
+                });
+                $$('img[data-src]', chunk).forEach((img) => observeLazyImage(img));
+                return chunk;
+            },
+        }, this.element);
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     _resolveRenderData() {
@@ -357,11 +452,22 @@ export class StreamingGridComponent extends Component {
         };
     }
 
+    _subfoldersForRender(cache) {
+        return cache?.subfolders || [];
+    }
+
     async _getChunkItems(chunkIndex) {
         const page = chunkIndex + 1;
+        const start = chunkIndex * CARDS_PER_CHUNK;
 
         if (this._fetchedPages.has(page)) {
             return this._filterItems(this._fetchedPages.get(page));
+        }
+
+        const currentChunk = this._canonicalChunk(start);
+        if (currentChunk.length > 0) {
+            this._fetchedPages.set(page, currentChunk);
+            return this._filterItems(currentChunk);
         }
 
         if (this._pendingFetches.has(page)) return [];
@@ -372,24 +478,24 @@ export class StreamingGridComponent extends Component {
                 this._categoryId, page, false, this._subfolder,
                 { includeTotal: false, limit: CARDS_PER_CHUNK }
             );
-            const items = result.media || [];
-            this._fetchedPages.set(page, items);
+            const pageIds = (selectView(result.viewKey)?.orderedIds || []).slice(start, start + CARDS_PER_CHUNK);
+            const pageRecords = this._canonicalChunk(start, result.viewKey);
+            this._fetchedPages.set(page, pageRecords);
 
-            // Merge into cache
-            const cache = getCategoryCache(this._categoryId, this._subfolder, getMediaFilter());
+            const cache = getCategoryView(this._categoryId, this._subfolder, getMediaFilter());
             if (cache) {
-                const existingUrls = new Set(cache.media.map(m => m.url));
-                const newItems = items.filter(m => !existingUrls.has(m.url));
-                if (newItems.length > 0) {
-                    updateCategoryCache(this._categoryId, {
-                        media: cache.media.concat(newItems),
+                const existingIds = new Set(cache.orderedIds || []);
+                const newIds = pageIds.filter((id) => !existingIds.has(id));
+                if (newIds.length > 0) {
+                    updateCategoryView(this._categoryId, {
+                        viewKey: result.viewKey || cache.viewKey || null,
                         page: Math.max(cache.page, page),
                         hasMore: result.hasMore
                     }, this._subfolder, getMediaFilter());
                 }
             }
 
-            return this._filterItems(items);
+            return this._filterItems(pageRecords);
         } catch (e) {
             console.error(`[StreamingGrid] Failed to load chunk ${chunkIndex}:`, e);
             return [];
@@ -399,11 +505,24 @@ export class StreamingGridComponent extends Component {
     }
 
     _filterItems(items) {
-        const cache = getCategoryCache(this._categoryId, this._subfolder, getMediaFilter());
+        const cache = getCategoryView(this._categoryId, this._subfolder, getMediaFilter());
         const subfolders = cache?.subfolders || [];
         const direct = (this._subfolder || subfolders.length === 0)
             ? items
             : items.filter(m => !isSubfolderFile(m));
         return filterByMediaType(direct);
+    }
+
+    _canonicalChunk(start, viewKey = this._cache?.viewKey || this._viewKey) {
+        if (!viewKey) return [];
+        return selectChunkRecords(viewKey, start, CARDS_PER_CHUNK, getMediaFilter());
+    }
+
+    _shapeSignature(cache = this._cache) {
+        const view = selectView(cache?.viewKey);
+        const ids = view?.orderedIds || [];
+        const subfolders = cache?.subfolders || [];
+        const subfolderSig = subfolders.map((sf) => `${sf?.name || ''}:${sf?.count || 0}:${sf?.thumbnail_url || ''}`).join('|');
+        return `${ids.join('|')}::${subfolderSig}::${view?.hasMore ? 1 : 0}`;
     }
 }

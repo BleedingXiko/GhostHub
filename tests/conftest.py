@@ -229,6 +229,8 @@ def app():
 
     # Create app using 'default' config name
     app = create_app("default")
+    app.instance_path = test_instance_dir
+    app.config["INSTANCE_FOLDER_PATH"] = test_instance_dir
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
     app.config["SECRET_KEY"] = "test-secret-key"
@@ -265,7 +267,7 @@ def app_context(app):
     with app.app_context():
         from app.services.core import session_store
         from app.services.core.runtime_config_service import set_runtime_config_value
-        from app.services.core.sqlite_runtime_service import get_db
+        from app.services.core.sqlite_runtime_service import close_connection, get_db, get_db_path
         from app.services.storage.storage_runtime_store import storage_runtime_store
 
         # Reset runtime config to the current Config defaults so individual tests
@@ -274,11 +276,15 @@ def app_context(app):
             if not key.isupper():
                 continue
             value = getattr(Config, key)
+            if key == 'INSTANCE_FOLDER_PATH':
+                value = app.instance_path
             app.config[key] = value
             set_runtime_config_value(key, value)
 
         # Clear persisted runtime data between tests while preserving schema_info.
+        close_connection()
         with get_db() as conn:
+            print(f"TEST DB PATH: {get_db_path()}", file=sys.stderr)
             for table_name in (
                 'video_progress',
                 'profiles',

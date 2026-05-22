@@ -77,10 +77,11 @@ class TVController(Controller):
         """Relay a subtitle track to the TV runtime."""
         return self._cast().add_subtitle(request.sid, data)
 
-    def handle_tv_stop_casting(self):
+    def handle_tv_stop_casting(self, data=None):
         """Stop the current cast and clear server-side cast state."""
         return self._cast().stop_cast(
             request.sid,
             get_request_session_id(),
             is_current_admin_session_with_flag_sync(),
+            data,
         )

@@ -34,9 +34,6 @@ async function executeShow(socket, displayLocalMessage, arg) {
       }
     }
 
-    // Set sessionStorage flag BEFORE the POST
-    enableShowHidden();
-
     // Call API to enable show_hidden session flag
     const response = await fetch('/api/admin/categories/show', {
       method: 'POST',
@@ -48,6 +45,7 @@ async function executeShow(socket, displayLocalMessage, arg) {
     const result = await response.json();
 
     if (response.ok && result.success) {
+      enableShowHidden();
       displayLocalMessage(result.message, { icon: 'checkCircle' });
 
       // Clear any existing expiry timer
@@ -63,11 +61,9 @@ async function executeShow(socket, displayLocalMessage, arg) {
         showExpiryTimer = null;
       }, (durationSeconds + 2) * 1000);
     } else {
-      disableShowHidden(); // Revert optimistic flag on failure
       displayLocalMessage(result.error || 'Failed to show.', { icon: 'x' });
     }
   } catch (error) {
-    disableShowHidden(); // Revert optimistic flag on failure
     console.error('Error showing hidden categories:', error);
     displayLocalMessage('Failed to show.', { icon: 'x' });
   }

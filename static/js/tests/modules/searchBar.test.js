@@ -9,8 +9,17 @@ vi.mock('../../libs/ragot.esm.min.js', () => {
     off(target, type, handler, options) { target.removeEventListener(type, handler, options); }
     addCleanup() { }
   }
+  class Module extends Component {
+    start() { this._isMounted = true; this.onStart?.(); return this; }
+    stop() { this._isMounted = false; this.onStop?.(); return this; }
+    timeout(cb, ms) { return setTimeout(cb, ms); }
+    clearTimeout(id) { clearTimeout(id); }
+    interval(cb, ms) { return setInterval(cb, ms); }
+    clearInterval(id) { clearInterval(id); }
+  }
   return {
     Component,
+    Module,
     createElement: (tag, props, ...children) => {
       const el = document.createElement(typeof tag === 'string' ? tag : 'div');
       if (props) Object.entries(props).forEach(([k, v]) => {

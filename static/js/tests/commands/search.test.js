@@ -28,7 +28,29 @@ describe('Search Command', () => {
     // Mock appModules
     window.ragotModules = {
       mediaLoader: {
-        viewCategory: vi.fn().mockResolvedValue(undefined)
+        openSingleMediaViewer: vi.fn().mockResolvedValue(undefined)
+      },
+      mediaOrdering: {
+        ingestView: vi.fn(),
+        selectView: vi.fn(() => ({
+          viewKey: 'search::test',
+          viewType: 'search',
+          orderedIds: ['cat1::test.mp4'],
+          viewMeta: {},
+          hasMore: false,
+          status: 'ready'
+        })),
+        getOrder: vi.fn(),
+      },
+      mediaManifest: {
+        ingest: vi.fn(),
+        pin: vi.fn(),
+        hydrate: vi.fn(() => Promise.resolve()),
+        getMany: vi.fn(() => [
+          { id: 'cat1::test.mp4', categoryId: 'cat1', categoryName: 'Test Category', name: 'test.mp4', type: 'video', url: '/media/test.mp4' }
+        ]),
+        get: vi.fn(),
+        recordsVersion: 1,
       }
     };
   });
@@ -157,17 +179,28 @@ describe('Search Command', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
-          results: [
-            {
-              category_id: 'cat1',
-              category_name: 'Test Category',
-              matches: [
-                { filename: 'test.mp4', type: 'video', url: '/media/test.mp4' }
-              ],
-              total_matches: 1
-            }
-          ],
-          total_categories: 1
+          viewKey: 'search::test',
+          viewType: 'search',
+          orderedIds: ['cat1::test.mp4'],
+          hasMore: false,
+          status: 'ready',
+          records: {
+            'cat1::test.mp4': { id: 'cat1::test.mp4', categoryId: 'cat1', categoryName: 'Test Category', name: 'test.mp4', type: 'video', url: '/media/test.mp4' }
+          },
+          missing: [],
+          viewMeta: {
+            matched_categories: [],
+            matched_parent_folders: [],
+            matched_folders: [],
+            result_groups: [
+              {
+                category_id: 'cat1',
+                category_name: 'Test Category',
+                matches: ['cat1::test.mp4'],
+                total_matches: 1
+              }
+            ]
+          }
         })
       });
       

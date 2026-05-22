@@ -78,7 +78,7 @@ class UsersModuleLifecycle extends Module {
         fetchUsers();
     }
 
-    onViewInfoResponse(data) {
+    async onViewInfoResponse(data) {
         if (!pendingViewSessionId) return;
 
         if (data.error) {
@@ -87,24 +87,25 @@ class UsersModuleLifecycle extends Module {
             return;
         }
 
-        if (!data.category_id || data.index == null) {
+        if (!data.category_id || !data.mediaId) {
             toast.show('User is not currently viewing any media.', 'info');
             pendingViewSessionId = null;
             return;
         }
 
         pendingViewSessionId = null;
-        if (window.ragotModules?.mediaLoader?.viewCategory) {
-            window.ragotModules.mediaLoader.viewCategory(data.category_id, data.media_order || null, data.index);
-            if (!data.media_order) {
-                toast.show(`Switched to view of session ${data.target_session_id} (order unavailable).`, 'info');
-            } else {
-                toast.show(`Switched to view of session ${data.target_session_id}.`, 'success');
+        const navigate = window.ragotModules?.syncManager?.navigateToState;
+        if (navigate) {
+            const success = await navigate(data.category_id, data.mediaId, 'AdminViewUser', data);
+            if (success === false) {
+                toast.show('View error: media could not be resolved.', 'error');
+                return;
             }
+            toast.show(`Switched to view of session ${data.target_session_id}.`, 'success');
             const closeBtn = $('#config-modal-close-btn');
             if (closeBtn) closeBtn.click();
         } else {
-            toast.show('View error: media loader is not available.', 'error');
+            toast.show('View error: sync navigation is not available.', 'error');
         }
     }
 

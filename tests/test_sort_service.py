@@ -261,7 +261,8 @@ class TestSortOrderReversal:
 class TestShuffleCompatibility:
     """Regression tests for shuffle order compatibility."""
 
-    def test_get_sorted_media_prefers_shuffle_over_auto_tv_sort(self, app_context, mock_config):
+    def test_media_ordering_prefers_shuffle_over_auto_tv_sort(self, app_context, mock_config):
+        from app.services.media.media_ordering_service import MediaOrderingService
         from app.services.media.sort_service import SortService
 
         mock_config("SHUFFLE_MEDIA", True)
@@ -277,22 +278,25 @@ class TestShuffleCompatibility:
         ), patch.object(
             SortService,
             "_sort_shuffle",
-            return_value=[{"name": "shuffle-hit"}],
+            return_value=[{"categoryId": "auto::ghost::sda2::anime", "name": "shuffle-hit.mp4"}],
         ) as mock_shuffle, patch.object(
             SortService,
             "_sort_tv",
-            return_value=[{"name": "tv-hit"}],
+            return_value=[{"categoryId": "auto::ghost::sda2::anime", "name": "tv-hit.mp4"}],
         ) as mock_tv:
-            result = SortService.get_sorted_media(
-                category_id="auto::ghost::sda2::anime",
-                sort_by="name",
-                session_id="test-session",
-                page=1,
-                limit=50,
-                shuffle=None,
+            result = MediaOrderingService().get_order(
+                "streaming_row",
+                {
+                    "category_id": "auto::ghost::sda2::anime",
+                    "sort_by": "name",
+                    "page": 1,
+                    "limit": 50,
+                    "include_total": "false",
+                },
+                show_hidden=False,
             )
 
-        assert result == [{"name": "shuffle-hit"}]
+        assert result["orderedIds"] == ["auto::ghost::sda2::anime::shuffle-hit.mp4"]
         assert mock_shuffle.called
         assert not mock_tv.called
 
@@ -329,8 +333,6 @@ class TestShuffleCompatibility:
                 subfolder=None,
                 filter_type="all",
                 show_hidden=False,
-                session_id="session-1",
-                force_refresh=False,
                 page=1,
                 limit=1,
             )
@@ -436,7 +438,7 @@ class TestAutoSubfolderFallback:
         assert subfolders[0]["count"] == 12
         assert subfolders[1]["count"] == 7
 
-    def test_get_subfolders_falls_back_to_filesystem_when_hierarchy_is_empty(self, app_context):
+    def test_get_subfolders_does_not_fallback_to_filesystem_when_hierarchy_is_empty(self, app_context):
         from app.services.media.sort_service import SortService
 
         fake_conn = MagicMock()
@@ -477,7 +479,7 @@ class TestAutoSubfolderFallback:
         ), patch(
             "app.services.media.sort_service.os.scandir",
             return_value=scandir_ctx,
-        ), patch(
+        ) as mock_scandir, patch(
             "app.services.media.media_index_service.get_category_media_summary",
             return_value={"count": 0, "contains_video": False, "image_rel_path": None, "video_rel_path": None},
         ), patch(
@@ -493,7 +495,5 @@ class TestAutoSubfolderFallback:
 
             subfolders = SortService.get_subfolders("auto::ghost::sda2::TV")
 
-        names = [sf["name"] for sf in subfolders]
-        assert names == ["ShowA", "ShowB"]
-        assert subfolders[0]["count"] == 5
-        assert subfolders[1]["count"] == 3
+        assert subfolders == []
+        mock_scandir.assert_not_called()

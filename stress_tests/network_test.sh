@@ -78,13 +78,17 @@ for cat in cats:
 
 if [ -n "$CATEGORY_ID" ]; then
     # Get first video
-    VIDEO_INFO=$(curl -s "$GHOSTHUB_URL/api/categories/$CATEGORY_ID/media?limit=1" | python3 -c "
+    VIDEO_INFO=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"requests\":[{\"view\":\"network_test\",\"viewKey\":\"network_test::$CATEGORY_ID\",\"category_id\":\"$CATEGORY_ID\",\"page\":1,\"limit\":20,\"media_filter\":\"video\",\"hydrate\":\"true\"}]}" \
+        "$GHOSTHUB_URL/api/media/orders" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-files = data.get('files', [])
+results = data.get('results', [])
+files = list((results[0].get('records') or {}).values()) if results else []
 for f in files:
     if f.get('type') == 'video':
-        print(f['name'])
+        print(f.get('url') or f.get('media_url') or '')
         break
 " 2>/dev/null)
     
@@ -92,7 +96,7 @@ for f in files:
         # Download test (first 50MB)
         log "  Downloading 50MB sample..."
         START_TIME=$(date +%s)
-        curl -s -o /dev/null -r 0-52428800 "$GHOSTHUB_URL/media/$CATEGORY_ID/$VIDEO_INFO" 2>/dev/null
+        curl -s -o /dev/null -r 0-52428800 "$GHOSTHUB_URL$VIDEO_INFO" 2>/dev/null
         END_TIME=$(date +%s)
         DURATION=$((END_TIME - START_TIME))
         [ "$DURATION" -eq 0 ] && DURATION=1

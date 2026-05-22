@@ -68,7 +68,7 @@ class CriticalLimitsTest:
     ):
         self.base_url = base_url.rstrip('/')
         self.admin_password = admin_password
-        self.session_password = session_password or admin_password
+        self.session_password = session_password
         self.output_file = output_file
         self.session = self._create_session()
         self.results = {
@@ -112,14 +112,32 @@ class CriticalLimitsTest:
 
         print(f"{color}[{timestamp}] {prefix} {message}{Colors.END}")
 
-    def _record_result(self, test_name: str, passed: bool, details: Dict):
+    def _record_result(self, test_name: str, passed: bool, details: Dict, skipped: bool = False, skip_reason: str = None):
         """Record test result"""
-        self.results['tests'].append({
+        result = {
             'name': test_name,
             'passed': passed,
             'timestamp': datetime.now().isoformat(),
             'details': details
-        })
+        }
+        if skipped:
+            result['skipped'] = True
+            result['skip_reason'] = skip_reason or details.get('skip_reason') or details.get('error')
+        self.results['tests'].append(result)
+
+    def _record_skip(self, test_name: str, reason: str, details: Optional[Dict] = None) -> bool:
+        """Record a prerequisite skip without counting it as a product failure."""
+        self._log(f"Skipping {test_name}: {reason}", "WARN")
+        payload = details or {}
+        payload['skip_reason'] = reason
+        self._record_result(test_name, True, payload, skipped=True, skip_reason=reason)
+        return True
+
+    def _require_admin_or_skip(self, test_name: str, reason: str) -> bool:
+        if self._claim_admin():
+            return True
+        self._record_skip(test_name, reason, {'error': 'no_admin'})
+        return False
 
     def _get_memory_usage(self) -> Dict:
         """Get current process memory usage"""
@@ -191,6 +209,65 @@ class CriticalLimitsTest:
         except Exception as e:
             self._log(f"Failed to claim admin: {e}", "WARN")
             return False
+
+    def _get_category_media_records(self, category_id: str, limit: int = 10) -> List[Dict]:
+        """Fetch hydrated media records through the current ordering endpoint."""
+        view_key = f"stress_limits::{category_id}::{limit}"
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/api/media/orders",
+                json={'requests': [{
+                    'view': 'streaming_row',
+                    'viewKey': view_key,
+                    'category_id': category_id,
+                    'page': 1,
+                    'limit': limit,
+                    'media_filter': 'all',
+                    'hydrate': 'true',
+                }]},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return []
+            results = resp.json().get('results') or []
+            if not results or results[0].get('status') == 'error':
+                return []
+            return list((results[0].get('records') or {}).values())
+        except Exception as e:
+            self._log(f"Failed to fetch category media: {e}", "WARN")
+            return []
+
+    def _get_any_media_record(self, limit: int = 10) -> Optional[Dict]:
+        """Pull a media record from the gallery timeline view.
+
+        gallery_timeline spans the whole library (no category_id required), so
+        callers get a media item with its category_id already resolved instead
+        of having to guess which category in the list happens to be populated.
+        """
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/api/media/orders",
+                json={'requests': [{
+                    'view': 'gallery_timeline',
+                    'viewKey': f'stress_limits::gallery_timeline::{limit}',
+                    'items_per_date': limit,
+                    'dates_page': 1,
+                    'dates_limit': 1,
+                    'media_filter': 'all',
+                    'hydrate': 'true',
+                }]},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return None
+            results = resp.json().get('results') or []
+            if not results or results[0].get('status') == 'error':
+                return None
+            records = list((results[0].get('records') or {}).values())
+            return records[0] if records else None
+        except Exception as e:
+            self._log(f"Failed to fetch gallery timeline media: {e}", "WARN")
+            return None
 
     def _get_available_drives(self) -> List[str]:
         """Get list of available drives for testing."""
@@ -268,17 +345,45 @@ class CriticalLimitsTest:
             if not self._validate_session_password():
                 self._record_result("Rate Limiting", False, {'error': 'session_password_required'})
                 return False
+            if not self._require_admin_or_skip("Rate Limiting", "admin is required before creating upload files so cleanup can succeed"):
+                return True
 
             config = self._get_config()
             upload_limit_per_client = config.get('UPLOAD_RATE_LIMIT_PER_CLIENT', 50)
             upload_limit_global = config.get('UPLOAD_RATE_LIMIT_GLOBAL', 100)
 
-            self._log(f"Config: {upload_limit_per_client} Mbps/client, {upload_limit_global} Mbps global")
-
             if upload_limit_per_client == 0:
                 self._log("Rate limiting is disabled in config.", "ERROR")
                 self._record_result("Rate Limiting", False, {'error': 'disabled'})
                 return False
+
+            # The rate limiter intentionally exempts loopback peers, so when this
+            # test runs against localhost we spoof a non-loopback client via
+            # X-Forwarded-For (the upload controller honors this header only when
+            # the immediate peer is loopback). This forces the limiter to apply
+            # the configured per-client limit, which is what we want to verify.
+            spoofed_client_ip = '203.0.113.99'  # RFC 5737 TEST-NET-3
+            rate_limit_headers = {'X-Forwarded-For': spoofed_client_ip}
+
+            # Resolve the effective limit for the spoofed client so we compare
+            # against what the limiter will actually enforce (multipliers
+            # included).
+            effective_limit_mbps = float(upload_limit_per_client)
+            try:
+                health_resp = self.session.get(
+                    f"{self.base_url}/api/system/network-health",
+                    headers=rate_limit_headers,
+                    timeout=10,
+                )
+                if health_resp.status_code == 200:
+                    effective = health_resp.json().get('rate_limiting', {}).get('effective_upload_limit_mbps')
+                    if effective:
+                        effective_limit_mbps = float(effective)
+            except Exception:
+                pass
+
+            self._log(f"Config: {upload_limit_per_client} Mbps/client, {upload_limit_global} Mbps global")
+            self._log(f"Spoofed client IP for rate-limit test: {spoofed_client_ip} (effective limit: {effective_limit_mbps:.1f} Mbps)")
 
             drive_path = self._get_test_drive()
             # Create test data (1MB chunk)
@@ -288,13 +393,15 @@ class CriticalLimitsTest:
             start_time = time.time()
             bytes_sent = 0
             chunks_sent = 0
+            init_attempts = 0
+            rate_limited_responses = 0
 
             while time.time() - start_time < duration:
                 # Initialize upload
                 init_resp = self.session.post(
                     f"{self.base_url}/api/storage/upload/init",
                     json={
-                        'filename': f'rate_test_{chunks_sent}.mp4',
+                        'filename': f'rate_test_{init_attempts}.mp4',
                         'total_size': len(chunk_data),
                         'total_chunks': 1,
                         'drive_path': drive_path,
@@ -302,6 +409,7 @@ class CriticalLimitsTest:
                     },
                     timeout=10
                 )
+                init_attempts += 1
 
                 if init_resp.status_code != 200:
                     break
@@ -310,7 +418,7 @@ class CriticalLimitsTest:
                 if not upload_id:
                     break
 
-                # Upload chunk
+                # Upload chunk (with spoofed client IP so rate limiter engages)
                 chunk_start = time.time()
                 chunk_resp = self.session.post(
                     f"{self.base_url}/api/storage/upload/chunk",
@@ -320,6 +428,7 @@ class CriticalLimitsTest:
                         'total_chunks': 1
                     },
                     files={'chunk': chunk_data},
+                    headers=rate_limit_headers,
                     timeout=30
                 )
                 chunk_elapsed = time.time() - chunk_start
@@ -334,16 +443,22 @@ class CriticalLimitsTest:
                     if chunks_sent % 10 == 0:
                         self._log(f"Chunk {chunks_sent}: {mbps:.1f} Mbps")
                 elif chunk_resp.status_code == 429:
-                    self._log("Rate limit hit (HTTP 429)", "WARN")
+                    rate_limited_responses += 1
+                    # Backoff briefly so we don't spam the server with rejects
+                    time.sleep(0.05)
 
             elapsed = time.time() - start_time
-            avg_mbps = (bytes_sent * 8) / (elapsed * 1_000_000)
+            avg_mbps = (bytes_sent * 8) / (elapsed * 1_000_000) if elapsed > 0 else 0.0
 
             # Check if average throughput was limited
-            # Allow 10% margin for overhead
-            limit_enforced = avg_mbps <= (upload_limit_per_client * 1.1)
+            # Allow 15% margin for token-bucket burst + measurement overhead
+            limit_enforced = avg_mbps <= (effective_limit_mbps * 1.15)
 
-            self._log(f"Average throughput: {avg_mbps:.1f} Mbps (limit: {upload_limit_per_client} Mbps)")
+            self._log(
+                f"Average throughput: {avg_mbps:.1f} Mbps "
+                f"(effective limit: {effective_limit_mbps:.1f} Mbps, "
+                f"{rate_limited_responses} chunks rejected with 429)"
+            )
 
             if limit_enforced:
                 self._log("✓ Rate limiting is enforced", "SUCCESS")
@@ -353,18 +468,16 @@ class CriticalLimitsTest:
             # Cleanup: Delete all rate test files
             self._log("Cleaning up rate test files...")
             deleted = 0
-            for i in range(chunks_sent):
-                try:
-                    file_path = f"{drive_path}/rate_test_{i}.mp4"
-                    cleanup_resp = self.session.delete(
-                        f"{self.base_url}/api/storage/media",
-                        json={'file_path': file_path},
-                        timeout=10
-                    )
-                    if cleanup_resp.status_code == 200:
-                        deleted += 1
-                except:
-                    pass
+            try:
+                cleanup_resp = self.session.post(
+                    f"{self.base_url}/api/storage/media/batch-delete",
+                    json={'file_paths': [f"{drive_path}/rate_test_{i}.mp4" for i in range(init_attempts)]},
+                    timeout=30
+                )
+                if cleanup_resp.status_code == 200:
+                    deleted = cleanup_resp.json().get('deleted', 0)
+            except Exception:
+                pass
             if deleted > 0:
                 self._log(f"✓ Deleted {deleted} rate test files", "SUCCESS")
 
@@ -372,8 +485,11 @@ class CriticalLimitsTest:
                 'duration_seconds': elapsed,
                 'bytes_sent': bytes_sent,
                 'chunks_sent': chunks_sent,
+                'rate_limited_responses': rate_limited_responses,
                 'avg_mbps': avg_mbps,
-                'limit_mbps': upload_limit_per_client
+                'limit_mbps': upload_limit_per_client,
+                'effective_limit_mbps': effective_limit_mbps,
+                'spoofed_client_ip': spoofed_client_ip,
             })
 
             return limit_enforced
@@ -391,6 +507,8 @@ class CriticalLimitsTest:
             if not self._validate_session_password():
                 self._record_result("Concurrent Chunk Limits", False, {'error': 'session_password_required'})
                 return False
+            if not self._require_admin_or_skip("Concurrent Chunk Limits", "admin is required before creating upload files so cleanup can succeed"):
+                return True
 
             # Try to upload 4 chunks concurrently (should be limited to 3)
             chunk_data = os.urandom(1 * 1024 * 1024)  # 1MB
@@ -477,16 +595,14 @@ class CriticalLimitsTest:
 
             # Cleanup: Delete test files
             self._log("Cleaning up concurrent test files...")
-            for i in range(2):
-                try:
-                    file_path = f"{drive_path}/concurrent_test_{i}.mp4"
-                    self.session.delete(
-                        f"{self.base_url}/api/storage/media",
-                        json={'file_path': file_path},
-                        timeout=10
-                    )
-                except:
-                    pass
+            try:
+                self.session.post(
+                    f"{self.base_url}/api/storage/media/batch-delete",
+                    json={'file_paths': [f"{drive_path}/concurrent_test_{i}.mp4" for i in range(2)]},
+                    timeout=30
+                )
+            except Exception:
+                pass
             self._log("✓ Cleanup complete", "SUCCESS")
 
             self._record_result("Concurrent Chunk Limits", passed, {
@@ -561,46 +677,35 @@ class CriticalLimitsTest:
         """Test SQLite write contention with concurrent progress updates"""
         self._log(f"Testing SQLite write contention ({num_clients} clients, {duration}s)...", "HEADER")
 
+        test_profile_id = None
         try:
             if not self._claim_admin():
-                self._log("Admin access is required for SQLite contention testing.", "ERROR")
-                self._record_result("SQLite Write Contention", False, {'error': 'no_admin'})
-                return False
+                return self._record_skip(
+                    "SQLite Write Contention",
+                    "admin access is required for setup and cleanup",
+                    {'error': 'no_admin'},
+                )
 
-            # Get categories first
-            cats_resp = self.session.get(f"{self.base_url}/api/categories", timeout=10)
-            if cats_resp.status_code != 200:
-                self._log("No categories available", "WARN")
-                return False
+            # Find any indexed media via whats_new (same view the streaming hero
+            # row uses) — categories[0] may legitimately be empty if the indexer
+            # hasn't reached it yet, but whats_new spans the whole library.
+            media_item = self._get_any_media_record(limit=10)
+            if not media_item:
+                return self._record_skip("SQLite Write Contention", "no media found", {'error': 'no_media'})
 
-            categories = cats_resp.json().get('categories', [])
-            if not categories:
-                self._log("No categories found", "WARN")
-                return False
+            cat_id = media_item.get('category_id')
+            if not cat_id:
+                # Fall back to parsing the stable id (<category_id>::<rel_path>)
+                stable_id = media_item.get('id') or ''
+                cat_id = stable_id.split('::', 1)[0] if '::' in stable_id else None
+            if not cat_id:
+                return self._record_skip("SQLite Write Contention", "no category resolved for media", {'error': 'no_category'})
 
-            cat_id = categories[0]['id']
-
-            # Get media in category
-            media_resp = self.session.get(
-                f"{self.base_url}/api/categories/{cat_id}/media?limit=1",
-                timeout=10
-            )
-            if media_resp.status_code != 200:
-                self._log("No media available", "WARN")
-                return False
-
-            media_list = media_resp.json().get('files', [])
-            if not media_list:
-                self._log("No media found", "WARN")
-                return False
-
-            media_item = media_list[0]
             video_path = media_item.get('url')
-            total_count = len(media_list)
+            total_count = 1
 
             # Create a test profile so progress saves succeed (profile_id required)
-            test_profile_id = None
-            profile_name = f'stress-contention-{int(time.time())}'
+            profile_name = f'ghst-test-sqlite-{int(time.time())}'
             try:
                 resp = self.session.post(
                     f"{self.base_url}/api/profiles",
@@ -698,21 +803,16 @@ class CriticalLimitsTest:
                 'error_rate': error_rate
             })
 
-            # Cleanup test profile
-            try:
-                self.session.delete(
-                    f"{self.base_url}/api/profiles/{test_profile_id}",
-                    timeout=10,
-                )
-            except Exception:
-                pass
-
             return passed
 
         except Exception as e:
             self._log(f"Test error: {e}", "ERROR")
             self._record_result("SQLite Write Contention", False, {'error': str(e)})
             return False
+        finally:
+            # Always clean up the test profile, even on exception / early return
+            if test_profile_id:
+                self._delete_stress_profile(test_profile_id)
 
     def _create_stress_session(self) -> requests.Session:
         """Create a new requests session (separate cookies from self.session)."""
@@ -760,12 +860,30 @@ class CriticalLimitsTest:
             return False
 
     def _delete_stress_profile(self, profile_id: str, sess: Optional[requests.Session] = None) -> None:
-        """Delete a test profile (best-effort cleanup)."""
-        sess = sess or self.session
-        try:
-            sess.delete(f"{self.base_url}/api/profiles/{profile_id}", timeout=10)
-        except Exception:
-            pass
+        """Delete a test profile (best-effort cleanup).
+
+        Tries the provided session first (owner path), then falls back to the
+        admin session so profiles never leak when ownership was never claimed
+        (e.g. create succeeded but select failed) or when the owner session
+        dropped its cookie mid-test.
+        """
+        if not profile_id:
+            return
+        candidate_sessions = []
+        if sess is not None and sess is not self.session:
+            candidate_sessions.append(sess)
+        candidate_sessions.append(self.session)
+
+        for candidate in candidate_sessions:
+            try:
+                resp = candidate.delete(
+                    f"{self.base_url}/api/profiles/{profile_id}",
+                    timeout=10,
+                )
+                if resp.status_code in (200, 204, 404):
+                    return
+            except Exception:
+                continue
 
     def test_profile_progress_contention(
         self,
@@ -788,34 +906,30 @@ class CriticalLimitsTest:
 
         try:
             if not self._claim_admin():
-                self._log("Admin access required.", "ERROR")
-                self._record_result("Profile Progress Contention", False, {'error': 'no_admin'})
-                return False
+                return self._record_skip(
+                    "Profile Progress Contention",
+                    "admin access is required for setup and cleanup",
+                    {'error': 'no_admin'},
+                )
 
-            # Get a category with media
-            cats_resp = self.session.get(f"{self.base_url}/api/categories", timeout=10)
-            if cats_resp.status_code != 200:
-                self._log("No categories available", "WARN")
-                self._record_result("Profile Progress Contention", False, {'error': 'no_categories'})
-                return False
+            # Find any indexed media via whats_new (spans the whole library so
+            # we aren't at the mercy of which category happens to be first).
+            seed_media = self._get_any_media_record(limit=10)
+            if not seed_media:
+                return self._record_skip("Profile Progress Contention", "no media found", {'error': 'no_media'})
 
-            categories = cats_resp.json().get('categories', [])
-            if not categories:
-                self._log("No categories found", "WARN")
-                self._record_result("Profile Progress Contention", False, {'error': 'no_categories'})
-                return False
+            cat_id = seed_media.get('category_id')
+            if not cat_id:
+                stable_id = seed_media.get('id') or ''
+                cat_id = stable_id.split('::', 1)[0] if '::' in stable_id else None
+            if not cat_id:
+                return self._record_skip("Profile Progress Contention", "no category resolved for media", {'error': 'no_category'})
 
-            cat_id = categories[0]['id']
-
-            media_resp = self.session.get(
-                f"{self.base_url}/api/categories/{cat_id}/media?limit=10",
-                timeout=10,
-            )
-            media_list = media_resp.json().get('files', []) if media_resp.status_code == 200 else []
+            media_list = self._get_category_media_records(cat_id, limit=10)
             if not media_list:
-                self._log("No media found", "WARN")
-                self._record_result("Profile Progress Contention", False, {'error': 'no_media'})
-                return False
+                # Fall back to the seed item so the test still has at least one
+                # video path to drive contention against.
+                media_list = [seed_media]
 
             # ── Setup: create profiles + sessions ──
             self._log(f"Creating {num_profiles} test profiles...")
@@ -832,7 +946,7 @@ class CriticalLimitsTest:
                     except Exception:
                         pass
 
-                name = f'stress-profile-{i}-{int(time.time())}'
+                name = f'ghst-test-progress-{i}-{int(time.time())}'
                 profile_id = self._create_stress_profile(name, sess)
                 if not profile_id:
                     self._log(f"Failed to create profile {name}", "ERROR")
@@ -976,13 +1090,15 @@ class CriticalLimitsTest:
 
         try:
             if not self._claim_admin():
-                self._log("Admin access required.", "ERROR")
-                self._record_result("Preference Update Burst", False, {'error': 'no_admin'})
-                return False
+                return self._record_skip(
+                    "Preference Update Burst",
+                    "admin access is required for setup and cleanup",
+                    {'error': 'no_admin'},
+                )
 
             # Create profiles
             for i in range(num_profiles):
-                name = f'stress-pref-{i}-{int(time.time())}'
+                name = f'ghst-test-pref-{i}-{int(time.time())}'
                 profile_id = self._create_stress_profile(name)
                 if not profile_id:
                     self._log(f"Failed to create profile {name}", "ERROR")
@@ -1129,14 +1245,18 @@ class CriticalLimitsTest:
         try:
             # Note: This test requires admin access
             if not self.admin_password:
-                self._log("Admin password is required for hidden-category stress testing.", "ERROR")
-                self._record_result("Hidden Categories Stress", False, {'error': 'no_admin'})
-                return False
+                return self._record_skip(
+                    "Hidden Categories Stress",
+                    "admin password is required for hidden-category stress testing",
+                    {'error': 'no_admin'},
+                )
 
             if not self._claim_admin():
-                self._log("Admin access could not be claimed for hidden-category stress testing.", "ERROR")
-                self._record_result("Hidden Categories Stress", False, {'error': 'admin_claim_failed'})
-                return False
+                return self._record_skip(
+                    "Hidden Categories Stress",
+                    "admin access could not be claimed for hidden-category stress testing",
+                    {'error': 'admin_claim_failed'},
+                )
 
             # Get categories
             cats_resp = self.session.get(f"{self.base_url}/api/categories", timeout=10)
@@ -1193,8 +1313,9 @@ class CriticalLimitsTest:
         self.results['end_time'] = datetime.now().isoformat()
         self.results['summary'] = {
             'total_tests': len(self.results['tests']),
-            'passed': sum(1 for t in self.results['tests'] if t['passed']),
-            'failed': sum(1 for t in self.results['tests'] if not t['passed'])
+            'passed': sum(1 for t in self.results['tests'] if t['passed'] and not t.get('skipped')),
+            'failed': sum(1 for t in self.results['tests'] if not t['passed'] and not t.get('skipped')),
+            'skipped': sum(1 for t in self.results['tests'] if t.get('skipped')),
         }
 
         try:
@@ -1249,7 +1370,7 @@ def main():
 
     parser.add_argument('--url', default='http://localhost:5000',
                        help='GhostHub base URL')
-    parser.add_argument('--password', help='Legacy password (used for admin and session validation)')
+    parser.add_argument('--password', help='Legacy session password')
     parser.add_argument('--admin-password', help='Admin password (for admin tests)')
     parser.add_argument('--session-password', help='Session password (for upload tests)')
     parser.add_argument('--test', default='all',
@@ -1264,7 +1385,7 @@ def main():
 
     args = parser.parse_args()
 
-    admin_password = args.admin_password or args.password
+    admin_password = args.admin_password
     session_password = args.session_password or args.password
     tester = CriticalLimitsTest(
         args.url,

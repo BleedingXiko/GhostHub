@@ -1,4 +1,4 @@
-"""Storage/content event service for Socket.IO broadcasts."""
+"""Storage event service for Socket.IO broadcasts."""
 
 import logging
 
@@ -9,19 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class StorageEventService(Service):
-    """Own storage/content visibility and file-update broadcasts."""
+    """Own storage broadcasts that are not library/media invalidations."""
 
     def __init__(self):
         super().__init__('storage_events')
 
-    def emit_content_visibility_changed(self, payload, **kwargs):
-        return self._emit(SOCKET_EVENTS['CONTENT_VISIBILITY_CHANGED'], payload, **kwargs)
-
     def emit_usb_mounts_changed(self, payload=None, **kwargs):
         return self._emit(SOCKET_EVENTS['USB_MOUNTS_CHANGED'], payload or {}, **kwargs)
-
-    def emit_file_renamed(self, payload, **kwargs):
-        return self._emit(SOCKET_EVENTS['FILE_RENAMED'], payload, **kwargs)
 
     @staticmethod
     def _socket_transport():

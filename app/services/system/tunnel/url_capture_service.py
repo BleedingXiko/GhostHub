@@ -6,7 +6,10 @@ import time
 
 import gevent
 
-from app.services.system.tunnel.state_service import set_active_tunnel_info
+from app.services.system.tunnel.state_service import (
+    get_active_tunnel_info,
+    set_active_tunnel_info,
+)
 from specter import Service, registry
 
 logger = logging.getLogger(__name__)
@@ -46,13 +49,22 @@ class TunnelUrlCaptureService(Service):
 
     def collect_output_lines(self, process, output_lines, *, label_prefix):
         """Collect process output lines through service-owned readers."""
+        url_pattern = re.compile(r'(https://[-a-zA-Z0-9.]+\.trycloudflare\.com)')
 
         def read_stream(stream, stream_name):
             try:
                 for line in iter(stream.readline, ''):
                     if line:
-                        logger.debug("%s %s: %s", label_prefix, stream_name, line.strip())
-                        output_lines.append(line.strip())
+                        line_str = line.strip()
+                        logger.debug("%s %s: %s", label_prefix, stream_name, line_str)
+                        output_lines.append(line_str)
+
+                        if label_prefix == 'Cloudflare':
+                            match = url_pattern.search(line_str)
+                            if match:
+                                cloudflare_url = match.group(0)
+                                logger.info("Cloudflare URL found in stream: %s", cloudflare_url)
+                                _store_captured_url(cloudflare_url)
                     else:
                         break
             except Exception as err:
@@ -118,32 +130,14 @@ class TunnelUrlCaptureService(Service):
             logger.info("Capturing Cloudflare tunnel URL from process output")
             start_time = time.time()
             timeout = 60
-            cloudflare_url = None
-            url_pattern = re.compile(r'(https://[-a-zA-Z0-9.]+\.trycloudflare\.com)')
-
-            def read_output(stream, name):
-                nonlocal cloudflare_url
-                for line in iter(stream.readline, ''):
-                    if not line:
-                        break
-                    line = line.strip()
-                    logger.debug("Cloudflare %s: %s", name, line)
-                    match = url_pattern.search(line)
-                    if match and not cloudflare_url:
-                        cloudflare_url = match.group(0)
-                        logger.info("Cloudflare URL found: %s", cloudflare_url)
-                        _store_captured_url(cloudflare_url)
-                        return True
-                return False
-
-            self.spawn(read_output, process.stdout, "stdout", label='cloudflare-stdout-reader')
-            self.spawn(read_output, process.stderr, "stderr", label='cloudflare-stderr-reader')
 
             while time.time() - start_time < timeout:
                 if process.poll() is not None:
                     logger.error("Cloudflare tunnel process terminated unexpectedly")
                     return
-                if cloudflare_url:
+                active_info = get_active_tunnel_info()
+                if active_info and active_info.get("url"):
+                    logger.info("Cloudflare URL verified: %s", active_info.get("url"))
                     return
                 gevent.sleep(0.5)
 

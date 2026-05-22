@@ -21,6 +21,31 @@ describe('DownloadManager', () => {
         ENABLE_SESSION_PROGRESS: true
       }
     };
+    window.ragotModules = {
+      mediaOrdering: {
+        getOrder: vi.fn(() => ({
+          orderedIds: ['cat::file1.mp4', 'cat::file2.mp4', 'cat::file3.mp4'],
+          status: 'ready',
+          hasMore: false,
+          pageToken: null,
+          viewMeta: {}
+        })),
+        state: { version: 1 },
+        subscribe: vi.fn(() => () => {})
+      },
+      mediaManifest: {
+        get: vi.fn((id) => ({
+          'cat::file1.mp4': { url: '/media/file1.mp4', name: 'File 1' },
+          'cat::file2.mp4': { url: '/media/file2.mp4', name: 'File 2' },
+          'cat::file3.mp4': { url: '/media/file3.mp4', name: 'File 3' }
+        }[id] || null)),
+        getMany: vi.fn((ids) => ids.map((id) => window.ragotModules.mediaManifest.get(id)).filter(Boolean)),
+        has: vi.fn(() => false),
+        isMissing: vi.fn(() => false),
+        recordsVersion: 1,
+        subscribe: vi.fn(() => () => {})
+      }
+    };
     
     // Mock fetch
     global.fetch = vi.fn();
@@ -33,12 +58,7 @@ describe('DownloadManager', () => {
   describe('getCurrentMediaItem', () => {
     it('should return current media item when state is valid', async () => {
       const mockState = {
-        currentMediaIndex: 1,
-        fullMediaList: [
-          { url: '/media/file1.mp4', name: 'File 1' },
-          { url: '/media/file2.mp4', name: 'File 2' },
-          { url: '/media/file3.mp4', name: 'File 3' }
-        ]
+        viewer: { viewKey: 'download-test-view', activeIndex: 1 }
       };
       
       const { initDownloadManager, getCurrentMediaItem } = await import('../../modules/media/download.js');
@@ -95,10 +115,7 @@ describe('DownloadManager', () => {
   describe('ensureDownloadButton', () => {
     it('should create download button container', async () => {
       const mockState = {
-        currentMediaIndex: 0,
-        fullMediaList: [
-          { url: '/media/file1.mp4', name: 'File 1' }
-        ]
+        viewer: { viewKey: 'download-test-view', activeIndex: 0 }
       };
       
       const { initDownloadManager, ensureDownloadButton } = await import('../../modules/media/download.js');
@@ -112,10 +129,7 @@ describe('DownloadManager', () => {
 
     it('should show container when media is available', async () => {
       const mockState = {
-        currentMediaIndex: 0,
-        fullMediaList: [
-          { url: '/media/file1.mp4', name: 'File 1' }
-        ]
+        viewer: { viewKey: 'download-test-view', activeIndex: 0 }
       };
       
       const { initDownloadManager, ensureDownloadButton } = await import('../../modules/media/download.js');

@@ -79,7 +79,18 @@ class CategoryController(Controller):
                                 categories = []
                             else:
                                 resolved = get_category_by_id(category_id_filter)
-                                if resolved:
+                                # A synthesized parent absent from the filtered
+                                # list is a ghost (its descendants are all
+                                # hidden). Never resurrect it — that would
+                                # bypass the visibility filter and the pill
+                                # would still show after reveal-off.
+                                if (
+                                    resolved
+                                    and not show_hidden
+                                    and resolved.get('_synthesized_parent')
+                                ):
+                                    categories = []
+                                elif resolved:
                                     categories = [
                                         self._build_category_summary_payload(
                                             resolved,
@@ -88,7 +99,13 @@ class CategoryController(Controller):
                                     ]
                         except Exception:
                             resolved = get_category_by_id(category_id_filter)
-                            if resolved:
+                            if (
+                                resolved
+                                and not show_hidden
+                                and resolved.get('_synthesized_parent')
+                            ):
+                                categories = []
+                            elif resolved:
                                 categories = [
                                     self._build_category_summary_payload(
                                         resolved,
@@ -204,12 +221,6 @@ class CategoryController(Controller):
                     status_code = 404 if error == "Category not found" else 500
                     return jsonify({'error': error}), status_code
 
-                from app.services.media import media_session_service
-                media_session_service.clear_session_tracker(category_id=category_id)
-                logger.info(
-                    "Cleared session tracker for deleted category: %s",
-                    category_id,
-                )
                 return '', 204
             except Exception as exc:
                 logger.error(

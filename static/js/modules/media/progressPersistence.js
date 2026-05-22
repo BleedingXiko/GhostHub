@@ -12,6 +12,8 @@ import {
 } from '../../utils/progressDB.js';
 import { SOCKET_EVENTS } from '../../core/socketEvents.js';
 import { hasActiveProfile } from '../../utils/profileUtils.js';
+import { selectParams, selectRecordAt, selectView } from './selectors.js';
+import { getViewerSession } from './viewerState.js';
 
 export const EXIT_COMPLETION_MIN_DURATION_SECONDS = 60;
 export const EXIT_COMPLETION_PERCENT_THRESHOLD = 0.80;
@@ -106,7 +108,6 @@ export async function persistPlaybackProgress({
     duration,
     videoCompleted = false,
     isCritical = false,
-    mediaOrder = null,
     optimisticLayout = false
 }) {
     if (!categoryId) return;
@@ -123,8 +124,15 @@ export async function persistPlaybackProgress({
         markPendingDeletion(mediaUrl);
     }
 
+    const viewer = getViewerSession();
+    const currentView = viewer ? selectView(viewer.viewKey) : null;
+    const currentRecord = viewer ? selectRecordAt(viewer.viewKey, index) : null;
     const payload = {
         category_id: categoryId,
+        viewKey: viewer?.viewKey || null,
+        viewType: currentView?.viewType || null,
+        viewParams: viewer ? selectParams(viewer.viewKey) : {},
+        mediaId: currentRecord?.id || null,
         index,
         total_count: totalCount,
         video_timestamp: timestamp,
@@ -136,9 +144,6 @@ export async function persistPlaybackProgress({
         video_progress_deleted: videoCompleted
     };
 
-    if (mediaOrder?.length) {
-        payload.media_order = mediaOrder;
-    }
     if (isCritical) {
         payload.critical_save = true;
     }
@@ -157,7 +162,9 @@ export async function persistPlaybackProgress({
         }
 
         if (socket?.connected) {
-            socket.emit(SOCKET_EVENTS.UPDATE_MY_STATE, payload);
+            if (payload.viewKey && payload.viewType && payload.mediaId) {
+                socket.emit(SOCKET_EVENTS.UPDATE_MY_STATE, payload);
+            }
         }
         return;
     }

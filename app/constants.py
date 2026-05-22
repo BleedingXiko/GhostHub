@@ -65,12 +65,6 @@ SOCKET_EVENTS = {
     # USB/Storage events
     'USB_MOUNTS_CHANGED': 'usb_mounts_changed',
     
-    # Content visibility events (hidden files/categories)
-    'CONTENT_VISIBILITY_CHANGED': 'content_visibility_changed',
-    
-    # File management events
-    'FILE_RENAMED': 'file_renamed',
-
     # Tunnel status events
     'TUNNEL_STATUS_UPDATE': 'tunnel_status_update',
 
@@ -158,6 +152,7 @@ BUS_EVENTS = {
     'STORAGE_FILE_UPLOADED': 'storage:file_uploaded',
     'STORAGE_BATCH_UPLOADED': 'storage:batch_uploaded',
     'STORAGE_FILE_DELETED': 'storage:file_deleted',
+    'STORAGE_FILES_DELETED': 'storage:files_deleted',
     'STORAGE_FILE_RENAMED': 'storage:file_renamed',
     'STORAGE_FOLDER_DELETED': 'storage:folder_deleted',
     'STORAGE_SESSION_CLEARED': 'storage:session_cleared',

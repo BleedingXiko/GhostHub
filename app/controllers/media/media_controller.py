@@ -1,28 +1,23 @@
 """Media domain controller built on Specter."""
 
-import hashlib
 import logging
 import os
 import traceback
 
-from flask import jsonify, request, session
+from flask import jsonify, request
 
 from app.services.media.category_query_service import (
     get_cached_categories_with_details,
-    get_category_by_id,
 )
 from app.services.media.category_discovery_service import (
     format_category_display_name,
     get_visible_auto_parent_chain,
 )
-from app.services.media import media_catalog_service
 from app.services.media import media_index_service
 from app.services.media import category_persistence_service
+from app.services.media.media_records_service import MediaRecordsService
 from app.services.media.playlist_service import PlaylistService
-from app.services.media.sort_service import SortService
-from app.services.core import session_store
-from app.services.core.runtime_config_service import get_runtime_config_value
-from specter import Controller, Field, Schema, expect_json, registry
+from specter import Controller, Field, Schema, expect_json
 from app.utils.auth import admin_required, get_show_hidden_flag
 
 logger = logging.getLogger(__name__)
@@ -62,8 +57,6 @@ class MediaController(Controller):
 
                 show_hidden = get_show_hidden_flag()
 
-                from app.utils.media_utils import get_thumbnail_url
-                from urllib.parse import quote
                 import gevent
 
                 search_results = media_index_service.search_media_index(
@@ -288,15 +281,9 @@ class MediaController(Controller):
                         }
 
                     rel_path = item['rel_path']
-                    match = {
-                        'filename': rel_path,
-                        'type': item['type'],
-                        'url': f"/media/{category_id}/{quote(rel_path)}",
-                    }
-                    if item['type'] == 'video':
-                        match['thumbnailUrl'] = get_thumbnail_url(category_id, rel_path)
-
-                    results_by_category[category_id]['matches'].append(match)
+                    stable_id = self._stable_media_id(category_id, rel_path)
+                    if stable_id:
+                        results_by_category[category_id]['matches'].append(stable_id)
                     results_by_category[category_id]['total_matches'] += 1
 
                 for item in folder_match_rows:
@@ -342,23 +329,48 @@ class MediaController(Controller):
                 folders_truncated = len(matched_folders) > folders_limit
                 parent_folders_truncated = len(matched_parent_folders) > parent_limit
 
+                ordered_ids = [
+                    self._stable_media_id(item.get('category_id'), item.get('rel_path'))
+                    for item in search_results
+                ]
+                ordered_ids = [stable_id for stable_id in ordered_ids if stable_id]
+                records = {}
+                for row in search_results:
+                    record = MediaRecordsService._row_to_record(self._record_row(row))
+                    record_id = record.get('id')
+                    if record_id:
+                        records[record_id] = record
+
+                truncated = (
+                    len(search_results) >= limit or
+                    folders_truncated or
+                    parent_folders_truncated
+                )
+                view_key = f"search::query={query}::limit={limit}"
                 return jsonify({
-                    'query': query,
-                    'matched_categories': matched_categories,
-                    'matched_folders': matched_folders[:folders_limit],
-                    'matched_parent_folders': matched_parent_folders[:parent_limit],
-                    'results': list(results_by_category.values()),
-                    'total_categories': len(results_by_category),
-                    'total_results': len(search_results),
-                    'total_matched_folders': len(matched_folders),
-                    'total_matched_parent_folders': len(matched_parent_folders),
-                    'folders_truncated': folders_truncated,
-                    'parent_folders_truncated': parent_folders_truncated,
-                    'truncated': (
-                        len(search_results) >= limit or
-                        folders_truncated or
-                        parent_folders_truncated
-                    ),
+                    'viewKey': view_key,
+                    'viewType': 'search',
+                    'orderedIds': ordered_ids,
+                    'status': 'ready',
+                    'hasMore': len(search_results) >= limit,
+                    'pageToken': None,
+                    'error': None,
+                    'records': records,
+                    'missing': [],
+                    'viewMeta': {
+                        'query': query,
+                        'matched_categories': matched_categories,
+                        'matched_folders': matched_folders[:folders_limit],
+                        'matched_parent_folders': matched_parent_folders[:parent_limit],
+                        'result_groups': list(results_by_category.values()),
+                        'total_categories': len(results_by_category),
+                        'total_results': len(search_results),
+                        'total_matched_folders': len(matched_folders),
+                        'total_matched_parent_folders': len(matched_parent_folders),
+                        'folders_truncated': folders_truncated,
+                        'parent_folders_truncated': parent_folders_truncated,
+                        'truncated': truncated,
+                    },
                 })
             except Exception as exc:
                 logger.error("Error in search_media endpoint: %s", exc)
@@ -405,279 +417,25 @@ class MediaController(Controller):
             except Exception as exc:
                 return jsonify({'error': str(exc)}), 500
 
-        @router.route('/categories/<category_id>/media', methods=['GET'])
-        def list_media(category_id):
-            """Get paginated media using Scalable Index and SortService."""
-            try:
-                if category_id == 'session-playlist':
-                    playlist = PlaylistService.get_playlist()
-                    return jsonify({
-                        'files': playlist,
-                        'pagination': {
-                            'page': 1,
-                            'limit': len(playlist),
-                            'total': len(playlist),
-                            'hasMore': False,
-                        },
-                    })
+    @staticmethod
+    def _stable_media_id(category_id, rel_path):
+        if not category_id or not rel_path:
+            return None
+        return f"{category_id}::{rel_path}"
 
-                page = request.args.get('page', 1, type=int)
-                limit = request.args.get(
-                    'limit',
-                    get_runtime_config_value('DEFAULT_PAGE_SIZE', 50),
-                    type=int,
-                )
-                sort_by = request.args.get('sort_by', 'name')
-                sort_order = request.args.get('sort_order', 'ASC').upper()
-                filter_type = request.args.get('filter', 'all')
-                include_total = request.args.get('include_total', 'true').lower() != 'false'
-                shuffle_param = request.args.get('shuffle')
-                shuffle = None
-                if shuffle_param is not None:
-                    shuffle = shuffle_param.lower() == 'true'
-                effective_shuffle = (
-                    shuffle
-                    if shuffle is not None else
-                    get_runtime_config_value('SHUFFLE_MEDIA', False)
-                )
-                subfolder = request.args.get('subfolder')
-                force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
-                show_hidden = get_show_hidden_flag()
-
-                try:
-                    from app.services.media.hidden_content_service import should_block_category_access
-                    if should_block_category_access(category_id, show_hidden):
-                        return jsonify({'error': 'Category is hidden'}), 403
-                except Exception:
-                    pass
-
-                try:
-                    from app.utils.media_utils import get_thumbnail_url
-                    from urllib.parse import quote
-                    from app.services.media.hidden_content_service import (
-                        should_block_file_access,
-                    )
-
-                    status = media_catalog_service.get_async_index_status(category_id)
-                    has_indexed_media = media_index_service.has_media_index_entries(
-                        category_id,
-                        show_hidden=True,
-                    )
-                    should_bootstrap_index = (
-                        (not has_indexed_media) or
-                        (
-                            status and
-                            status.get('status') == 'error' and
-                            not has_indexed_media
-                        )
-                    )
-                    if should_bootstrap_index:
-                        if not status or status.get('status') == 'error':
-                            category = get_category_by_id(category_id)
-                            if category:
-                                media_catalog_service.start_async_indexing(
-                                    category_id,
-                                    category['path'],
-                                    category.get('name', category_id),
-                                    force_refresh=force_refresh,
-                                )
-                                status = media_catalog_service.get_async_index_status(category_id)
-
-                        if status and (
-                            status.get('status') == 'complete' or
-                            status.get('progress', 0) >= 100
-                        ):
-                            status = None
-
-                        if status:
-                            category = get_category_by_id(category_id)
-                            category_path = category.get('path') if category else None
-                            files = []
-                            for file_meta in status.get('files', []):
-                                rel = file_meta.get('name')
-                                if not rel:
-                                    continue
-
-                                if not show_hidden and category_path:
-                                    file_path = os.path.normpath(
-                                        os.path.join(category_path, rel)
-                                    )
-                                    if should_block_file_access(
-                                        file_path,
-                                        category_id,
-                                        show_hidden=False,
-                                    ):
-                                        continue
-
-                                file_type = file_meta.get('type') or 'video'
-                                item = {
-                                    'name': rel,
-                                    'displayName': os.path.basename(rel),
-                                    'type': file_type,
-                                    'size': file_meta.get('size', 0),
-                                    'mtime': file_meta.get('mtime', 0),
-                                    'hash': file_meta.get('hash', ''),
-                                    'url': f"/media/{category_id}/{quote(rel)}",
-                                    'categoryId': category_id,
-                                }
-                                if file_type in ('video', 'image'):
-                                    item['thumbnailUrl'] = get_thumbnail_url(category_id, rel)
-                                files.append(item)
-
-                            subfolders = []
-                            if page == 1:
-                                try:
-                                    subfolders = SortService.get_subfolders(
-                                        category_id,
-                                        subfolder,
-                                        show_hidden,
-                                    )
-                                except Exception as subfolder_error:
-                                    logger.debug(
-                                        "Async indexing subfolder fetch failed for %s: %s",
-                                        category_id,
-                                        subfolder_error,
-                                    )
-
-                            self._prioritize_thumbnail_generation(files)
-
-                            return jsonify({
-                                'async_indexing': True,
-                                'indexing_progress': status.get('progress', 0),
-                                'files': files,
-                                'subfolders': subfolders,
-                                'pagination': {
-                                    'page': page,
-                                    'limit': limit,
-                                    'total': status.get('total_files', 0),
-                                    'hasMore': True,
-                                },
-                            })
-                    elif force_refresh and has_indexed_media:
-                        if not status or status.get('status') != 'running':
-                            category = get_category_by_id(category_id)
-                            if category:
-                                media_catalog_service.start_async_indexing(
-                                    category_id,
-                                    category['path'],
-                                    category.get('name', category_id),
-                                    force_refresh=True,
-                                )
-                except Exception as exc:
-                    logger.debug("Async indexing preload check failed: %s", exc)
-
-                version_hash = (
-                    media_index_service.get_category_version_hash(category_id)
-                    or 'no-hash'
-                )
-                etag = (
-                    f"{category_id}-{version_hash}-{page}-{limit}-{sort_by}-"
-                    f"{sort_order}-{filter_type}-{int(show_hidden)}-"
-                    f"{int(bool(effective_shuffle))}-{int(include_total)}"
-                    f"-{subfolder or ''}"
-                )
-                if request.headers.get('If-None-Match') == f'"{etag}"' and not force_refresh:
-                    return '', 304
-
-                session_id = self._resolve_media_session_id()
-                fetch_limit = limit + 1 if (not include_total and limit > 0) else limit
-                media_files = SortService.get_sorted_media(
-                    category_id=category_id,
-                    subfolder=subfolder,
-                    sort_by=sort_by,
-                    shuffle=shuffle,
-                    sort_order=sort_order,
-                    page=page,
-                    limit=fetch_limit,
-                    filter_type=filter_type,
-                    show_hidden=show_hidden,
-                    session_id=session_id,
-                    force_refresh=force_refresh,
-                )
-
-                if include_total:
-                    total = SortService.get_total_count(
-                        category_id,
-                        subfolder,
-                        filter_type,
-                        show_hidden,
-                    )
-                    has_more = (page * limit) < total
-                else:
-                    has_more = len(media_files) > limit if limit > 0 else False
-                    if has_more and limit > 0:
-                        media_files = media_files[:limit]
-                    total = None
-
-                response_data = {
-                    'files': media_files,
-                    'pagination': {
-                        'page': page,
-                        'limit': limit,
-                        'total': total,
-                        'hasMore': has_more,
-                        'version_hash': version_hash,
-                    },
-                }
-
-                if page == 1:
-                    try:
-                        response_data['subfolders'] = SortService.get_subfolders(
-                            category_id,
-                            subfolder,
-                            show_hidden,
-                        )
-                    except Exception as subfolder_error:
-                        logger.warning(
-                            "Subfolder fetch failed for %s: %s",
-                            category_id,
-                            subfolder_error,
-                        )
-                        response_data['subfolders'] = []
-
-                if get_runtime_config_value('SAVE_VIDEO_PROGRESS', False):
-                    response_data['tracking_mode'] = 'video'
-
-                self._prioritize_thumbnail_generation(media_files)
-
-                response = jsonify(response_data)
-                response.headers['ETag'] = f'"{etag}"'
-                response.headers['Cache-Control'] = 'no-cache'
-                return response
-            except Exception as exc:
-                logger.error(
-                    "Error listing media for category %s: %s",
-                    category_id,
-                    exc,
-                )
-                logger.debug(traceback.format_exc())
-                return jsonify({
-                    'error': f"Server error listing media: {str(exc)}",
-                }), 500
-
-    def _resolve_media_session_id(self):
-        """Resolve a stable session identifier for media ordering."""
-        cookie_sid = session_store.normalize_session_id(request.cookies.get('session_id'))
-        if cookie_sid:
-            return cookie_sid
-
-        stored_sid = session.get('server_session_id')
-        if stored_sid:
-            return stored_sid
-
-        fingerprint = f"{request.remote_addr}|{request.user_agent.string}"
-        fallback_sid = (
-            f"fp-{hashlib.sha1(fingerprint.encode('utf-8', errors='ignore')).hexdigest()[:16]}"
-        )
-        session['server_session_id'] = fallback_sid
-        return fallback_sid
-
-    def _prioritize_thumbnail_generation(self, media_items):
-        """Promote thumbnails for the exact media slice the client just requested."""
-        if not media_items:
-            return
-
-        try:
-            registry.require('thumbnail_runtime').prioritize_media_slice(media_items)
-        except Exception as exc:
-            logger.debug("Thumbnail slice prioritization skipped: %s", exc)
+    @staticmethod
+    def _record_row(row):
+        return {
+            'stable_id': MediaController._stable_media_id(
+                row.get('category_id'),
+                row.get('rel_path'),
+            ),
+            'category_id': row.get('category_id'),
+            'rel_path': row.get('rel_path'),
+            'name': row.get('name') or os.path.basename(str(row.get('rel_path') or '')),
+            'type': row.get('type') or 'unknown',
+            'size': row.get('size') or 0,
+            'mtime': row.get('mtime') or 0,
+            'hash': row.get('hash') or '',
+            'is_hidden': row.get('is_hidden') or 0,
+        }

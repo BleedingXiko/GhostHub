@@ -4,8 +4,9 @@
  */
 
 import { ensureFeatureAccess } from '../../../utils/authManager.js';
-import { getVideoProgress, getSubfolderFilter, getCategoryCache, getMediaFilter } from './state.js';
+import { getVideoProgress, getSubfolderFilter, getCategoryView, getMediaFilter } from './state.js';
 import { toggleSpinner } from '../../ui/controller.js';
+import { selectRecordsForView } from '../../media/selectors.js';
 
 /**
  * Open the media viewer at a specific index
@@ -21,8 +22,12 @@ export async function openViewer(categoryId, startIndex = 0) {
         return;
     }
 
-    if (window.ragotModules?.mediaLoader?.viewCategory) {
-        window.ragotModules.mediaLoader.viewCategory(categoryId, null, startIndex, getSubfolderFilter());
+    if (window.ragotModules?.mediaLoader?.openCategoryViewer) {
+        window.ragotModules.mediaLoader.openCategoryViewer({
+            categoryId,
+            startIndex,
+            subfolder: getSubfolderFilter(),
+        });
     } else {
         console.error('mediaLoader not available');
     }
@@ -34,7 +39,7 @@ export async function openViewer(categoryId, startIndex = 0) {
  * @param {string} categoryId - Category ID
  * @param {string} mediaUrl - URL of the media to view
  */
-export async function openViewerByUrl(categoryId, mediaUrl) {
+export async function openViewerByUrl(categoryId, mediaUrl, recordId = null) {
     toggleSpinner(true);
     const accessGranted = await ensureFeatureAccess();
     if (!accessGranted) {
@@ -42,49 +47,64 @@ export async function openViewerByUrl(categoryId, mediaUrl) {
         return;
     }
 
-    if (!mediaUrl) {
-        if (window.ragotModules?.mediaLoader?.viewCategory) {
-            window.ragotModules.mediaLoader.viewCategory(categoryId, null, 0);
+    if (!mediaUrl && !recordId) {
+        if (window.ragotModules?.mediaLoader?.openCategoryViewer) {
+            window.ragotModules.mediaLoader.openCategoryViewer({ categoryId, startIndex: 0 });
         }
         return;
     }
 
     // Set video progress in app.state BEFORE loading so mediaNavigation can resume
-    const progressInfo = getVideoProgress(mediaUrl);
-
-    if (progressInfo && progressInfo.video_timestamp > 0) {
-        const appState = window.ragotModules?.appState;
-        if (appState) {
-            if (!appState.videoProgressMap) appState.videoProgressMap = {};
-            appState.videoProgressMap[mediaUrl] = {
-                video_timestamp: progressInfo.video_timestamp,
-                video_duration: progressInfo.video_duration || 0
-            };
-            appState.trackingMode = 'video';
-            appState.savedVideoTimestamp = progressInfo.video_timestamp;
-            appState.savedVideoIndex = 0;
+    if (mediaUrl) {
+        const progressInfo = getVideoProgress(mediaUrl);
+        if (progressInfo && progressInfo.video_timestamp > 0) {
+            const appState = window.ragotModules?.appState;
+            if (appState) {
+                if (!appState.videoProgressMap) appState.videoProgressMap = {};
+                appState.videoProgressMap[mediaUrl] = {
+                    video_timestamp: progressInfo.video_timestamp,
+                    video_duration: progressInfo.video_duration || 0
+                };
+                appState.trackingMode = 'video';
+                appState.savedVideoTimestamp = progressInfo.video_timestamp;
+                appState.savedVideoIndex = 0;
+            }
         }
     }
 
-    if (window.ragotModules?.mediaLoader?.viewCategory) {
+    if (window.ragotModules?.mediaLoader?.openCategoryViewer) {
         // Try to find the full row list from cache to enable navigation
         const subfolder = getSubfolderFilter();
         const mediaFilter = getMediaFilter();
-        const categoryCache = getCategoryCache(categoryId, subfolder, mediaFilter);
+        const categoryCache = getCategoryView(categoryId, subfolder, mediaFilter);
 
-        if (categoryCache && categoryCache.media && categoryCache.media.length > 0) {
-            // Find index of this media in the cached list
-            const index = categoryCache.media.findIndex(m => m.url === mediaUrl);
+        const cachedRecords = selectRecordsForView(categoryCache?.viewKey);
+        if (cachedRecords.length > 0) {
+            // Stable id wins. URL fallback covers cards that haven't been
+            // re-rendered with the new id yet (e.g. brief window after a
+            // rename before the row VS rebuild lands).
+            let index = -1;
+            if (recordId) index = cachedRecords.findIndex(m => m.id === recordId);
+            if (index === -1 && mediaUrl) index = cachedRecords.findIndex(m => m.url === mediaUrl);
             if (index !== -1) {
-                console.log(`[StreamingNavigation] Found media in cache at index ${index}, passing full list (${categoryCache.media.length} items)`);
-                // Pass the full cached list (with objects) and the correct starting index
-                window.ragotModules.mediaLoader.viewCategory(categoryId, categoryCache.media, index, subfolder);
+                window.ragotModules.mediaLoader.openViewerFromView({
+                    sourceViewKey: categoryCache.viewKey,
+                    categoryId,
+                    startIndex: index,
+                    startRecordId: cachedRecords[index]?.id || recordId || null,
+                    mediaUrl,
+                });
                 return;
             }
         }
 
-        // Fallback: pass just the one URL if not in cache (Continue Watching cards might not be in row cache)
-        window.ragotModules.mediaLoader.viewCategory(categoryId, [mediaUrl], 0, subfolder);
+        window.ragotModules.mediaLoader.openCategoryViewer({
+            categoryId,
+            startIndex: 0,
+            startRecordId: recordId,
+            startMediaId: mediaUrl,
+            subfolder,
+        });
     } else {
         console.error('mediaLoader not available');
     }

@@ -370,19 +370,11 @@ class ProgressController(MediaVisibilitySupport, Controller):
         except (TypeError, ValueError):
             return
 
-        media_order = data.get('media_order')
-        if media_order is not None:
-            if not isinstance(media_order, list) or not all(
-                isinstance(url, str) for url in media_order
-            ):
-                media_order = None
-
         self.process_state_progress_update(
             session_id=session_id,
             is_tv=is_tv,
             category_id=category_id,
             index=index,
-            media_order=media_order,
             video_url=data.get('video_url'),
             video_timestamp=data.get('video_timestamp'),
             video_duration=data.get('video_duration'),
@@ -412,7 +404,6 @@ class ProgressController(MediaVisibilitySupport, Controller):
         is_tv,
         category_id,
         index,
-        media_order=None,
         video_url=None,
         video_timestamp=None,
         video_duration=None,
@@ -478,9 +469,6 @@ class ProgressController(MediaVisibilitySupport, Controller):
         if not should_save:
             return
 
-        if not video_url and media_order and 0 <= index < len(media_order):
-            video_url = media_order[index]
-
         app = get_runtime_flask_app()
         if app is None:
             logger.warning("Skipping async progress persistence: Flask app unavailable")
@@ -510,9 +498,11 @@ class ProgressController(MediaVisibilitySupport, Controller):
                 )
                 del self._progress_save_timestamps[oldest]
 
-    def process_tv_progress_update(self, state):
+    def process_tv_progress_update(self, state, *, force=False):
         """Own TV-cast progress persistence for profile-backed playback."""
         if not self.is_progress_enabled():
+            return
+        if not state:
             return
         profile_id = state.get('profile_id')
         if not profile_id:
@@ -521,7 +511,7 @@ class ProgressController(MediaVisibilitySupport, Controller):
         now = time.time()
         should_save = False
         with self._tv_progress_lock:
-            if now - self._last_tv_progress_save >= self.TV_PROGRESS_SAVE_INTERVAL:
+            if force or now - self._last_tv_progress_save >= self.TV_PROGRESS_SAVE_INTERVAL:
                 self._last_tv_progress_save = now
                 should_save = True
 
@@ -529,14 +519,14 @@ class ProgressController(MediaVisibilitySupport, Controller):
             return
 
         category_id = state.get('category_id')
-        index = state.get('media_index')
+        media_id = state.get('mediaId')
         video_url = state.get('media_path')
         thumbnail_url = state.get('thumbnail_url')
         video_timestamp = state.get('current_time', 0)
         video_duration = state.get('duration', 0)
         video_completed = bool(state.get('video_completed'))
 
-        if not category_id or index is None:
+        if not category_id:
             return
 
         result = self._persist_runtime_progress(
@@ -561,22 +551,24 @@ class ProgressController(MediaVisibilitySupport, Controller):
                 logger.info("[TV Save] Cleared completed video progress: %s", video_url)
             else:
                 logger.info(
-                    "[TV Save] Profile progress saved: cat=%s, idx=%s, time=%.1fs",
+                    "[TV Save] Profile progress saved: cat=%s, media=%s, time=%.1fs",
                     category_id,
-                    index,
+                    media_id or video_url,
                     video_timestamp,
                 )
 
         if result['skip_broadcast']:
             return
+        if not result['saved']:
+            return
 
         progress_payload = {
             'category_id': category_id,
-            'index': index,
+            'mediaId': media_id,
             'video_timestamp': video_timestamp,
-            'video_duration': video_duration,
+            'video_duration': result.get('video_duration', video_duration),
             'video_url': video_url,
-            'thumbnail_url': thumbnail_url,
+            'thumbnail_url': result.get('thumbnail_url', thumbnail_url),
             'is_tv_authority': True,
             'video_progress_deleted': result['deleted'],
             'profile_id': profile_id,
@@ -747,6 +739,8 @@ class ProgressController(MediaVisibilitySupport, Controller):
 
             if result['skip_broadcast']:
                 return
+            if not result['saved']:
+                return
 
             blocked = hidden_content_service.should_block_category_access(category_id, show_hidden=False)
             if blocked:
@@ -761,8 +755,8 @@ class ProgressController(MediaVisibilitySupport, Controller):
                 'index': index,
                 'total_count': total_count,
                 'video_timestamp': video_timestamp,
-                'video_duration': video_duration,
-                'thumbnail_url': thumbnail_url,
+                'video_duration': result.get('video_duration', video_duration),
+                'thumbnail_url': result.get('thumbnail_url', thumbnail_url),
                 'video_url': video_url,
                 'tracking_mode': 'video',
                 'profile_id': profile_id,
@@ -791,6 +785,8 @@ class ProgressController(MediaVisibilitySupport, Controller):
             'skip_broadcast': False,
             'failure': False,
             'message': '',
+            'video_duration': video_duration,
+            'thumbnail_url': thumbnail_url,
         }
 
         has_valid_progress_payload = video_completed or (
@@ -814,6 +810,21 @@ class ProgressController(MediaVisibilitySupport, Controller):
         if not profile_id:
             result['message'] = 'Active profile is required.'
             return result
+
+        existing_progress = video_progress_service.get_video_progress(
+            video_url,
+            profile_id=profile_id,
+        )
+        if (
+            (video_duration is None or video_duration <= 0)
+            and existing_progress
+            and existing_progress.get('video_duration')
+        ):
+            video_duration = existing_progress.get('video_duration')
+            result['video_duration'] = video_duration
+        if not thumbnail_url and existing_progress and existing_progress.get('thumbnail_url'):
+            thumbnail_url = existing_progress.get('thumbnail_url')
+            result['thumbnail_url'] = thumbnail_url
 
         if video_completed:
             deleted = False

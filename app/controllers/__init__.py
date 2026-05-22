@@ -25,6 +25,8 @@ def build_controller_classes():
     from app.controllers.media.media_discovery_controller import (
         MediaDiscoveryController,
     )
+    from app.controllers.media.media_ordering_controller import MediaOrderingController
+    from app.controllers.media.media_records_controller import MediaRecordsController
     from app.controllers.media.progress_controller import ProgressController
     from app.controllers.media.subtitle_controller import SubtitleController
     from app.controllers.storage.storage_file_controller import StorageFileController
@@ -59,6 +61,8 @@ def build_controller_classes():
         MediaController,
         MediaDeliveryController,
         MediaDiscoveryController,
+        MediaOrderingController,
+        MediaRecordsController,
         ProfileController,
         ProgressController,
         StorageFileController,

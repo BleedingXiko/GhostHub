@@ -3,11 +3,14 @@
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from app.services.core.sqlite_runtime_service import get_db
 from app.services.core.runtime_config_service import get_runtime_root_path
 
 logger = logging.getLogger(__name__)
+
+_timeline_counts_cache = {}
 
 
 def _hidden_category_clause(column_name="media_index.category_id"):
@@ -20,6 +23,67 @@ def _hidden_category_clause(column_name="media_index.category_id"):
         f"OR (hc.category_id LIKE 'auto%' AND {column_name} LIKE hc.category_id || '-%')"
         ")"
     )
+
+def _clear_timeline_counts_cache():
+    _timeline_counts_cache.clear()
+
+def _media_index_where_clauses(category_id=None, filter_type='all', show_hidden=False):
+    """Build common media_index WHERE clauses and parameters."""
+    where_clauses = []
+    params = []
+
+    if category_id:
+        where_clauses.append("category_id = ?")
+        params.append(category_id)
+
+    if filter_type != 'all':
+        where_clauses.append("type = ?")
+        params.append(filter_type)
+
+    if not show_hidden:
+        where_clauses.append("is_hidden = 0")
+        where_clauses.append(_hidden_category_clause())
+
+    return where_clauses, params
+
+def _date_key_from_epoch(mtime):
+    """Return SQLite date(mtime, 'unixepoch') equivalent in UTC."""
+    return datetime.fromtimestamp(int(mtime or 0), timezone.utc).strftime('%Y-%m-%d')
+
+def _epoch_range_for_date_key(date_key):
+    start = datetime.strptime(date_key, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    return int(start.timestamp()), int(end.timestamp())
+
+def _epoch_range_for_month_key(month_key):
+    start = datetime.strptime(month_key, '%Y-%m').replace(tzinfo=timezone.utc)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return int(start.timestamp()), int(end.timestamp())
+
+def _build_month_range_query(
+    month_key,
+    *,
+    category_id=None,
+    filter_type='all',
+    show_hidden=False,
+    select_sql='*',
+):
+    """Build an mtime-range query scoped to one calendar month."""
+    start_epoch, end_epoch = _epoch_range_for_month_key(month_key)
+    query = f"SELECT {select_sql} FROM media_index WHERE mtime >= ? AND mtime < ?"
+    params = [start_epoch, end_epoch]
+    where_clauses, where_params = _media_index_where_clauses(
+        category_id=category_id,
+        filter_type=filter_type,
+        show_hidden=show_hidden,
+    )
+    if where_clauses:
+        query += " AND " + " AND ".join(where_clauses)
+        params.extend(where_params)
+    return query, params
 
 def update_media_index_batch(category_id, files_metadata, version_hash=None):
     """
@@ -142,6 +206,7 @@ def update_media_index_batch(category_id, files_metadata, version_hash=None):
                     conn.execute("UPDATE categories SET version_hash = ? WHERE id = ?", (version_hash, category_id))
 
                 conn.execute("COMMIT")
+                _clear_timeline_counts_cache()
                 logger.info(f"Updated media_index for {category_id} with {len(data)} files")
                 return True, len(data)
             except Exception as e:
@@ -158,6 +223,7 @@ def delete_media_index_by_category(category_id):
         with get_db() as conn:
             cursor = conn.execute("DELETE FROM media_index WHERE category_id = ?", (category_id,))
             conn.execute("UPDATE categories SET version_hash = NULL WHERE id = ?", (category_id,))
+            _clear_timeline_counts_cache()
             logger.info(f"Deleted {cursor.rowcount} media_index records for category {category_id}")
             return True
     except Exception as e:
@@ -173,6 +239,7 @@ def delete_media_index_entry(category_id, rel_path):
                 (category_id, rel_path)
             )
             if cursor.rowcount > 0:
+                _clear_timeline_counts_cache()
                 logger.debug(f"Removed {rel_path} from media_index in category {category_id}")
                 return True
             return False
@@ -200,6 +267,7 @@ def delete_media_index_entries_batch(stale_entries):
             )
             count = cursor.rowcount
             if count > 0:
+                _clear_timeline_counts_cache()
                 logger.info(f"Batch deleted {count} stale entries from media_index")
             return count
     except Exception as e:
@@ -277,6 +345,7 @@ def upsert_media_index_entry(category_id, category_path, rel_path, size, mtime, 
                 current_time
             ))
 
+        _clear_timeline_counts_cache()
         return True
     except Exception as e:
         logger.error(f"Error upserting media_index entry for {rel_path}: {e}")
@@ -372,6 +441,7 @@ def batch_upsert_media_index_entries(category_id, category_path, file_entries):
                 rows,
             )
 
+        _clear_timeline_counts_cache()
         return True, len(rows)
     except Exception as e:
         logger.error(f"Error batch upserting media_index entries for {category_id}: {e}")
@@ -594,7 +664,7 @@ def get_media_metadata_batch(category_id, rel_paths):
         # SQLite limit for variables is usually 999, so we chunk if needed,
         # but the indexing processor/runtime already chunks requests first.
         placeholders = ', '.join(['?'] * len(rel_paths))
-        query = f"SELECT rel_path, size, mtime, hash FROM media_index WHERE category_id = ? AND rel_path IN ({placeholders})"
+        query = f"SELECT rel_path, size, mtime, hash, type FROM media_index WHERE category_id = ? AND rel_path IN ({placeholders})"
         params = [category_id] + list(rel_paths)
 
         with get_db() as conn:
@@ -972,33 +1042,49 @@ def get_media_rows_by_filenames(category_id, filenames):
 def get_timeline_date_counts(category_id=None, filter_type='all', show_hidden=False):
     """Return timeline date counts keyed by `YYYY-MM-DD`."""
     try:
-        query = """
-            SELECT date(mtime, 'unixepoch') as date_key, COUNT(*) as count
-            FROM media_index
-        """
-        params = []
-        where_clauses = []
-
-        if category_id:
-            where_clauses.append("category_id = ?")
-            params.append(category_id)
-
-        if filter_type != 'all':
-            where_clauses.append("type = ?")
-            params.append(filter_type)
-
-        if not show_hidden:
-            where_clauses.append("is_hidden = 0")
-            where_clauses.append(_hidden_category_clause())
-
+        where_clauses, params = _media_index_where_clauses(
+            category_id=category_id,
+            filter_type=filter_type,
+            show_hidden=show_hidden,
+        )
+        where_sql = ""
         if where_clauses:
-            query += " WHERE " + " AND ".join(where_clauses)
+            where_sql = " WHERE " + " AND ".join(where_clauses)
 
-        query += " GROUP BY date_key ORDER BY date_key DESC"
+        summary_query = (
+            "SELECT MAX(mtime) AS latest_mtime, COUNT(*) AS total_count "
+            f"FROM media_index{where_sql}"
+        )
+        rows_query = f"SELECT mtime FROM media_index{where_sql} ORDER BY mtime DESC"
 
         with get_db() as conn:
-            cursor = conn.execute(query, params)
-            return {row['date_key']: row['count'] for row in cursor.fetchall()}
+            summary = conn.execute(summary_query, params).fetchone()
+            latest_mtime = summary['latest_mtime'] if summary else None
+            total_count = int(summary['total_count'] or 0) if summary else 0
+            if total_count <= 0 or latest_mtime is None:
+                return {}
+
+            cache_key = (
+                category_id,
+                filter_type,
+                bool(show_hidden),
+                int(latest_mtime),
+                total_count,
+            )
+            cached = _timeline_counts_cache.get(cache_key)
+            if cached is not None:
+                return dict(cached)
+
+            counts = {}
+            cursor = conn.execute(rows_query, params)
+            for row in cursor.fetchall():
+                date_key = _date_key_from_epoch(row['mtime'])
+                counts[date_key] = counts.get(date_key, 0) + 1
+
+            if len(_timeline_counts_cache) > 64:
+                _timeline_counts_cache.clear()
+            _timeline_counts_cache[cache_key] = dict(counts)
+            return counts
     except Exception as e:
         logger.error(f"Error getting timeline date counts: {e}")
         return {}
@@ -1014,24 +1100,17 @@ def get_media_rows_for_date(
 ):
     """Return raw media-index rows for a specific timeline date."""
     try:
-        query = """
-            SELECT * FROM media_index
-            WHERE date(mtime, 'unixepoch') = ?
-        """
-        params = [date_key]
-
-        if category_id:
-            query += " AND category_id = ?"
-            params.append(category_id)
-
-        if filter_type != 'all':
-            query += " AND type = ?"
-            params.append(filter_type)
-
-        if not show_hidden:
-            query += " AND is_hidden = 0"
-            query += f" AND {_hidden_category_clause()}"
-
+        start_epoch, end_epoch = _epoch_range_for_date_key(date_key)
+        query = "SELECT * FROM media_index WHERE mtime >= ? AND mtime < ?"
+        params = [start_epoch, end_epoch]
+        where_clauses, where_params = _media_index_where_clauses(
+            category_id=category_id,
+            filter_type=filter_type,
+            show_hidden=show_hidden,
+        )
+        if where_clauses:
+            query += " AND " + " AND ".join(where_clauses)
+            params.extend(where_params)
         query += " ORDER BY mtime DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
@@ -1041,6 +1120,106 @@ def get_media_rows_for_date(
     except Exception as e:
         logger.error(f"Error getting media rows for date {date_key}: {e}")
         return []
+
+def get_media_rows_for_month(
+    month_key,
+    category_id=None,
+    filter_type='all',
+    show_hidden=False,
+):
+    """Return raw media-index rows for a timeline month using an mtime range."""
+    try:
+        query, params = _build_month_range_query(
+            month_key,
+            category_id=category_id,
+            filter_type=filter_type,
+            show_hidden=show_hidden,
+        )
+        query += " ORDER BY mtime DESC"
+
+        with get_db() as conn:
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting media rows for month {month_key}: {e}")
+        return []
+
+def get_month_timeline_page(
+    month_key,
+    category_id=None,
+    filter_type='all',
+    items_per_date=24,
+    dates_page=1,
+    dates_limit=31,
+    show_hidden=False,
+):
+    """Return month-scoped timeline rows and date totals without scanning all dates."""
+    try:
+        safe_items_per_date = max(1, min(int(items_per_date or 24), 500))
+        safe_dates_limit = max(1, min(int(dates_limit or 31), 31))
+        safe_dates_page = max(1, int(dates_page or 1))
+
+        counts_query, counts_params = _build_month_range_query(
+            month_key,
+            category_id=category_id,
+            filter_type=filter_type,
+            show_hidden=show_hidden,
+            select_sql='mtime',
+        )
+        counts_query += " ORDER BY mtime DESC"
+
+        with get_db() as conn:
+            date_totals = {}
+            for row in conn.execute(counts_query, counts_params):
+                date_key = _date_key_from_epoch(row['mtime'])
+                date_totals[date_key] = date_totals.get(date_key, 0) + 1
+
+            all_dates = sorted(date_totals.keys(), reverse=True)
+            total_dates = len(all_dates)
+            start_idx = (safe_dates_page - 1) * safe_dates_limit
+            page_dates = all_dates[start_idx:start_idx + safe_dates_limit]
+            page_date_set = set(page_dates)
+            selected_counts = {date_key: 0 for date_key in page_dates}
+            selected_rows = []
+
+            if page_dates:
+                rows_query, rows_params = _build_month_range_query(
+                    month_key,
+                    category_id=category_id,
+                    filter_type=filter_type,
+                    show_hidden=show_hidden,
+                )
+                rows_query += " ORDER BY mtime DESC"
+                for row in conn.execute(rows_query, rows_params):
+                    date_key = _date_key_from_epoch(row['mtime'])
+                    if date_key not in page_date_set:
+                        continue
+                    if selected_counts[date_key] >= safe_items_per_date:
+                        continue
+                    item = dict(row)
+                    item['_date_key'] = date_key
+                    selected_rows.append(item)
+                    selected_counts[date_key] += 1
+
+            return {
+                'rows': selected_rows,
+                'date_totals': {
+                    date_key: date_totals.get(date_key, 0)
+                    for date_key in page_dates
+                },
+                'page_dates': page_dates,
+                'total_dates': total_dates,
+                'has_more_dates': (start_idx + safe_dates_limit) < total_dates,
+            }
+    except Exception as e:
+        logger.error(f"Error getting month timeline page for {month_key}: {e}")
+        return {
+            'rows': [],
+            'date_totals': {},
+            'page_dates': [],
+            'total_dates': 0,
+            'has_more_dates': False,
+        }
 
 def search_media_index(search_query, limit=50, show_hidden=False):
     """Search for media items across the index."""

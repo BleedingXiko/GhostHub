@@ -11,6 +11,21 @@ import { bus } from '../libs/ragot.esm.min.js';
 import { APP_EVENTS } from '../core/appEvents.js';
 import { isUserAdmin } from './progressDB.js';
 
+function bumpStreamingVisibilityEpoch() {
+  // Invalidate the mediaOrdering cache synchronously first — its entries cache
+  // orderedIds + viewMeta.subfolders that were computed under the prior
+  // show_hidden flag. Without this, requestOrder() short-circuits on
+  // status==='ready' and returns the stale order without re-fetching, so
+  // newly-revealed (or newly-hidden) subfolder cards never appear after a toggle.
+  try {
+    window.ragotModules?.mediaOrdering?.invalidateAllViews?.();
+  } catch (_) { /* best-effort */ }
+
+  return import('../modules/layouts/streaming/state.js')
+    .then(m => m.bumpVisibilityEpoch?.())
+    .catch(() => {});
+}
+
 /**
  * Check if show_hidden flag is enabled in sessionStorage.
  * @returns {boolean} True if flag is set, false otherwise
@@ -35,6 +50,7 @@ export function enableShowHidden() {
   }
   sessionStorage.setItem('show_hidden', 'true');
   bus.emit(APP_EVENTS.SHOW_HIDDEN_TOGGLED, { showHidden: true });
+  return bumpStreamingVisibilityEpoch();
 }
 
 /**
@@ -46,6 +62,7 @@ export function disableShowHidden() {
   }
   sessionStorage.removeItem('show_hidden');
   bus.emit(APP_EVENTS.SHOW_HIDDEN_TOGGLED, { showHidden: false });
+  return bumpStreamingVisibilityEpoch();
 }
 
 /**
@@ -101,10 +118,10 @@ export async function checkRevealHiddenStatus() {
     const data = await response.json();
 
     if (data.active) {
-      enableShowHidden();
+      await enableShowHidden();
       return true;
     } else {
-      disableShowHidden();
+      await disableShowHidden();
       return false;
     }
   } catch (error) {
@@ -123,9 +140,9 @@ export async function checkRevealHiddenStatus() {
 export async function syncShowHiddenFromEvent(data) {
   try {
     if (data.reason === 'show_hidden_enabled' && data.show_hidden === true) {
-      enableShowHidden();
+      await enableShowHidden();
     } else if (data.reason === 'show_hidden_disabled' && data.show_hidden === false) {
-      disableShowHidden();
+      await disableShowHidden();
     } else if (data.reason === 'category_hidden' || data.reason === 'category_unhidden') {
       await checkRevealHiddenStatus();
     }

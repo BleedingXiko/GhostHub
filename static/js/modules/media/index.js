@@ -31,7 +31,6 @@ export {
     initProgressSync,
     getCurrentVideoProgress,
     emitMyStateUpdate,
-    resetOrderHash,
     createVideoProgressSaver,
     updateMediaSession
 } from './progressSync.js';

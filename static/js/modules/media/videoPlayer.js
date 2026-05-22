@@ -15,6 +15,7 @@ import { createTranscodingVideoElement } from './transcodingPlayer.js';
 import { requestWakeLock, releaseWakeLock } from '../../utils/wakeLock.js';
 import { createElement, attr, $ } from '../../libs/ragot.esm.min.js';
 import { isScrubPreviewActive } from './scrubPreviewState.js';
+import { getKnownViewerCount, getViewerSession } from './viewerState.js';
 
 /**
  * Create the actual HTMLVideoElement for playback.
@@ -73,8 +74,8 @@ export function createActualVideoElement(file, isActive) {
             if (currentEndBehavior === 'play_next' && !isCurrentlyAutoPlay) {
                 // Check if next media is available
                 const appState = window.ragotModules?.appState;
-                const currentIndex = appState?.currentMediaIndex;
-                const totalMedia = appState?.fullMediaList?.length || 0;
+                const currentIndex = getViewerSession(appState)?.activeIndex;
+                const totalMedia = getKnownViewerCount(appState);
 
                 if (currentIndex !== undefined && currentIndex < totalMedia - 1) {
                     // Next media is available, play it

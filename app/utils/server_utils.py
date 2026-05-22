@@ -16,6 +16,7 @@ import re
 import time
 import json
 import requests
+from pathlib import Path
 from app import create_app, socketio, logger as app_logger
 import app.services.system.tunnel.service as system_tunnel_service
 from app.services.system.tunnel.binary_service import find_cloudflared_path as resolve_cloudflared_path
@@ -231,7 +232,6 @@ def run_server(app, port):
                     print("Using gevent server directly via socketio.run()...")
                     print(f"Server will be accessible on all interfaces (0.0.0.0:{port})")
                     print("This includes: localhost, LAN IP, AP mode IP, and Tailscale IP")
-                    from app import socketio
                     socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=False)
             else:
                 # Use gevent directly on Windows or other non-Linux/macOS platforms for production

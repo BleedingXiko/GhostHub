@@ -330,6 +330,7 @@ class StorageManagementController(Controller):
                 'reason': reason,
                 'device_key': device_key,
                 'force_refresh': True,
+                'invalidateAll': True,
                 'timestamp': time.time(),
             })
         except Exception as exc:

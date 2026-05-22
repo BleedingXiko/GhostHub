@@ -30,6 +30,8 @@ import {
     updateConnectionStatus
 } from './tvPlayerModal.js';
 import { TV_EVENTS } from '../../core/socketEvents.js';
+import { getCurrentViewerRecord, getViewerSession } from '../media/viewerState.js';
+import { selectParams, selectRecordAt, selectView } from '../media/selectors.js';
 
 // Store references
 let socket = null;
@@ -38,9 +40,13 @@ let isTvConnected = false;
 let hdmiConnected = false;
 let kioskRunning = false;
 let isCasting = false;
+let castingViewKey = null;
+let castingViewType = null;
+let castingViewParams = {};
 let castingCategoryId = null;
-let castingMediaIndex = null;
+let castingMediaId = null;
 let castingVideoElement = null;
+let currentPlaybackTime = 0;
 let lastPlaybackSyncTime = 0;
 let tvDisplayPort = 5001;
 let shutdownCountdown = null; // Timer for shutdown countdown UI
@@ -63,6 +69,7 @@ let tvCastLifecycle = null;
 let tvCastButtonComponent = null;
 let pendingShutdownNotified = false;
 let castStopRequested = false;
+let tvStatusRequestTimer = null;
 
 function showTvKioskStatus(title, meta = '', options = {}) {
     showStatusLane(TV_KIOSK_STATUS_KEY, {
@@ -236,15 +243,13 @@ class TvCastButtonComponent extends Component {
             return;
         }
 
-        const currentIndex = window.ragotModules.appState?.currentMediaIndex;
-        const fullList = window.ragotModules.appState?.fullMediaList;
-        if (typeof currentIndex !== 'number' || !fullList || currentIndex < 0 || currentIndex >= fullList.length) {
+        const currentFile = getActiveViewerCastFile();
+        if (!currentFile) {
             console.error('No media currently selected to cast');
             showCastNotification('No media selected', true);
             return;
         }
 
-        const currentFile = fullList[currentIndex];
         if (currentFile && currentFile.url) {
             castMediaToTv(currentFile);
         } else {
@@ -332,16 +337,69 @@ function getCastFallbackInfo(castingInfo) {
     };
 }
 
+function normalizeViewParams(params) {
+    return params && typeof params === 'object' && !Array.isArray(params) ? { ...params } : {};
+}
+
+function getCanonicalCastIdentity(file) {
+    const appState = window.ragotModules?.appState;
+    const viewer = getViewerSession(appState);
+    const viewKey = viewer?.viewKey || null;
+    const view = viewKey ? selectView(viewKey) : null;
+    const fallbackRecord = viewer ? selectRecordAt(viewKey, viewer.activeIndex) : null;
+    const currentRecord = file?.id ? file : getCurrentViewerRecord(appState) || fallbackRecord;
+    const mediaId = file?.id || currentRecord?.id || null;
+    const viewType = view?.viewType || null;
+    const viewParams = viewKey ? normalizeViewParams(selectParams(viewKey)) : {};
+    const categoryId = appState?.currentCategoryId || viewParams.category_id || viewParams.categoryId || null;
+
+    if (!viewKey || !viewType || !mediaId) {
+        console.warn('[TV Cast] Cannot cast without canonical view identity', {
+            viewKey,
+            viewType,
+            mediaId
+        });
+        return null;
+    }
+
+    return {
+        viewKey,
+        viewType,
+        viewParams,
+        categoryId,
+        mediaId
+    };
+}
+
+function getActiveViewerCastFile() {
+    const appState = window.ragotModules?.appState;
+    const viewer = getViewerSession(appState);
+    const activeElement = $('.viewer-media.active', window.ragotModules?.appDom?.mediaViewer);
+    const activeIndex = Number.parseInt(activeElement?.getAttribute('data-index') || '', 10);
+
+    if (viewer?.viewKey && Number.isInteger(activeIndex) && activeIndex >= 0) {
+        const activeRecord = selectRecordAt(viewer.viewKey, activeIndex);
+        if (activeRecord?.url) {
+            return activeRecord;
+        }
+    }
+
+    return getCurrentViewerRecord(appState);
+}
+
 /**
  * Save casting state to sessionStorage with FULL media info
- * This allows modal to restore without needing window.ragotModules.appState.fullMediaList
+ * This allows modal to restore without needing the active viewer state.
  */
 function saveCastingState(mediaInfo = null) {
-    if (isCasting && castingCategoryId !== null) {
+    if (isCasting && castingViewKey && castingViewType && castingMediaId) {
         const state = {
             isCasting: true,
+            viewKey: castingViewKey,
+            viewType: castingViewType,
+            viewParams: castingViewParams || {},
             categoryId: castingCategoryId,
-            mediaIndex: castingMediaIndex,
+            mediaId: castingMediaId,
             mediaUrl: mediaInfo?.mediaUrl || currentMediaUrl || '',
             // Save full media info so modal can restore without window.ragotModules.appState
             title: mediaInfo?.title || currentMediaTitle || 'Now Playing',
@@ -372,6 +430,10 @@ function restoreCastingState() {
 
     try {
         const state = JSON.parse(saved);
+        if (!state?.viewKey || !state?.viewType || !state?.mediaId) {
+            sessionStorage.removeItem(TV_CAST_STORAGE_KEY);
+            return false;
+        }
         // No expiration check - sessionStorage clears on tab close anyway
         // Server is source of truth and will correct state if needed
         return state;
@@ -405,8 +467,12 @@ function resetCastingState(options = {}) {
     // Reset all casting flags
     isCasting = false;
     isCastInitiator = false;
+    castingViewKey = null;
+    castingViewType = null;
+    castingViewParams = {};
     castingCategoryId = null;
-    castingMediaIndex = null;
+    castingMediaId = null;
+    currentPlaybackTime = 0;
     pendingPlaybackSync = null;
     kioskBooting = false;
     if (!preserveStopRequest) {
@@ -488,8 +554,11 @@ function initTvCastManager(socketInstance) {
     if (savedState && savedState.isCasting) {
         // Set state immediately to prevent race condition with tv_status_update event
         isCasting = true;
+        castingViewKey = savedState.viewKey;
+        castingViewType = savedState.viewType;
+        castingViewParams = normalizeViewParams(savedState.viewParams);
         castingCategoryId = savedState.categoryId;
-        castingMediaIndex = savedState.mediaIndex;
+        castingMediaId = savedState.mediaId;
         console.log('[TV Cast] Restored casting state from sessionStorage (immediate):', savedState);
     }
 
@@ -506,8 +575,11 @@ function initTvCastManager(socketInstance) {
                     duration: savedState.duration || 0,
                     startTime: savedState.currentTime || 0,
                     mediaUrl: savedState.mediaUrl || '',
+                    viewKey: savedState.viewKey,
+                    viewType: savedState.viewType,
+                    viewParams: savedState.viewParams || {},
                     categoryId: savedState.categoryId,
-                    mediaIndex: savedState.mediaIndex
+                    mediaId: savedState.mediaId
                 });
             }
 
@@ -539,9 +611,14 @@ function initTvCastManager(socketInstance) {
  * Request current TV connection status from server
  */
 function requestTvStatus() {
-    if (socket) {
-        socket.emit(TV_EVENTS.REQUEST_TV_STATUS);
-    }
+    if (!socket) return;
+    if (tvStatusRequestTimer) return;
+    tvStatusRequestTimer = ensureTvCastLifecycle().timeout(() => {
+        tvStatusRequestTimer = null;
+        if (socket) {
+            socket.emit(TV_EVENTS.REQUEST_TV_STATUS);
+        }
+    }, 0);
 }
 
 /**
@@ -599,7 +676,7 @@ function handleTvStatusUpdate(data) {
 
     if (castStopRequested) {
         if (data.is_casting && socket) {
-            socket.emit(TV_EVENTS.TV_STOP_CASTING);
+            socket.emit(TV_EVENTS.TV_STOP_CASTING, getStopCastPayload());
         }
         if (!data.is_casting) {
             castStopRequested = false;
@@ -619,8 +696,11 @@ function handleTvStatusUpdate(data) {
 
     if (data.is_casting && data.casting_info) {
         isCasting = true;
+        castingViewKey = data.casting_info.viewKey || null;
+        castingViewType = data.casting_info.viewType || null;
+        castingViewParams = normalizeViewParams(data.casting_info.viewParams);
         castingCategoryId = data.casting_info.category_id;
-        castingMediaIndex = data.casting_info.media_index;
+        castingMediaId = data.casting_info.mediaId;
         console.log('[TV Cast] Restored casting state from server:', castingCategoryId);
         hideKioskBootNotification();
 
@@ -641,7 +721,10 @@ function handleTvStatusUpdate(data) {
             duration: Number(data.casting_info.duration) || 0,
             isPlaying: data.casting_info.paused === true ? false : true,
             category_id: data.casting_info.category_id,
-            media_index: data.casting_info.media_index,
+            viewKey: castingViewKey,
+            viewType: castingViewType,
+            viewParams: castingViewParams,
+            mediaId: castingMediaId,
             media_path: data.casting_info.media_path,
             thumbnail_url: data.casting_info.thumbnail_url,
             is_guest_cast: data.casting_info.is_guest_cast === true
@@ -649,11 +732,7 @@ function handleTvStatusUpdate(data) {
 
         if (!isTvPlayerModalVisible() && (data.connected || data.is_casting)) {
             const saved = restoreCastingState();
-            const currentIndex = window.ragotModules.appState?.currentMediaIndex;
-            const fullList = window.ragotModules.appState?.fullMediaList;
-            const targetIndex = castingMediaIndex !== null && castingMediaIndex !== undefined
-                ? castingMediaIndex
-                : currentIndex;
+            const currentRecord = getCurrentViewerRecord(window.ragotModules.appState);
             const fallbackInfo = getCastFallbackInfo(data.casting_info);
             const serverDuration = Number(data.casting_info.duration) || 0;
             const serverCurrentTime = Number(data.casting_info.current_time) || 0;
@@ -678,8 +757,8 @@ function handleTvStatusUpdate(data) {
                 if (!mediaInfo.title || mediaInfo.title === 'Now Playing') {
                     mediaInfo.title = fallbackInfo.title || mediaInfo.title;
                 }
-            } else if (targetIndex !== undefined && fullList && fullList[targetIndex]) {
-                const file = fullList[targetIndex];
+            } else if (currentRecord && (!castingMediaId || currentRecord.id === castingMediaId)) {
+                const file = currentRecord;
                 mediaInfo.title = file.name || 'Now Playing';
                 mediaInfo.thumbnailUrl = file.thumbnailUrl || file.url;
                 mediaInfo.duration = file.duration || serverDuration || 0;
@@ -695,8 +774,11 @@ function handleTvStatusUpdate(data) {
                 ...mediaInfo,
                 startTime: mediaInfo.currentTime || 0,
                 mediaUrl: mediaInfo.mediaUrl || data.casting_info.media_path || '',
+                viewKey: castingViewKey,
+                viewType: castingViewType,
+                viewParams: castingViewParams,
                 categoryId: castingCategoryId,
-                mediaIndex: castingMediaIndex,
+                mediaId: castingMediaId,
                 connected: data.connected === true,
                 isBooting: kioskBooting === true,
                 loading: kioskBooting === true || data.connected !== true
@@ -709,42 +791,6 @@ function handleTvStatusUpdate(data) {
                 ...mediaInfo,
                 currentTime: mediaInfo.currentTime || serverCurrentTime || 0
             });
-
-            if (!fullList || fullList.length === 0 || !fullList[targetIndex]) {
-                let attempts = 0;
-                const maxAttempts = 300;
-                pendingCastKey = `${castingCategoryId}:${castingMediaIndex}`;
-                clearPendingMediaWait();
-
-                pendingMediaWaitTimer = ensureTvCastLifecycle().interval(() => {
-                    attempts++;
-                    if (!isCasting || pendingCastKey !== `${castingCategoryId}:${castingMediaIndex}`) {
-                        clearPendingMediaWait();
-                        return;
-                    }
-                    const currentList = window.ragotModules.appState?.fullMediaList;
-                    const resolvedIndex = castingMediaIndex !== null && castingMediaIndex !== undefined
-                        ? castingMediaIndex
-                        : window.ragotModules.appState?.currentMediaIndex;
-
-                    if (currentList && currentList.length > 0 && resolvedIndex !== undefined && currentList[resolvedIndex]) {
-                        clearPendingMediaWait();
-                        if (!currentMediaTitle || !currentThumbnailUrl) {
-                            const file = currentList[resolvedIndex];
-                            mediaInfo.title = file.name || 'Now Playing';
-                            mediaInfo.thumbnailUrl = file.thumbnailUrl || file.url;
-                            mediaInfo.duration = file.duration || 0;
-                            updateMediaInfo(mediaInfo);
-                            currentMediaTitle = mediaInfo.title;
-                            currentThumbnailUrl = mediaInfo.thumbnailUrl;
-                            currentDuration = mediaInfo.duration;
-                        }
-                    } else if (attempts >= maxAttempts) {
-                        clearPendingMediaWait();
-                        console.warn('[TV Cast] Timeout waiting for media list');
-                    }
-                }, 100);
-            }
         } else if (isTvPlayerModalVisible()) {
             updateConnectionStatus({ connected: data.connected === true, isBooting: kioskBooting === true });
         }
@@ -766,6 +812,9 @@ function handleTvPlaybackState(data) {
 
     const nextTime = Number(data.currentTime);
     const nextDuration = Number(data.duration);
+    if (isFinite(nextTime) && nextTime >= 0) {
+        currentPlaybackTime = nextTime;
+    }
     if (isFinite(nextDuration) && nextDuration > 0) {
         currentDuration = nextDuration;
     }
@@ -797,7 +846,7 @@ function handleKioskBootComplete(data) {
     console.log('Kiosk boot completed:', data);
     if (castStopRequested) {
         hideKioskBootNotification();
-        if (socket) socket.emit(TV_EVENTS.TV_STOP_CASTING);
+        if (socket) socket.emit(TV_EVENTS.TV_STOP_CASTING, getStopCastPayload());
         resetCastingState({ preserveStopRequest: true });
         return;
     }
@@ -814,6 +863,11 @@ function handleKioskBootComplete(data) {
             startTime: 0,
             currentTime: 0,
             mediaUrl: currentMediaUrl,
+            viewKey: castingViewKey,
+            viewType: castingViewType,
+            viewParams: castingViewParams,
+            categoryId: castingCategoryId,
+            mediaId: castingMediaId,
             connected: true,
             isBooting: false,
             loading: false
@@ -839,7 +893,7 @@ function handleKioskBootTimeout(data) {
 function handleCastSuccess(data) {
     console.log('Cast successful:', data.message);
     if (castStopRequested) {
-        if (socket) socket.emit(TV_EVENTS.TV_STOP_CASTING);
+        if (socket) socket.emit(TV_EVENTS.TV_STOP_CASTING, getStopCastPayload());
         resetCastingState({ preserveStopRequest: true });
         return;
     }
@@ -1009,6 +1063,7 @@ async function castMediaToTv(file) {
     currentThumbnailUrl = '';
     currentDuration = 0;
     currentMediaUrl = '';
+    currentPlaybackTime = 0;
     clearPendingMediaWait();
 
     // We now allow casting even if the TV isn't connected yet
@@ -1031,12 +1086,19 @@ async function castMediaToTv(file) {
         mediaType = /\.(mp4|webm|mov|mkv|avi)$/i.test(file.url) ? 'video' : 'image';
     }
 
-    const categoryId = window.ragotModules.appState?.currentCategoryId;
-    const mediaIndex = window.ragotModules.appState?.currentMediaIndex;
+    const identity = getCanonicalCastIdentity(file);
+    if (!identity) {
+        showCastNotification('Cannot cast without active media view', true);
+        return;
+    }
+    const { viewKey, viewType, viewParams, categoryId, mediaId } = identity;
 
     // Store casting state for progress blocking
+    castingViewKey = viewKey;
+    castingViewType = viewType;
+    castingViewParams = viewParams;
     castingCategoryId = categoryId;
-    castingMediaIndex = mediaIndex;
+    castingMediaId = mediaId;
 
     // Determine starting position for TV playback
     let startTime = 0;
@@ -1060,14 +1122,13 @@ async function castMediaToTv(file) {
     }
 
     if (mediaType === 'video') {
-        // Priority 1: Check window.ragotModules.appState.savedVideoTimestamp (in-memory, scoped to category+index)
+        // Priority 1: Check in-memory video timestamp scoped to the active media id.
         const savedCategoryId = window.ragotModules.appState?.savedVideoCategoryId;
-        const savedIndex = window.ragotModules.appState?.savedVideoIndex;
         const savedTimestamp = window.ragotModules.appState?.savedVideoTimestamp;
         if (!hasActiveVideoTime && typeof savedTimestamp === 'number' && savedTimestamp > 0 &&
-            savedCategoryId === categoryId && savedIndex === mediaIndex) {
+            savedCategoryId === categoryId) {
             startTime = savedTimestamp;
-            console.log(`[TV Cast] Priority 1: Using savedVideoTimestamp: ${startTime}s for ${categoryId}:${mediaIndex}`);
+            console.log(`[TV Cast] Priority 1: Using savedVideoTimestamp: ${startTime}s for ${categoryId}:${mediaId}`);
         }
 
         // Priority 2: Fetch per-video progress for the active profile.
@@ -1100,7 +1161,7 @@ async function castMediaToTv(file) {
             // Then category-level
             if (startTime === 0 && categoryId) {
                 const categoryLocalProgress = getGuestProgress(categoryId);
-                if (categoryLocalProgress && categoryLocalProgress.index == mediaIndex && categoryLocalProgress.video_timestamp > 0) {
+                if (categoryLocalProgress && categoryLocalProgress.video_timestamp > 0) {
                     startTime = categoryLocalProgress.video_timestamp;
                     if (categoryLocalProgress.video_duration && categoryLocalProgress.video_duration > 0) {
                         resumeDuration = categoryLocalProgress.video_duration;
@@ -1136,8 +1197,11 @@ async function castMediaToTv(file) {
         media_type: mediaType,
         media_path: file.url,
         loop: true,
+        viewKey,
+        viewType,
+        viewParams,
+        mediaId,
         category_id: categoryId,
-        media_index: mediaIndex,
         thumbnail_url: file.thumbnailUrl || file.url,
         start_time: parseFloat(startTime.toFixed(2)),  // TV will seek to this position
         duration: videoDuration
@@ -1219,6 +1283,7 @@ async function castMediaToTv(file) {
     currentThumbnailUrl = file.thumbnailUrl || file.url;
     currentDuration = videoDuration;
     currentMediaUrl = file.url;
+    currentPlaybackTime = startTime;
 
     // Show modal immediately for premium feedback, even if TV is still booting
     const mediaInfo = {
@@ -1228,6 +1293,11 @@ async function castMediaToTv(file) {
         startTime: startTime,
         currentTime: startTime,
         mediaUrl: file.url,
+        viewKey,
+        viewType,
+        viewParams,
+        categoryId,
+        mediaId,
         connected: isTvConnected,
         isBooting: !isTvConnected,
         loading: !isTvConnected
@@ -1253,7 +1323,7 @@ function stopCasting() {
 
     console.log('[TV Cast] Stopping TV cast');
     castStopRequested = true;
-    socket.emit(TV_EVENTS.TV_STOP_CASTING);
+    socket.emit(TV_EVENTS.TV_STOP_CASTING, getStopCastPayload());
 
     // Clean up casting state using centralized reset
     cleanupVideoPlaybackSync();
@@ -1261,6 +1331,13 @@ function stopCasting() {
 
     hideTvKioskStatus();
     toast.info('Stopped casting');
+}
+
+function getStopCastPayload() {
+    return {
+        currentTime: Number.isFinite(currentPlaybackTime) && currentPlaybackTime >= 0 ? currentPlaybackTime : 0,
+        duration: Number.isFinite(currentDuration) && currentDuration > 0 ? currentDuration : 0
+    };
 }
 
 /**
@@ -1623,9 +1700,7 @@ function refreshCastButtonVisibility() {
     updateCastButtonState();
 
     // Request TV status to get current casting state
-    if (socket) {
-        socket.emit(TV_EVENTS.REQUEST_TV_STATUS);
-    }
+    requestTvStatus();
 }
 
 function destroyTvCastManager() {

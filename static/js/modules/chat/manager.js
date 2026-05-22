@@ -12,6 +12,7 @@ import * as Icons from '../../utils/icons.js';
 import { SOCKET_EVENTS } from '../../core/socketEvents.js';
 import { toast } from '../../utils/notificationManager.js';
 import { scheduleAutofocus } from '../../utils/focusManager.js';
+import { navigateToState } from '../sync/manager.js';
 
 const STORAGE_KEY = 'ghosthub_chat_messages';
 const STORAGE_TIMESTAMP_KEY = 'ghosthub_chat_timestamp';
@@ -304,16 +305,12 @@ export class ChatComponent extends Component {
             this.displayLocalSystemMessage('Password validation required to access this shared view.');
             return;
         }
-        const { category_id, index, media_order } = data.arg;
+        const { category_id, mediaId } = data.arg;
         this.displayLocalSystemMessage(`Navigating to shared view...`);
 
-        const loader = window.ragotModules?.mediaLoader;
-        if (loader?.viewCategory) {
-            loader.viewCategory(category_id, media_order || null, index)
-                .catch(err => {
-                    console.error('Error loading shared view:', err);
-                    this.displayLocalSystemMessage(`Error: Could not load the shared view.`);
-                });
+        const success = await navigateToState(category_id, mediaId, 'SharedView', data.arg);
+        if (!success) {
+            this.displayLocalSystemMessage(`Error: Could not load the shared view.`);
         }
     }
 
@@ -686,20 +683,20 @@ class ChatLifecycleModule extends Module {
         this.setState({ initialized: true });
 
         this.onSocket(this.socket, SOCKET_EVENTS.CHAT_MESSAGE, (data) => this.chatInstance?.addMessage(data));
-        this.onSocket(this.socket, 'chat_notification', (data) => this.chatInstance?.addNotification(data));
+        this.onSocket(this.socket, SOCKET_EVENTS.CHAT_NOTIFICATION, (data) => this.chatInstance?.addNotification(data));
         this.onSocket(this.socket, SOCKET_EVENTS.COMMAND, (data) => {
             if (data?.cmd === 'myview' && data.from && data.arg) {
                 this.chatInstance?.addMessage({ ...data, isCommandMessage: true, timestamp: Date.now() });
             }
         });
-        this.onSocket(this.socket, 'view_info_response', (data) => {
+        this.onSocket(this.socket, SOCKET_EVENTS.VIEW_INFO_RESPONSE, (data) => {
             if (!this.chatInstance) return;
             if (data?.error) {
                 this.chatInstance.displayLocalSystemMessage(`View Error: ${data.error}`);
                 return;
             }
-            if (data?.category_id && data.index != null) {
-                window.ragotModules?.mediaLoader?.viewCategory(data.category_id, data.media_order || null, data.index);
+            if (data?.category_id && data.mediaId) {
+                navigateToState(data.category_id, data.mediaId, 'ViewCommand', data);
             }
         });
 

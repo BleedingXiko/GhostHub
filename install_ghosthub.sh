@@ -2,7 +2,7 @@
 set -e
 
 # ==== 1. GLOBAL CONFIGURATION ====
-GHOSTHUB_VERSION="5.2.0"
+GHOSTHUB_VERSION="5.3.0"
 GITHUB_REPO="${GITHUB_REPO:-BleedingXiko/GhostHub}"
 ZIP_FILE="Ghosthub_pi_github.zip"
 APP_DIR="/home/ghost/ghosthub"

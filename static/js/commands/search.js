@@ -8,6 +8,7 @@ import { ensureFeatureAccess } from '../utils/authManager.js';
 import { createElement, append, attr, remove } from '../libs/ragot.esm.min.js';
 import * as Icons from '../utils/icons.js';
 import { getLeafName } from '../modules/ui/categoryFilterPill.js';
+import { hydrateSearchResults } from '../modules/media/searchDataSource.js';
 
 const SEARCH_API_FILE_LIMIT = 2500;
 const SEARCH_API_FOLDER_LIMIT = 5000;
@@ -49,22 +50,25 @@ export const search = {
                 return;
             }
 
-            const data = await response.json();
+            const rawData = await response.json();
+            const data = await hydrateSearchResults(rawData, query, SEARCH_API_FILE_LIMIT);
+            const meta = data.viewMeta || {};
+            const fileGroups = data.fileGroups || [];
 
-            const hasFiles = data.results && data.results.length > 0;
-            const hasCategories = data.matched_categories && data.matched_categories.length > 0;
-            const hasParentFolders = data.matched_parent_folders && data.matched_parent_folders.length > 0;
-            const hasFolders = data.matched_folders && data.matched_folders.length > 0;
+            const hasFiles = fileGroups.length > 0;
+            const hasCategories = meta.matched_categories && meta.matched_categories.length > 0;
+            const hasParentFolders = meta.matched_parent_folders && meta.matched_parent_folders.length > 0;
+            const hasFolders = meta.matched_folders && meta.matched_folders.length > 0;
 
             if (!hasFiles && !hasCategories && !hasParentFolders && !hasFolders) {
                 displayLocalMessage(`No results found for "${query}".`, { icon: 'search' });
                 return;
             }
 
-            const totalInAllCategories = data.results ? data.results.reduce((sum, cat) => sum + cat.total_matches, 0) : 0;
-            const totalLocations = (data.matched_categories ? data.matched_categories.length : 0)
-                + (data.matched_parent_folders ? data.matched_parent_folders.length : 0)
-                + (data.matched_folders ? data.matched_folders.length : 0);
+            const totalInAllCategories = fileGroups.reduce((sum, cat) => sum + cat.total_matches, 0);
+            const totalLocations = (meta.matched_categories ? meta.matched_categories.length : 0)
+                + (meta.matched_parent_folders ? meta.matched_parent_folders.length : 0)
+                + (meta.matched_folders ? meta.matched_folders.length : 0);
 
             const resultsEl = displaySearchResults(data, query, totalInAllCategories, totalLocations);
             displayLocalMessage(resultsEl, { isHtml: true, persist: false, icon: 'search' });
@@ -82,35 +86,35 @@ export const search = {
  * Files is always open; others start collapsed when multiple groups exist.
  */
 function displaySearchResults(data, query, totalMatches, totalLocations) {
-    const totalFiles = data.results
-        ? data.results.reduce((s, c) => s + c.total_matches, 0)
-        : 0;
+    const viewMeta = data.viewMeta || {};
+    const fileGroups = data.fileGroups || [];
+    const totalFiles = fileGroups.reduce((s, c) => s + c.total_matches, 0);
 
-    const meta = [];
-    if (totalLocations > 0) meta.push(`${totalLocations} location${totalLocations !== 1 ? 's' : ''}`);
-    if (totalFiles > 0) meta.push(`${totalFiles} file${totalFiles !== 1 ? 's' : ''}`);
-    if (data.truncated) meta.push('truncated');
+    const summaryMeta = [];
+    if (totalLocations > 0) summaryMeta.push(`${totalLocations} location${totalLocations !== 1 ? 's' : ''}`);
+    if (totalFiles > 0) summaryMeta.push(`${totalFiles} file${totalFiles !== 1 ? 's' : ''}`);
+    if (viewMeta.truncated) summaryMeta.push('truncated');
 
     // Deduplication
     const seenCatNames = new Set();
     const seenCatIds = new Set();
-    (data.matched_categories || []).forEach(cat => {
+    (viewMeta.matched_categories || []).forEach(cat => {
         if (cat.name) seenCatNames.add(cat.name.toLowerCase());
         seenCatIds.add(cat.id);
     });
 
-    const matchedCategories = data.matched_categories || [];
-    const dedupedParents = (data.matched_parent_folders || []).filter(
+    const matchedCategories = viewMeta.matched_categories || [];
+    const dedupedParents = (viewMeta.matched_parent_folders || []).filter(
         pf => !seenCatNames.has(pf.name.toLowerCase())
     );
-    const dedupedFolders = (data.matched_folders || []).filter(folder => {
+    const dedupedFolders = (viewMeta.matched_folders || []).filter(folder => {
         const name = (folder.name || folder.rel_path.split('/').pop()).toLowerCase();
         if (seenCatNames.has(name)) return false;
         if (seenCatIds.has(folder.category_id) && (!folder.rel_path || !folder.rel_path.includes('/'))) return false;
         return true;
     });
 
-    const groupCount = [matchedCategories, dedupedParents, dedupedFolders, data.results]
+    const groupCount = [matchedCategories, dedupedParents, dedupedFolders, fileGroups]
         .filter(g => g && g.length > 0).length;
     const autoOpen = groupCount <= 1;
 
@@ -137,10 +141,10 @@ function displaySearchResults(data, query, totalMatches, totalLocations) {
             SEARCH_SECTION_CHUNK, autoOpen
         ));
     }
-    if (data.results && data.results.length > 0) {
+    if (fileGroups.length > 0) {
         groups.push(createAccordionGroup(
             'Files', totalFiles,
-            data.results, cg => createFileCategoryGroup(cg, query),
+            fileGroups, cg => createFileCategoryGroup(cg, query),
             SEARCH_FILE_GROUP_CHUNK, true
         ));
     }
@@ -148,7 +152,7 @@ function displaySearchResults(data, query, totalMatches, totalLocations) {
     return createElement('div', { className: 'sr-wrapper' },
         createElement('div', {
             className: 'sr-header',
-            textContent: meta.length ? meta.join(' · ') : 'No matches'
+            textContent: summaryMeta.length ? summaryMeta.join(' · ') : 'No matches'
         }),
         createElement('div', { className: 'sr-body' }, ...groups)
     );
@@ -360,7 +364,7 @@ async function navigateToResult(categoryId, mediaUrl) {
         console.error('[Search] mediaLoader not available');
         return;
     }
-    await window.ragotModules.mediaLoader.viewCategory(categoryId, [mediaUrl], 0);
+    await window.ragotModules.mediaLoader.openSingleMediaViewer({ categoryId, mediaUrl });
 }
 
 async function navigateToCategory(categoryId, categoryName = null) {

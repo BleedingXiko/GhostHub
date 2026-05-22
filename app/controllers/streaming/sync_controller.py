@@ -15,8 +15,17 @@ logger = logging.getLogger(__name__)
 
 SESSION_STATE_EXPIRY = 3600
 MAX_SESSION_STATES = 200
-MAX_SYNC_CATEGORY_ORDERS = 200
-SYNC_ORDER_EXPIRY = 7200
+_VIEW_PARAM_WHITELIST = {
+    'category_id',
+    'subfolder',
+    'media_filter',
+    'sort_by',
+    'sort_order',
+    'query',
+    'page',
+    'limit',
+    'include_total',
+}
 
 
 class SyncController(Controller):
@@ -40,8 +49,10 @@ class SyncController(Controller):
             'host_session_id': None,
             'current_media': {
                 'category_id': None,
-                'file_url': None,
-                'index': 0,
+                'viewKey': None,
+                'viewType': None,
+                'viewParams': {},
+                'mediaId': None,
                 'timestamp': time.time(),
             },
             'playback_state': {
@@ -49,8 +60,6 @@ class SyncController(Controller):
                 'current_time': 0,
                 'last_update': time.time(),
             },
-            'session_orders': {},
-            'order_timestamps': {},
             'session_states': {},
         })
 
@@ -83,26 +92,15 @@ class SyncController(Controller):
         @router.route('/update', methods=['POST'])
         def update_current_media_route():
             data = request.get_json(silent=True) or {}
-            category_id = data.get('category_id')
-            file_url = data.get('file_url')
-            index = data.get('index')
-
-            if category_id is None or file_url is None or index is None:
-                raise BadRequest("Invalid update data: 'category_id', 'file_url', and 'index' are required")
-
-            try:
-                index = int(index)
-            except (ValueError, TypeError):
-                raise BadRequest("Invalid update data: 'index' must be an integer")
-
-            success, error = self.update_current_media(category_id, file_url, index)
+            media_payload = self._normalize_media_payload(data)
+            success, error = self.update_current_media(media_payload)
             if not success:
                 status_code = 403 if "host" in (error or "") else 400
                 return {"error": error}, status_code
 
             session_id = request.cookies.get('session_id')
             if session_id:
-                self.update_session_state(session_id, category_id, index)
+                self.update_session_state(session_id, media_payload)
 
             return {"success": True}
 
@@ -118,6 +116,50 @@ class SyncController(Controller):
     # ------------------------------------------------------------------
     # Socket Event Handlers
     # ------------------------------------------------------------------
+
+    def _normalize_media_payload(self, data, allow_exit=False):
+        """Validate and normalize view-identity sync payloads."""
+        data = data or {}
+        if allow_exit and (data.get('category_id') is None or data.get('mediaId') is None):
+            return {
+                'category_id': None,
+                'viewKey': None,
+                'viewType': None,
+                'viewParams': {},
+                'mediaId': None,
+                'timestamp': time.time(),
+            }
+
+        category_id = data.get('category_id')
+        media_id = data.get('mediaId')
+        view_key = data.get('viewKey')
+        view_type = data.get('viewType')
+        view_params = data.get('viewParams') or {}
+
+        if not isinstance(category_id, str) or not category_id.strip():
+            raise BadRequest("Invalid update data: 'category_id' is required")
+        if not isinstance(media_id, str) or not media_id.strip():
+            raise BadRequest("Invalid update data: 'mediaId' is required")
+        if view_key is not None and not isinstance(view_key, str):
+            raise BadRequest("Invalid update data: 'viewKey' must be a string")
+        if view_type is not None and not isinstance(view_type, str):
+            raise BadRequest("Invalid update data: 'viewType' must be a string")
+        if not isinstance(view_params, dict):
+            raise BadRequest("Invalid update data: 'viewParams' must be an object")
+        filtered_view_params = {
+            key: value
+            for key, value in view_params.items()
+            if key in _VIEW_PARAM_WHITELIST
+        }
+
+        return {
+            'category_id': category_id,
+            'viewKey': view_key,
+            'viewType': view_type,
+            'viewParams': filtered_view_params,
+            'mediaId': media_id,
+            'timestamp': time.time(),
+        }
 
     def handle_join_sync(self):
         client_id = request.sid
@@ -153,19 +195,16 @@ class SyncController(Controller):
             return {'status': 'error', 'message': 'Only host can update sync state'}
 
         data = data or {}
-        category_id = data.get('category_id')
-        index = data.get('index')
-        file_url = data.get('file_url')
-
-        if category_id is None or index == -1:
+        media_payload = self._normalize_media_payload(data, allow_exit=True)
+        if media_payload.get('category_id') is None or media_payload.get('mediaId') is None:
             logger.info("Host exiting media viewer, broadcasting to all clients")
             self._events().emit_sync_state({
-                'category_id': None, 'file_url': None, 'index': -1,
+                'category_id': None, 'viewKey': None, 'viewType': None, 'viewParams': {}, 'mediaId': None,
                 'playback_state': self.get_playback_state_for_broadcast()
             }, room=SYNC_ROOM)
             return {'status': 'ok'}
 
-        self.update_current_media(category_id, file_url, index)
+        self.update_current_media(media_payload)
         return {'status': 'ok'}
 
     def handle_playback_sync(self, data):
@@ -198,117 +237,39 @@ class SyncController(Controller):
         }
         if is_playing is not None:
             relay_payload['is_playing'] = is_playing
-        if 'category_id' in data:
-            relay_payload['category_id'] = data['category_id']
-        if 'file_url' in data:
-            relay_payload['file_url'] = data['file_url']
-        if 'index' in data:
-            relay_payload['index'] = data['index']
+        for key in ('category_id', 'viewKey', 'viewType', 'viewParams', 'mediaId'):
+            if key in data:
+                relay_payload[key] = data[key]
 
         self._events().emit_playback_sync(relay_payload, room=SYNC_ROOM, include_self=False)
         return {'status': 'ok'}
 
     def handle_socket_state_update(self, data):
-        """Persist a client's latest browsing state for sync/view sharing."""
+        """Persist a client's latest view-identity state for sync/view sharing."""
+        # This event is shared with the progress controller. Progress-only
+        # payloads (missing viewKey/viewType/mediaId) are valid for progress
+        # persistence; silently skip view-sharing for them rather than erroring.
+        client_id = request.sid
         try:
-            client_id = request.sid
             session_id = get_request_session_id()
             is_tv = client_id == tv_store.get_tv_sid()
 
             if not session_id and not is_tv:
-                logger.warning(
-                    "Client %s tried to update state without session ID.",
-                    client_id,
-                )
                 return
 
-            if not data or 'category_id' not in data or 'index' not in data:
-                logger.warning(
-                    "Invalid state update data from %s (client %s): Missing fields - %s",
-                    session_id,
-                    client_id,
-                    data,
-                )
-                return
-
-            category_id = data['category_id']
-            index = data['index']
-            media_order = data.get('media_order')
-
-            if not isinstance(category_id, str) or not category_id.strip():
-                logger.warning(
-                    "Invalid category_id in state update from %s: %s",
-                    session_id,
-                    category_id,
-                )
+            data = data or {}
+            if not data.get('mediaId') or not data.get('viewKey') or not data.get('viewType'):
                 return
 
             try:
-                index = int(index)
-                if index < 0:
-                    raise ValueError("Index cannot be negative")
-            except (ValueError, TypeError) as exc:
-                logger.warning(
-                    "Invalid index in state update from %s: %s - %s",
-                    session_id,
-                    index,
-                    exc,
-                )
+                media_payload = self._normalize_media_payload(data)
+            except BadRequest:
                 return
 
-            if media_order is not None:
-                if (
-                    not isinstance(media_order, list) or
-                    not all(isinstance(url, str) for url in media_order)
-                ):
-                    client_identifier = 'TV' if is_tv else session_id
-                    logger.warning(
-                        "Invalid media_order format in state update from %s: %s",
-                        client_identifier,
-                        media_order,
-                    )
-                    media_order = None
-
-            client_identifier = 'TV' if is_tv else session_id
-            logger.debug(
-                "Updating view state for %s: category=%s, index=%s",
-                client_identifier,
-                category_id,
-                index,
-            )
-
-            success = True
             if session_id:
-                success = self.update_session_state(
-                    session_id,
-                    category_id,
-                    index,
-                    media_order,
-                )
-
-            if not success:
-                logger.error(
-                    "Failed to update session state for session %s",
-                    session_id,
-                )
-                self._transport().emit_to_sid(
-                    SE['CHAT_ERROR'],
-                    {'message': 'Failed to save your view state'},
-                    client_id,
-                )
-                return
-
-            logger.debug("Successfully updated state for %s", session_id)
+                self.update_session_state(session_id, media_payload)
         except Exception as exc:
             logger.error("Error handling state update: %s", exc)
-            try:
-                self._transport().emit_to_sid(
-                    SE['CHAT_ERROR'],
-                    {'message': 'Failed to update your view state'},
-                    client_id,
-                )
-            except Exception:
-                logger.debug("Failed to emit error to client")
 
     def handle_request_view_info(self, data):
         """Return a target session's current view state."""
@@ -357,7 +318,7 @@ class SyncController(Controller):
                 target_state,
             )
 
-            if 'category_id' not in target_state or 'index' not in target_state:
+            if 'category_id' not in target_state or 'mediaId' not in target_state:
                 logger.warning(
                     "Incomplete state for target session %s: %s",
                     target_session_id,
@@ -373,54 +334,13 @@ class SyncController(Controller):
                 )
                 return
 
-            category_id = target_state.get('category_id')
-            index = target_state.get('index')
-            media_order = target_state.get('media_order')
-
-            if (
-                not media_order or
-                not isinstance(media_order, list) or
-                len(media_order) == 0
-            ):
-                try:
-                    from urllib.parse import quote
-
-                    resolved_id = target_state.get('resolved_session_id') or target_session_id
-                    from app.services.media import media_session_service
-                    filenames = media_session_service.get_session_order(category_id, resolved_id)
-                    if filenames:
-                        media_order = [
-                            f"/media/{category_id}/{quote(name)}"
-                            for name in filenames
-                        ]
-                except Exception as exc:
-                    logger.warning(
-                        "Could not derive media order for view request %s: %s",
-                        target_session_id,
-                        exc,
-                    )
-
-            if media_order and isinstance(media_order, list):
-                if (
-                    media_order and
-                    isinstance(media_order[0], str) and
-                    not media_order[0].startswith('/media/')
-                ):
-                    try:
-                        from urllib.parse import quote
-
-                        media_order = [
-                            f"/media/{category_id}/{quote(name)}"
-                            for name in media_order
-                        ]
-                    except Exception:
-                        pass
-
             self._events().emit_view_info_response(
                 {
-                    'category_id': category_id,
-                    'index': index,
-                    'media_order': media_order,
+                    'category_id': target_state.get('category_id'),
+                    'viewKey': target_state.get('viewKey'),
+                    'viewType': target_state.get('viewType'),
+                    'viewParams': target_state.get('viewParams') or {},
+                    'mediaId': target_state.get('mediaId'),
                     'target_session_id': target_session_id,
                 },
                 room=requesting_client_id,
@@ -438,10 +358,6 @@ class SyncController(Controller):
     # ------------------------------------------------------------------
     # Core Service Logic
     # ------------------------------------------------------------------
-
-    def get_session_id(self):
-        """Public alias for backward compatibility with external calls."""
-        return get_request_session_id()
 
     def get_status(self):
         state = self.store.get()
@@ -476,24 +392,21 @@ class SyncController(Controller):
                 draft['enabled'] = True
                 draft['host_session_id'] = session_id
 
-                if initial_media and all(k in initial_media for k in ["category_id", "file_url", "index"]):
-                    new_media = {
-                        "category_id": initial_media.get("category_id"),
-                        "file_url": initial_media.get("file_url"),
-                        "index": initial_media.get("index", 0),
-                        "timestamp": time.time(),
-                    }
-                    draft['current_media'] = new_media
-                    cat_id = initial_media.get("category_id")
-                    if cat_id:
-                        from app.services.media import media_session_service
-                        host_order = media_session_service.get_session_order(cat_id, session_id)
-                        if host_order:
-                            draft['session_orders'][cat_id] = host_order
-                            draft['order_timestamps'][cat_id] = time.time()
+                if initial_media:
+                    try:
+                        draft['current_media'] = self._normalize_media_payload(initial_media)
+                    except BadRequest:
+                        draft['current_media'] = {
+                            "category_id": None,
+                            "viewKey": None,
+                            "viewType": None,
+                            "viewParams": {},
+                            "mediaId": None,
+                            "timestamp": time.time(),
+                        }
                 else:
                     draft['current_media'] = {
-                        "category_id": None, "file_url": None, "index": 0, "timestamp": time.time()
+                        "category_id": None, "viewKey": None, "viewType": None, "viewParams": {}, "mediaId": None, "timestamp": time.time()
                     }
 
                 action['type'] = 'enabled'
@@ -511,10 +424,8 @@ class SyncController(Controller):
                 draft['enabled'] = False
                 draft['host_session_id'] = None
                 draft['current_media'] = {
-                    "category_id": None, "file_url": None, "index": 0, "timestamp": time.time()
+                    "category_id": None, "viewKey": None, "viewType": None, "viewParams": {}, "mediaId": None, "timestamp": time.time()
                 }
-                draft['session_orders'].clear()
-                draft['order_timestamps'].clear()
                 draft['session_states'].clear()
                 action['type'] = 'disabled'
 
@@ -555,7 +466,7 @@ class SyncController(Controller):
         self.store.update(_update)
         return result[0]
 
-    def update_current_media(self, category_id, file_url, index):
+    def update_current_media(self, media_payload):
         session_id = get_request_session_id()
         result = {'ok': False, 'error': None, 'emit': None}
 
@@ -567,18 +478,8 @@ class SyncController(Controller):
                 result['error'] = "Only the host can update the current media"
                 return
 
-            if draft['current_media'].get('category_id') != category_id:
-                from app.services.media import media_session_service
-                host_order = media_session_service.get_session_order(category_id, session_id)
-                if host_order:
-                    draft['session_orders'][category_id] = host_order
-                    draft['order_timestamps'][category_id] = time.time()
-                    self._prune_sync_orders_locked(draft)
-
             draft['current_media'] = {
-                "category_id": category_id,
-                "file_url": file_url,
-                "index": index,
+                **media_payload,
                 "timestamp": time.time(),
             }
             result['ok'] = True
@@ -598,34 +499,19 @@ class SyncController(Controller):
     def get_host_session_id(self):
         return self.store.get()['host_session_id']
 
-    def get_sync_order(self, category_id):
-        result = [None]
-
-        def _update(draft):
-            self._prune_sync_orders_locked(draft)
-            order = draft['session_orders'].get(category_id)
-            if order:
-                result[0] = order.copy()
-
-        self.store.update(_update)
-        return result[0]
-
-    def update_session_state(self, session_id, category_id, index, media_order=None):
+    def update_session_state(self, session_id, media_payload):
         if not session_id:
             return False
 
         def _update(draft):
-            nonlocal media_order
-            existing_state = draft['session_states'].get(session_id, {})
-            if media_order is None and existing_state.get('category_id') == category_id:
-                media_order = existing_state.get('media_order')
-
             self._prune_session_states_locked(draft)
 
             draft['session_states'][session_id] = {
-                "category_id": category_id,
-                "index": index,
-                "media_order": media_order,
+                "category_id": media_payload.get('category_id'),
+                "viewKey": media_payload.get('viewKey'),
+                "viewType": media_payload.get('viewType'),
+                "viewParams": media_payload.get('viewParams') or {},
+                "mediaId": media_payload.get('mediaId'),
                 "timestamp": time.time(),
             }
 
@@ -694,17 +580,3 @@ class SyncController(Controller):
         while len(state['session_states']) > MAX_SESSION_STATES:
             oldest = min(state['session_states'].items(), key=lambda x: x[1].get('timestamp', 0))[0]
             del state['session_states'][oldest]
-
-    def _prune_sync_orders_locked(self, state, now=None):
-        if now is None:
-            now = time.time()
-
-        stale = [cid for cid, ts in state['order_timestamps'].items() if now - ts > SYNC_ORDER_EXPIRY]
-        for cid in stale:
-            del state['order_timestamps'][cid]
-            del state['session_orders'][cid]
-
-        while len(state['session_orders']) > MAX_SYNC_CATEGORY_ORDERS:
-            oldest = min(state['order_timestamps'].items(), key=lambda x: x[1])[0]
-            del state['order_timestamps'][oldest]
-            del state['session_orders'][oldest]

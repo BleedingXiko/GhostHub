@@ -103,6 +103,15 @@ vi.mock('../../../utils/icons.js', () => ({
 }));
 
 vi.mock('../../../libs/ragot.esm.min.js', () => ({
+    Module: class Module {
+        constructor(state = {}) { this.state = state; }
+        start() { return this; }
+        stop() {}
+        setState(partial) { this.state = { ...this.state, ...partial }; }
+        subscribe() { return () => {}; }
+        timeout(fn, ms) { return setTimeout(fn, ms); }
+        clearTimeout(id) { clearTimeout(id); }
+    },
     Component: class Component {
         constructor() {
             this.refs = {};
@@ -536,4 +545,3 @@ describe('Media Loader Module', () => {
         });
     });
 });
-

@@ -162,7 +162,11 @@ class ProfileController(Controller):
             if not profile_id:
                 self._clear_active_profile()
                 self._emit_profile_selected({current_session_id})
-                return {'success': True, 'profile': None}
+                return {
+                    'success': True,
+                    'profile': None,
+                    **self._profiles_state_payload(active_profile=None),
+                }
 
             profile = profile_service.get_profile(profile_id)
             if not profile:
@@ -192,7 +196,11 @@ class ProfileController(Controller):
             profile_service.update_profile_last_active(profile['id'])
             refreshed_profile = profile_service.get_profile(profile['id'])
             self._emit_profile_selected({current_session_id})
-            return {'success': True, 'profile': refreshed_profile}
+            return {
+                'success': True,
+                'profile': refreshed_profile,
+                **self._profiles_state_payload(active_profile=refreshed_profile),
+            }
 
         @router.route(
             '/profiles/<profile_id>/rename',
@@ -259,6 +267,19 @@ class ProfileController(Controller):
 
             self._emit_profiles_changed({current_session_id, owner_session_id})
             return {'success': True, 'profile': profile}
+
+    def _profiles_state_payload(self, active_profile=None):
+        current_session_id = self._current_session_id()
+        return {
+            'profiles': self._annotate_profiles(
+                profile_service.list_profiles(),
+                current_session_id=current_session_id,
+            ),
+            'active_profile': self._annotate_profile(
+                active_profile if active_profile is not None else self._get_active_profile(),
+                current_session_id=current_session_id,
+            ),
+        }
 
     def _get_active_profile(self):
         active_profile_id = session.get('active_profile_id')

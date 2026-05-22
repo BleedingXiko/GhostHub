@@ -84,6 +84,8 @@ def build_specter_services():
     from app.services.media.indexing_runtime_service import IndexingRuntimeService
     from app.services.media.library_event_service import LibraryEventService
     from app.services.media.library_runtime_service import LibraryRuntimeService
+    from app.services.media.media_ordering_service import MediaOrderingService
+    from app.services.media.media_records_service import MediaRecordsService
     from app.services.media.progress_event_service import ProgressEventService
     from app.services.media.storage_event_handler_service import (
         MediaStorageEventHandlerService,
@@ -124,6 +126,8 @@ def build_specter_services():
         LibraryEventService(),
         LibraryRuntimeService(),
         MediaStorageEventHandlerService(),
+        MediaOrderingService(),
+        MediaRecordsService(),
         MeshWatchdogService(),
         ProgressEventService(),
         RuntimeConfigService(),

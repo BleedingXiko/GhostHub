@@ -75,7 +75,7 @@ vi.mock('../../../modules/layouts/gallery/renderer.js', () => {
   };
 });
 
-vi.mock('../../../modules/layouts/gallery/data.js', () => ({
+vi.mock('../../../modules/layouts/gallery/mediaDataSource.js', () => ({
   jumpToYear: vi.fn(),
   jumpToDate: vi.fn(),
   fetchMonthMedia: fetchMonthMediaMock
@@ -162,10 +162,9 @@ function createOverlayStub() {
     state: {
       open: false,
       year: null,
-      month: null,
-      media: [],
-      loading: false,
-      error: null,
+	      month: null,
+	      mediaIds: [],
+	      error: null,
       hasPrev: false,
       hasNext: false,
       allMonths: []
@@ -198,9 +197,9 @@ describe('GalleryLayoutModule month overlay', () => {
   });
 
   it('shows an explicit error state when month fetch fails', async () => {
-    fetchMonthMediaMock.mockResolvedValue({
-      media: [],
-      dateTotals: {},
+	    fetchMonthMediaMock.mockResolvedValue({
+	      orderedIds: [],
+	      dateTotals: {},
       error: "Couldn't load 2024-05. Please try again."
     });
 
@@ -210,9 +209,8 @@ describe('GalleryLayoutModule month overlay', () => {
     await module.openMonthOverlay(2024, 5);
 
     expect(module._overlayComp.state.open).toBe(true);
-    expect(module._overlayComp.state.loading).toBe(false);
-    expect(module._overlayComp.state.error).toContain("Couldn't load 2024-05");
-    expect(module._overlayComp.state.media).toEqual([]);
+	    expect(module._overlayComp.state.error).toContain("Couldn't load 2024-05");
+	    expect(module._overlayComp.state.mediaIds).toEqual([]);
   });
 
   it('ignores stale responses after the overlay closes during load', async () => {
@@ -224,17 +222,16 @@ describe('GalleryLayoutModule month overlay', () => {
 
     const pendingOpen = module.openMonthOverlay(2024, 5);
     module.closeOverlay();
-    deferred.resolve({
-      media: [{ name: 'late.mp4' }],
-      dateTotals: {},
+	    deferred.resolve({
+	      orderedIds: ['photos::late.mp4'],
+	      dateTotals: {},
       error: null
     });
     await pendingOpen;
 
     expect(module._overlayComp.state.open).toBe(false);
-    expect(module._overlayComp.state.loading).toBe(false);
-    expect(module._overlayComp.state.error).toBeNull();
-    expect(module._overlayComp.state.media).toEqual([]);
+	    expect(module._overlayComp.state.error).toBeNull();
+	    expect(module._overlayComp.state.mediaIds).toEqual([]);
   });
 
   it('keeps only the newest month-navigation response when requests race', async () => {
@@ -251,23 +248,22 @@ describe('GalleryLayoutModule month overlay', () => {
     const mayOpen = module.openMonthOverlay(2024, 5);
     const aprilOpen = module.openMonthOverlay(2024, 4);
 
-    second.resolve({
-      media: [{ name: 'april.mp4' }],
-      dateTotals: {},
-      error: null
-    });
-    first.resolve({
-      media: [{ name: 'may.mp4' }],
-      dateTotals: {},
-      error: null
+	    second.resolve({
+	      orderedIds: ['photos::april.mp4'],
+	      dateTotals: {},
+	      error: null
+	    });
+	    first.resolve({
+	      orderedIds: ['photos::may.mp4'],
+	      dateTotals: {},
+	      error: null
     });
 
     await Promise.all([mayOpen, aprilOpen]);
 
     expect(module._overlayComp.state.year).toBe(2024);
     expect(module._overlayComp.state.month).toBe(4);
-    expect(module._overlayComp.state.loading).toBe(false);
-    expect(module._overlayComp.state.error).toBeNull();
-    expect(module._overlayComp.state.media).toEqual([{ name: 'april.mp4' }]);
+	    expect(module._overlayComp.state.error).toBeNull();
+	    expect(module._overlayComp.state.mediaIds).toEqual(['photos::april.mp4']);
   });
 });

@@ -22,6 +22,8 @@ def test_build_controller_classes_returns_expected_controller_manifest():
         'MediaController',
         'MediaDeliveryController',
         'MediaDiscoveryController',
+        'MediaOrderingController',
+        'MediaRecordsController',
         'ProfileController',
         'ProgressController',
         'StorageFileController',

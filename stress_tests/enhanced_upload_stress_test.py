@@ -58,9 +58,16 @@ class Colors:
 class EnhancedUploadStressTest:
     """Enhanced chunked upload stress testing"""
 
-    def __init__(self, base_url: str, session_password: Optional[str] = None, output_file: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str,
+        session_password: Optional[str] = None,
+        admin_password: Optional[str] = None,
+        output_file: Optional[str] = None,
+    ):
         self.base_url = base_url.rstrip('/')
         self.session_password = session_password
+        self.admin_password = admin_password
         self.output_file = output_file
         self.session = self._create_session()
         self.results = {
@@ -106,14 +113,25 @@ class EnhancedUploadStressTest:
 
         print(f"{color}[{timestamp}] {prefix} {message}{Colors.END}")
 
-    def _record_result(self, test_name: str, passed: bool, details: Dict):
+    def _record_result(self, test_name: str, passed: bool, details: Dict, skipped: bool = False, skip_reason: str = None):
         """Record test result"""
-        self.results['tests'].append({
+        result = {
             'name': test_name,
             'passed': passed,
             'timestamp': datetime.now().isoformat(),
             'details': details
-        })
+        }
+        if skipped:
+            result['skipped'] = True
+            result['skip_reason'] = skip_reason or details.get('skip_reason') or details.get('error')
+        self.results['tests'].append(result)
+
+    def _record_skip(self, test_name: str, reason: str, details: Optional[Dict] = None) -> bool:
+        self._log(f"Skipping {test_name}: {reason}", "WARN")
+        payload = details or {}
+        payload['skip_reason'] = reason
+        self._record_result(test_name, True, payload, skipped=True, skip_reason=reason)
+        return True
 
     def _get_memory_usage(self) -> Dict:
         """Get current process memory usage"""
@@ -170,6 +188,25 @@ class EnhancedUploadStressTest:
         self._log("Session password validation failed.", "ERROR")
         return False
 
+    def _claim_admin(self) -> bool:
+        """Claim admin so upload tests never create files they cannot clean up."""
+        self._ensure_session()
+        if not self._validate_session_password():
+            return False
+        payload = {'password': self.admin_password} if self.admin_password else {}
+        try:
+            resp = self.session.post(f"{self.base_url}/api/admin/claim", json=payload, timeout=10)
+            return resp.status_code == 200 and resp.json().get('success', False)
+        except Exception as e:
+            self._log(f"Failed to claim admin: {e}", "WARN")
+            return False
+
+    def _require_admin_or_skip(self, test_name: str) -> bool:
+        if self._claim_admin():
+            return True
+        self._record_skip(test_name, "admin is required before uploads so cleanup can succeed", {'error': 'no_admin'})
+        return False
+
     def _get_available_drives(self) -> List[str]:
         """Get list of available drives for testing"""
         try:
@@ -207,7 +244,8 @@ class EnhancedUploadStressTest:
             raise e
 
     def _upload_file_chunked(self, filepath: str, drive_path: str, 
-                           chunk_size_mb: int = 2, simulate_drops: bool = False) -> Tuple[bool, Dict]:
+                           chunk_size_mb: int = 2, simulate_drops: bool = False,
+                           retry_rate_limits: bool = True) -> Tuple[bool, Dict]:
         """Upload a file using chunked upload API"""
         try:
             file_size = os.path.getsize(filepath)
@@ -249,32 +287,50 @@ class EnhancedUploadStressTest:
                 for chunk_index in range(total_chunks):
                     chunk_data = f.read(chunk_size)
                     
-                    # Simulate network drop on some chunks if requested
+                    # Simulate a recoverable pause, not permanent chunk loss.
                     if simulate_drops and chunk_index % 5 == 3:
-                        time.sleep(2)  # Simulate network pause
-                        continue  # Skip this chunk to test resume
-                    
-                    chunk_resp = self.session.post(
-                        f"{self.base_url}/api/storage/upload/chunk",
-                        data={
-                            'upload_id': upload_id,
-                            'chunk_index': chunk_index,
-                            'total_chunks': total_chunks
-                        },
-                        files={'chunk': chunk_data},
-                        timeout=30
-                    )
-                    
-                    if chunk_resp.status_code == 200:
-                        uploaded_chunks += 1
-                        
-                        # Log progress every 10 chunks
-                        if (chunk_index + 1) % 10 == 0:
-                            progress = (chunk_index + 1) / total_chunks * 100
-                            self._log(f"Upload progress: {progress:.1f}% ({chunk_index + 1}/{total_chunks})")
-                    else:
+                        time.sleep(2)
+
+                    chunk_uploaded = False
+                    max_attempts = 8
+                    for attempt in range(1, max_attempts + 1):
+                        chunk_resp = self.session.post(
+                            f"{self.base_url}/api/storage/upload/chunk",
+                            data={
+                                'upload_id': upload_id,
+                                'chunk_index': chunk_index,
+                                'total_chunks': total_chunks
+                            },
+                            files={'chunk': chunk_data},
+                            timeout=30
+                        )
+
+                        if chunk_resp.status_code == 200:
+                            uploaded_chunks += 1
+                            chunk_uploaded = True
+
+                            # Log progress every 10 chunks
+                            if (chunk_index + 1) % 10 == 0:
+                                progress = (chunk_index + 1) / total_chunks * 100
+                                self._log(f"Upload progress: {progress:.1f}% ({chunk_index + 1}/{total_chunks})")
+                            break
+
+                        if chunk_resp.status_code == 429 and retry_rate_limits and attempt < max_attempts:
+                            retry_after = chunk_resp.headers.get('Retry-After')
+                            try:
+                                delay = float(retry_after) if retry_after else min(6.0, 0.75 * attempt)
+                            except ValueError:
+                                delay = min(6.0, 0.75 * attempt)
+                            self._log(f"Chunk {chunk_index} rate limited; retrying in {delay:.1f}s", "WARN")
+                            time.sleep(delay)
+                            continue
+
                         failed_chunks += 1
                         self._log(f"Chunk {chunk_index} failed: {chunk_resp.status_code}", "WARN")
+                        break
+
+                    if not chunk_uploaded:
+                        continue
             
             elapsed = time.time() - start_time
             
@@ -294,10 +350,15 @@ class EnhancedUploadStressTest:
                     'filename': filename
                 }
             else:
+                try:
+                    self.session.post(f"{self.base_url}/api/storage/upload/cancel/{upload_id}", timeout=10)
+                except Exception:
+                    pass
                 return False, {
                     'upload_id': upload_id,
                     'error': f"Incomplete upload: {uploaded_chunks}/{total_chunks} chunks",
                     'uploaded_chunks': uploaded_chunks,
+                    'total_chunks': total_chunks,
                     'failed_chunks': failed_chunks
                 }
                 
@@ -311,6 +372,8 @@ class EnhancedUploadStressTest:
         if not self._validate_session_password():
             self._record_result("Large File Upload", False, {'error': 'session_password_required'})
             return False
+        if not self._require_admin_or_skip("Large File Upload"):
+            return True
 
         try:
             drives = self._get_available_drives()
@@ -378,6 +441,8 @@ class EnhancedUploadStressTest:
         if not self._validate_session_password():
             self._record_result("Concurrent Uploads", False, {'error': 'session_password_required'})
             return False
+        if not self._require_admin_or_skip("Concurrent Uploads"):
+            return True
 
         try:
             drives = self._get_available_drives()
@@ -480,6 +545,8 @@ class EnhancedUploadStressTest:
         if not self._validate_session_password():
             self._record_result("Upload Resume", False, {'error': 'session_password_required'})
             return False
+        if not self._require_admin_or_skip("Upload Resume"):
+            return True
 
         try:
             drives = self._get_available_drives()
@@ -509,9 +576,7 @@ class EnhancedUploadStressTest:
             else:
                 self._log(f"✗ Upload resume failed: {result.get('error', 'Unknown')}", "ERROR")
             
-            # For this test, we expect some chunks to be skipped but upload to eventually succeed
-            # In a real implementation, resume would retry skipped chunks
-            passed = result.get('uploaded_chunks', 0) > 0
+            passed = success and result.get('uploaded_chunks', 0) == result.get('total_chunks', 0)
             
             self._record_result("Upload Resume", passed, {
                 'file_size_mb': file_size_mb,
@@ -597,6 +662,8 @@ class EnhancedUploadStressTest:
         if not self._validate_session_password():
             self._record_result("Upload Rate Limiting", False, {'error': 'session_password_required'})
             return False
+        if not self._require_admin_or_skip("Upload Rate Limiting"):
+            return True
 
         try:
             # Get config to check rate limits
@@ -607,13 +674,22 @@ class EnhancedUploadStressTest:
             else:
                 config = config_resp.json()
                 upload_limit = config.get('UPLOAD_RATE_LIMIT_PER_CLIENT', 50)
+            effective_limit = upload_limit
+            try:
+                health_resp = self.session.get(f"{self.base_url}/api/system/network-health", timeout=10)
+                if health_resp.status_code == 200:
+                    effective = health_resp.json().get('rate_limiting', {}).get('effective_upload_limit_mbps')
+                    if effective:
+                        effective_limit = float(effective)
+            except Exception:
+                pass
             
             if upload_limit == 0:
                 self._log("Upload rate limiting is disabled in config.", "ERROR")
                 self._record_result("Upload Rate Limiting", False, {'error': 'disabled'})
                 return False
             
-            self._log(f"Testing against {upload_limit} Mbps limit")
+            self._log(f"Testing against {effective_limit} Mbps effective limit")
             
             drives = self._get_available_drives()
             if not drives:
@@ -633,7 +709,11 @@ class EnhancedUploadStressTest:
             
             while time.time() - start_time < duration:
                 # Try rapid uploads
-                success, result = self._upload_file_chunked(test_file, drive_path)
+                success, result = self._upload_file_chunked(
+                    test_file,
+                    drive_path,
+                    retry_rate_limits=False,
+                )
                 
                 if success:
                     bytes_sent += result.get('file_size', 0)
@@ -661,11 +741,11 @@ class EnhancedUploadStressTest:
             self._log(f"  Duration: {elapsed:.1f}s")
             self._log(f"  Chunks sent: {chunks_sent}")
             self._log(f"  Actual throughput: {actual_mbps:.1f} Mbps")
-            self._log(f"  Expected limit: {upload_limit} Mbps")
+            self._log(f"  Expected limit: {effective_limit} Mbps")
             self._log(f"  Rate limited detected: {rate_limited}")
             
             # Pass if rate limiting was detected or throughput is within expected range
-            passed = rate_limited or actual_mbps <= (upload_limit * 1.2)  # 20% tolerance
+            passed = rate_limited or actual_mbps <= (effective_limit * 1.2)  # 20% tolerance
             
             if passed:
                 self._log("✓ Rate limiting is working", "SUCCESS")
@@ -678,6 +758,7 @@ class EnhancedUploadStressTest:
                 'bytes_sent': bytes_sent,
                 'actual_mbps': actual_mbps,
                 'expected_limit_mbps': upload_limit,
+                'effective_limit_mbps': effective_limit,
                 'rate_limited': rate_limited
             })
             
@@ -701,27 +782,26 @@ class EnhancedUploadStressTest:
                     pass
             self.temp_files.clear()
         
-        # Clean up uploaded files on server using DELETE /api/storage/media
+        # Clean up uploaded files on server using bulk delete.
         if self.uploaded_files:
             self._log(f"Cleaning up {len(self.uploaded_files)} uploaded files from server...")
             deleted = 0
-            
-            for drive_path, filename in self.uploaded_files:
-                try:
-                    # Build full file path: drive_path/filename
-                    file_path = f"{drive_path}/{filename}" if not drive_path.endswith('/') else f"{drive_path}{filename}"
-                    
-                    resp = self.session.delete(
-                        f"{self.base_url}/api/storage/media",
-                        json={'file_path': file_path},
-                        timeout=10
-                    )
-                    if resp.status_code == 200:
-                        deleted += 1
-                    else:
-                        self._log(f"⚠ Failed to delete {filename}: {resp.status_code}", "WARN")
-                except Exception as e:
-                    self._log(f"⚠ Error deleting {filename}: {e}", "WARN")
+            file_paths = [
+                f"{drive_path}/{filename}" if not drive_path.endswith('/') else f"{drive_path}{filename}"
+                for drive_path, filename in self.uploaded_files
+            ]
+            try:
+                resp = self.session.post(
+                    f"{self.base_url}/api/storage/media/batch-delete",
+                    json={'file_paths': file_paths},
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    deleted = resp.json().get('deleted', 0)
+                else:
+                    self._log(f"⚠ Failed bulk cleanup: {resp.status_code}", "WARN")
+            except Exception as e:
+                self._log(f"⚠ Error during bulk cleanup: {e}", "WARN")
             
             if deleted > 0:
                 self._log(f"✓ Deleted {deleted} uploaded test files from server", "SUCCESS")
@@ -736,8 +816,9 @@ class EnhancedUploadStressTest:
         self.results['end_time'] = datetime.now().isoformat()
         self.results['summary'] = {
             'total_tests': len(self.results['tests']),
-            'passed': sum(1 for t in self.results['tests'] if t['passed']),
-            'failed': sum(1 for t in self.results['tests'] if not t['passed'])
+            'passed': sum(1 for t in self.results['tests'] if t['passed'] and not t.get('skipped')),
+            'failed': sum(1 for t in self.results['tests'] if not t['passed'] and not t.get('skipped')),
+            'skipped': sum(1 for t in self.results['tests'] if t.get('skipped')),
         }
 
         try:
@@ -791,7 +872,9 @@ def main():
 
     parser.add_argument('--url', default='http://localhost:5000',
                        help='GhostHub base URL')
-    parser.add_argument('--password', help='Session password for upload operations')
+    parser.add_argument('--password', help='Legacy session password for upload operations')
+    parser.add_argument('--session-password', help='Session password for upload operations')
+    parser.add_argument('--admin-password', help='Admin password for admin claim and cleanup')
     parser.add_argument('--test', default='all',
                        choices=['all', 'large_file', 'concurrent', 'resume', 'limit_16gb', 'rate_limit'],
                        help='Specific test to run')
@@ -803,7 +886,8 @@ def main():
 
     args = parser.parse_args()
 
-    tester = EnhancedUploadStressTest(args.url, args.password, args.output)
+    session_password = args.session_password or args.password
+    tester = EnhancedUploadStressTest(args.url, session_password, args.admin_password, args.output)
 
     try:
         if args.test == 'all':

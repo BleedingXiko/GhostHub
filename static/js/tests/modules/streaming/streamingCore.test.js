@@ -243,15 +243,15 @@ describe('Streaming Layout Core', () => {
             { url: '/media/video1.mp4', type: 'video', name: 'Video 1' },
             { url: '/media/video2.mp4', type: 'video', name: 'Video 2' }
           ],
-          page: 1,
+          orderedIds: ['movies::video1.mp4', 'movies::video2.mp4'],
           hasMore: true
         })
       });
       
-      const response = await fetch('/api/categories/movies/media?page=1&per_page=20');
+      const response = await fetch('/api/media/order?view=streaming_row&category_id=movies&page=1&limit=20');
       const data = await response.json();
       
-      expect(data.media).toHaveLength(2);
+      expect(data.orderedIds).toHaveLength(2);
       expect(data.hasMore).toBe(true);
     });
   });

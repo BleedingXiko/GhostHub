@@ -108,24 +108,12 @@ describe('Core App Module', () => {
         expect(appModule.app.state).toHaveProperty('currentCategoryId');
       });
 
-      it('should have currentPage', () => {
-        expect(appModule.app.state.currentPage).toBe(1);
-      });
-
       it('should have isLoading', () => {
         expect(appModule.app.state.isLoading).toBe(false);
       });
 
-      it('should have hasMoreMedia', () => {
-        expect(appModule.app.state.hasMoreMedia).toBe(true);
-      });
-
-      it('should have fullMediaList as array', () => {
-        expect(Array.isArray(appModule.app.state.fullMediaList)).toBe(true);
-      });
-
-      it('should have mediaUrlSet as Set', () => {
-        expect(appModule.app.state.mediaUrlSet instanceof Set).toBe(true);
+      it('should have viewer session state', () => {
+        expect(appModule.app.state.viewer).toBeNull();
       });
 
       it('should have syncModeEnabled', () => {
@@ -154,28 +142,12 @@ describe('Core App Module', () => {
         expect(appModule.app.state.currentCategoryId).toBeNull();
       });
 
-      it('should reset currentPage to 1', () => {
-        appModule.app.state.currentPage = 5;
+      it('should clear viewer session', () => {
+        appModule.app.state.viewer = { viewKey: 'test-view', activeIndex: 2 };
 
         appModule.app.resetState();
 
-        expect(appModule.app.state.currentPage).toBe(1);
-      });
-
-      it('should clear fullMediaList', () => {
-        appModule.app.state.fullMediaList = [{ url: 'test.mp4' }];
-
-        appModule.app.resetState();
-
-        expect(appModule.app.state.fullMediaList).toHaveLength(0);
-      });
-
-      it('should clear mediaUrlSet', () => {
-        appModule.app.state.mediaUrlSet.add('test-url');
-
-        appModule.app.resetState();
-
-        expect(appModule.app.state.mediaUrlSet.size).toBe(0);
+        expect(appModule.app.state.viewer).toBeNull();
       });
 
       it('should clear mediaCache', () => {
@@ -184,14 +156,6 @@ describe('Core App Module', () => {
         appModule.app.resetState();
 
         expect(appModule.app.mediaCache.size).toBe(0);
-      });
-
-      it('should reset hasMoreMedia to true', () => {
-        appModule.app.state.hasMoreMedia = false;
-
-        appModule.app.resetState();
-
-        expect(appModule.app.state.hasMoreMedia).toBe(true);
       });
 
       it('should reset isLoading to false', () => {

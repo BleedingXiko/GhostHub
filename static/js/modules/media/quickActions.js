@@ -9,11 +9,11 @@ import { isUserAdmin } from '../../utils/progressDB.js';
 import { editIcon, eyeOffIcon, eyeIcon, trashIcon } from '../../utils/icons.js';
 import { updateMediaInfoOverlay } from './elementFactory.js';
 import { refreshAllLayouts } from '../../utils/liveVisibility.js';
-import { Component, createElement, bus, attr, $ } from '../../libs/ragot.esm.min.js';
-import { APP_EVENTS } from '../../core/appEvents.js';
+import { Component, createElement, attr, $ } from '../../libs/ragot.esm.min.js';
 import { toast } from '../../utils/notificationManager.js';
 import { createFocusTrap } from '../../utils/focusTrap.js';
 import { scheduleAutofocus } from '../../utils/focusManager.js';
+import { getCurrentViewerRecord } from './viewerState.js';
 
 // Three-dot vertical kebab — standard "more options" icon not in icons.js
 const KEBAB_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="19" r="2.5"/></svg>`;
@@ -142,12 +142,7 @@ class QuickActionsComponent extends Component {
     // ------------------------------------------
 
     _getCurrentItem() {
-        const s = this._appState;
-        if (s && s.fullMediaList && typeof s.currentMediaIndex === 'number' &&
-            s.currentMediaIndex >= 0 && s.currentMediaIndex < s.fullMediaList.length) {
-            return s.fullMediaList[s.currentMediaIndex];
-        }
-        return null;
+        return getCurrentViewerRecord(this._appState);
     }
 
     _toggleMenu = (e) => {
@@ -425,10 +420,8 @@ class QuickActionsComponent extends Component {
 
     _handleSuccess(action, item, result) {
         if (action === 'rename') {
-            const idx = this._appState.currentMediaIndex;
-            if (idx >= 0 && idx < this._appState.fullMediaList.length) {
-                const updated = this._appState.fullMediaList[idx];
-                const oldUrl = updated.url;
+            const updated = this._getCurrentItem();
+            if (updated) {
                 if (result.new_name) updated.displayName = result.new_name;
                 if (result.new_rel_path) {
                     updated.name = result.new_rel_path;
@@ -439,10 +432,6 @@ class QuickActionsComponent extends Component {
                     updated.name = prefix + result.new_name;
                 }
                 if (result.new_url) updated.url = result.new_url;
-
-                if (result.new_url && oldUrl && oldUrl !== result.new_url) {
-                    bus.emit(APP_EVENTS.FILE_RENAMED_UPDATED, { oldPath: oldUrl, newPath: result.new_url });
-                }
             }
             toast.show(`Renamed to "${result.new_name || 'file'}"`, 'success');
             this._navCallbacks?.goBackToCategories?.();

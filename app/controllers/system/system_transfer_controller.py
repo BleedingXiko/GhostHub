@@ -9,7 +9,7 @@ from flask import Response, request, send_file
 from app.services.storage import storage_io_service
 from app.services.storage import storage_archive_service
 from app.services.media.category_query_service import get_category_by_id
-from specter import Controller, registry
+from specter import Controller
 from app.utils.auth import get_show_hidden_flag, session_or_admin_required
 
 logger = logging.getLogger(__name__)
@@ -246,6 +246,7 @@ class SystemTransferController(Controller):
         try:
             from werkzeug.utils import secure_filename
             from app.services.storage.storage_drive_service import get_storage_drive_for_path
+            from app.services.storage import standard_upload_service
 
             drive_path = request.form.get('drive_path')
             target_path = request.form.get('target_path')
@@ -282,43 +283,32 @@ class SystemTransferController(Controller):
             if not os.path.isdir(upload_path):
                 return {'error': 'Upload path not found'}, 404
 
-            uploaded = []
-            errors = []
-            for file in files:
-                if not file.filename:
-                    continue
-                filename = secure_filename(file.filename)
-                filepath = os.path.join(upload_path, filename)
+            drive_root = owning_drive.get('path') or drive_path
+            if not drive_root:
+                return {'error': 'Invalid upload path'}, 403
 
-                if os.path.exists(filepath):
-                    base, ext = os.path.splitext(filename)
-                    counter = 1
-                    while os.path.exists(filepath):
-                        filename = f"{base}_{counter}{ext}"
-                        filepath = os.path.join(upload_path, filename)
-                        counter += 1
+            subfolder = os.path.relpath(upload_path, drive_root)
+            if subfolder == '.':
+                subfolder = ''
 
-                try:
-                    file.save(filepath)
-                    uploaded.append(filename)
-                    logger.info("[GalleryUpload] Uploaded %s to %s", filename, upload_path)
-                except Exception as exc:
-                    errors.append({'file': file.filename, 'error': str(exc)})
-
-            from app.services.media.category_cache_service import invalidate_cache
-
-            invalidate_cache()
-
-            try:
-                registry.require('library_events').emit_category_updated(
-                    {'reason': 'upload', 'count': len(uploaded)}
-                )
-                logger.info("[GalleryUpload] Emitted category_updated for %s files", len(uploaded))
-            except Exception as exc:
-                logger.debug("Could not emit category_updated: %s", exc)
+            result = standard_upload_service.upload_files(
+                files,
+                drive_root,
+                subfolder=subfolder,
+            )
+            uploaded = [
+                item.get('filename')
+                for item in result.get('results', [])
+                if item.get('success') and item.get('filename')
+            ]
+            errors = [
+                {'file': item.get('filename'), 'error': item.get('message')}
+                for item in result.get('results', [])
+                if not item.get('success')
+            ]
 
             return {
-                'success': True,
+                'success': result.get('success', False),
                 'uploaded': uploaded,
                 'errors': errors,
                 'message': f'Uploaded {len(uploaded)} file(s)',

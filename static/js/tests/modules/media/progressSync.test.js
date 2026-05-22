@@ -30,8 +30,7 @@ vi.mock('../../../utils/progressDB.js', () => ({
 import {
     initProgressSync,
     getCurrentVideoProgress,
-    emitMyStateUpdate,
-    resetOrderHash
+    emitMyStateUpdate
 } from '../../../modules/media/progressSync.js';
 
 // Import mocked modules to use in tests
@@ -180,9 +179,4 @@ describe('Progress Sync Module', () => {
         });
     });
 
-    describe('resetOrderHash', () => {
-        it('should be callable', () => {
-            expect(() => resetOrderHash()).not.toThrow();
-        });
-    });
 });

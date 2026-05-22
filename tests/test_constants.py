@@ -93,8 +93,6 @@ class TestSocketEvents:
     # ── Storage/Content Events ───────────────────────────────────────────
     @pytest.mark.parametrize("key,value", [
         ("USB_MOUNTS_CHANGED", "usb_mounts_changed"),
-        ("CONTENT_VISIBILITY_CHANGED", "content_visibility_changed"),
-        ("FILE_RENAMED", "file_renamed"),
     ])
     def test_storage_events(self, key, value):
         assert SOCKET_EVENTS[key] == value

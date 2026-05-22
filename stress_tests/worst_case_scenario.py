@@ -68,7 +68,7 @@ class HealthMetrics:
     """System health metrics for monitoring."""
     cpu_percent: float = 0
     memory_percent: float = 0
-    cpu_temp: float = 0
+    cpu_temp: Optional[float] = None
     is_throttling: bool = False
     is_critical: bool = False
 
@@ -80,7 +80,9 @@ class HealthMonitor:
     CRITICAL_MEMORY = 95.0
     CRITICAL_TEMP = 85.0
     
-    def __init__(self):
+    def __init__(self, base_url: Optional[str] = None, session: Optional[requests.Session] = None):
+        self.base_url = base_url.rstrip('/') if base_url else None
+        self.session = session
         self.metrics = HealthMetrics()
         self.running = False
         self.history = []
@@ -88,15 +90,25 @@ class HealthMonitor:
         self._lock = threading.Lock()
         self.temp_path = "/sys/class/thermal/thermal_zone0/temp"
     
-    def get_cpu_temp(self) -> float:
+    def get_cpu_temp(self) -> Optional[float]:
         """Get CPU temperature."""
+        if self.base_url and self.session:
+            try:
+                resp = self.session.get(f"{self.base_url}/api/admin/system/stats", timeout=5)
+                if resp.status_code == 200:
+                    temp = (resp.json().get('cpu') or {}).get('temperature_c')
+                    if isinstance(temp, (int, float)):
+                        return float(temp)
+            except Exception:
+                pass
+
         try:
             if os.path.exists(self.temp_path):
                 with open(self.temp_path, 'r') as f:
                     return int(f.read().strip()) / 1000.0
         except:
             pass
-        return 0.0
+        return None
     
     def check_health(self) -> HealthMetrics:
         """Collect current health metrics."""
@@ -107,9 +119,9 @@ class HealthMonitor:
             metrics.memory_percent = psutil.virtual_memory().percent
         
         metrics.cpu_temp = self.get_cpu_temp()
-        metrics.is_throttling = metrics.cpu_temp >= self.THROTTLE_TEMP
+        metrics.is_throttling = metrics.cpu_temp is not None and metrics.cpu_temp >= self.THROTTLE_TEMP
         metrics.is_critical = (
-            metrics.cpu_temp >= self.CRITICAL_TEMP or
+            (metrics.cpu_temp is not None and metrics.cpu_temp >= self.CRITICAL_TEMP) or
             metrics.memory_percent >= self.CRITICAL_MEMORY
         )
         
@@ -162,7 +174,7 @@ class HealthMonitor:
         
         cpu_vals = [h['cpu'] for h in self.history]
         mem_vals = [h['mem'] for h in self.history]
-        temp_vals = [h['temp'] for h in self.history]
+        temp_vals = [h['temp'] for h in self.history if isinstance(h.get('temp'), (int, float))]
         
         return {
             'samples': len(self.history),
@@ -177,9 +189,10 @@ class HealthMonitor:
                 'avg': sum(mem_vals) / len(mem_vals)
             },
             'temperature': {
-                'min': min(temp_vals),
-                'max': max(temp_vals),
-                'avg': sum(temp_vals) / len(temp_vals),
+                'available': bool(temp_vals),
+                'min': min(temp_vals) if temp_vals else None,
+                'max': max(temp_vals) if temp_vals else None,
+                'avg': (sum(temp_vals) / len(temp_vals)) if temp_vals else None,
                 'throttle_events': sum(1 for t in temp_vals if t >= 80)
             }
         }
@@ -188,13 +201,20 @@ class HealthMonitor:
 class WorstCaseTest:
     """Orchestrates all stress tests running simultaneously."""
     
-    def __init__(self, base_url: str, admin_password: str = None):
+    def __init__(
+        self,
+        base_url: str,
+        session_password: Optional[str] = None,
+        admin_password: Optional[str] = None,
+    ):
         self.base_url = base_url.rstrip('/')
+        self.session_password = session_password
         self.admin_password = admin_password
         self.session = requests.Session()
         self.running = False
         self.results = {}
-        self.health_monitor = HealthMonitor()
+        self.admin_claimed = False
+        self.health_monitor = HealthMonitor(self.base_url, self.session)
         self._abort = False
         
         # Register abort on critical
@@ -202,20 +222,44 @@ class WorstCaseTest:
     
     def _on_critical(self, metrics: HealthMetrics):
         """Handle critical system state."""
-        print(f"\n⚠️  CRITICAL: CPU={metrics.cpu_percent:.1f}%, Mem={metrics.memory_percent:.1f}%, Temp={metrics.cpu_temp:.1f}°C")
+        temp_text = "n/a" if metrics.cpu_temp is None else f"{metrics.cpu_temp:.1f}°C"
+        print(f"\n⚠️  CRITICAL: CPU={metrics.cpu_percent:.1f}%, Mem={metrics.memory_percent:.1f}%, Temp={temp_text}")
         # Don't abort automatically - just warn
+
+    def _is_session_password_required(self) -> bool:
+        try:
+            resp = self.session.get(f"{self.base_url}/api/config", timeout=10)
+            if resp.status_code == 200:
+                return bool(resp.json().get('isPasswordProtectionActive', False))
+        except Exception:
+            pass
+        return bool(self.session_password)
+
+    def _validate_session_password(self) -> bool:
+        if not self._is_session_password_required():
+            return True
+        if not self.session_password:
+            print("Session password is required but was not provided.")
+            return False
+        resp = self.session.post(
+            f"{self.base_url}/api/validate_session_password",
+            json={'password': self.session_password},
+            timeout=10,
+        )
+        return resp.status_code == 200 and resp.json().get('valid')
     
     def authenticate(self) -> bool:
         """Authenticate as admin."""
         try:
             self.session.get(f"{self.base_url}/")
-            if self.admin_password:
-                resp = self.session.post(
-                    f"{self.base_url}/api/validate_session_password",
-                    json={'password': self.admin_password}
-                )
-                if resp.status_code == 200 and resp.json().get('valid'):
-                    self.session.post(f"{self.base_url}/api/admin/claim")
+            if not self._validate_session_password():
+                return False
+            payload = {'password': self.admin_password} if self.admin_password else {}
+            resp = self.session.post(f"{self.base_url}/api/admin/claim", json=payload, timeout=10)
+            self.admin_claimed = resp.status_code == 200 and resp.json().get('success', False)
+            if not self.admin_claimed and self.admin_password:
+                print(f"Admin claim failed: HTTP {resp.status_code}")
+                return False
             return True
         except Exception as e:
             print(f"Auth error: {e}")
@@ -225,17 +269,35 @@ class WorstCaseTest:
         """Get categories and media for testing."""
         try:
             resp = self.session.get(f"{self.base_url}/api/categories")
+            resp.raise_for_status()
             categories = resp.json().get('categories', [])
             
             video_urls = []
             for cat in categories[:5]:
-                media_resp = self.session.get(
-                    f"{self.base_url}/api/categories/{cat['id']}/media",
-                    params={'limit': 50}
+                view_key = f"streaming_row::{cat['id']}::::all::50"
+                media_resp = self.session.post(
+                    f"{self.base_url}/api/media/orders",
+                    json={'requests': [{
+                        'view': 'streaming_row',
+                        'viewKey': view_key,
+                        'category_id': cat['id'],
+                        'page': 1,
+                        'limit': 50,
+                        'media_filter': 'all',
+                        'hydrate': 'true',
+                    }]},
+                    timeout=10,
                 )
-                for f in media_resp.json().get('files', []):
+                if media_resp.status_code != 200:
+                    continue
+                results = media_resp.json().get('results', [])
+                if not results or results[0].get('status') == 'error':
+                    continue
+                for f in (results[0].get('records') or {}).values():
                     if f.get('type') == 'video':
-                        video_urls.append(f"/media/{cat['id']}/{f['name']}")
+                        url = f.get('url') or f.get('media_url')
+                        if url:
+                            video_urls.append(url)
             
             return {
                 'categories': categories,
@@ -243,7 +305,31 @@ class WorstCaseTest:
             }
         except Exception as e:
             print(f"Error getting test data: {e}")
-            return {'categories': [], 'video_urls': []}
+            return {'categories': [], 'video_urls': [], 'error': str(e)}
+
+    def _fetch_media_records(self, category_id: str, limit: int = 100, sess: Optional[requests.Session] = None) -> List[Dict]:
+        """Fetch hydrated media records through the current ordering endpoint."""
+        sess = sess or self.session
+        view_key = f"worst_case::{category_id}::{limit}"
+        resp = sess.post(
+            f"{self.base_url}/api/media/orders",
+            json={'requests': [{
+                'view': 'worst_case',
+                'viewKey': view_key,
+                'category_id': category_id,
+                'page': 1,
+                'limit': limit,
+                'media_filter': 'all',
+                'hydrate': 'true',
+            }]},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        results = resp.json().get('results') or []
+        if not results or results[0].get('status') == 'error':
+            return []
+        return list((results[0].get('records') or {}).values())
     
     def _run_streaming_load(self, video_urls: List[str], num_clients: int, duration: int):
         """Run streaming load test."""
@@ -368,7 +454,7 @@ class WorstCaseTest:
         results = {'saves': 0, 'reads': 0, 'errors': 0, 'profile_id': None}
 
         # Create a test profile for progress saves (profile_id required)
-        profile_name = f'wcs-progress-{int(time.time())}'
+        profile_name = f'ghst-test-wcs-{int(time.time())}'
         try:
             resp = self.session.post(
                 f"{self.base_url}/api/profiles",
@@ -404,10 +490,13 @@ class WorstCaseTest:
                 cat_id = cat.get('id', 'unknown')
 
                 try:
+                    video_path = f"/stress/worst-case/{cat_id}/video_{cat_idx % 100}.mp4"
+
                     # Save progress (SQLite write)
                     resp = self.session.post(
                         f"{self.base_url}/api/progress/{cat_id}",
                         json={
+                            'video_path': video_path,
                             'index': worker_id * 10 + cat_idx,
                             'total_count': 100,
                             'video_timestamp': 120.5 + cat_idx,
@@ -421,7 +510,7 @@ class WorstCaseTest:
                         results['errors'] += 1
 
                     # Read progress (SQLite read)
-                    resp = self.session.get(f"{self.base_url}/api/progress/{cat_id}", timeout=5)
+                    resp = self.session.get(f"{self.base_url}/api/progress/videos", timeout=5)
                     if resp.status_code == 200:
                         results['reads'] += 1
 
@@ -473,20 +562,27 @@ class WorstCaseTest:
             
             while self.running and (time.time() - start) < duration:
                 try:
-                    # Force category rescan (what happens on page load)
                     resp = sess.get(f"{self.base_url}/api/categories", timeout=10)
                     if resp.status_code == 200:
                         results['scans'] += 1
                         cats = resp.json().get('categories', [])
                         
-                        # Fetch media lists (pagination stress)
                         for cat in cats[:3]:
-                            media_resp = sess.get(
-                                f"{self.base_url}/api/categories/{cat['id']}/media",
-                                params={'page': 1, 'limit': 50},
-                                timeout=10
+                            view_key = f"streaming_row::{cat['id']}::::all::50"
+                            media_resp = sess.post(
+                                f"{self.base_url}/api/media/orders",
+                                json={'requests': [{
+                                    'view': 'streaming_row',
+                                    'viewKey': view_key,
+                                    'category_id': cat['id'],
+                                    'page': 1,
+                                    'limit': 50,
+                                    'media_filter': 'all',
+                                    'hydrate': 'true',
+                                }]},
+                                timeout=10,
                             )
-                            if media_resp.status_code == 200:
+                            if media_resp.status_code == 200 and media_resp.json().get('results'):
                                 results['media_fetches'] += 1
                     else:
                         results['errors'] += 1
@@ -514,16 +610,7 @@ class WorstCaseTest:
             cat_id = cat.get('id', '')
             
             try:
-                # Get media list for this category
-                resp = sess.get(
-                    f"{self.base_url}/api/categories/{cat_id}/media",
-                    params={'limit': 100},
-                    timeout=10
-                )
-                if resp.status_code != 200:
-                    return
-                
-                files = resp.json().get('files', [])
+                files = self._fetch_media_records(cat_id, limit=100, sess=sess)
                 
                 for f in files:
                     if not self.running:
@@ -571,11 +658,7 @@ class WorstCaseTest:
         def thumb_client(cat_id: str):
             nonlocal results
             try:
-                media_resp = self.session.get(
-                    f"{self.base_url}/api/categories/{cat_id}/media",
-                    params={'limit': 100}
-                )
-                files = media_resp.json().get('files', [])
+                files = self._fetch_media_records(cat_id, limit=100, sess=self.session)
                 
                 for f in files:
                     if not self.running:
@@ -626,11 +709,7 @@ class WorstCaseTest:
                 # Enable sync (this session becomes the host)
                 resp = sess.post(
                     f"{self.base_url}/api/sync/toggle",
-                    json={'enabled': True, 'media': {
-                        'category_id': category_id,
-                        'file_url': '',
-                        'index': 0
-                    }},
+                    json={'enabled': True, 'media': self._sync_payload(category_id, 0)},
                     timeout=5
                 )
                 if resp.status_code != 200:
@@ -644,11 +723,7 @@ class WorstCaseTest:
                     # Use HTTP API to update sync state (same session = host)
                     resp = sess.post(
                         f"{self.base_url}/api/sync/update",
-                        json={
-                            'category_id': category_id,
-                            'index': idx,
-                            'file_url': f'/media/{category_id}/item_{idx}'
-                        },
+                        json=self._sync_payload(category_id, idx),
                         timeout=5
                     )
                     if resp.status_code == 200:
@@ -673,6 +748,19 @@ class WorstCaseTest:
         t = threading.Thread(target=sync_host_http)
         t.start()
         return [t], results
+
+    @staticmethod
+    def _sync_payload(category_id: str, index: int) -> Dict:
+        return {
+            'category_id': category_id,
+            'viewKey': f"sim::{category_id}::all",
+            'viewType': 'streaming_grid',
+            'viewParams': {
+                'category_id': category_id,
+                'media_filter': 'all',
+            },
+            'mediaId': f"{category_id}::item_{index}",
+        }
     
     def run(self, duration: int = 60, stream_clients: int = 5, 
             ws_clients: int = 10) -> Dict:
@@ -692,7 +780,16 @@ class WorstCaseTest:
         
         test_data = self.get_test_data()
         if not test_data['categories']:
-            print("WARNING: No categories found")
+            reason = test_data.get('error') or 'No categories found'
+            print(f"SKIPPED: {reason}")
+            return {
+                'duration_seconds': 0,
+                'test_results': {},
+                'health_summary': {},
+                'skipped': True,
+                'skip_reason': reason,
+                'timestamp': datetime.now().isoformat(),
+            }
         
         # Start health monitoring
         self.health_monitor.start()
@@ -714,6 +811,12 @@ class WorstCaseTest:
                 all_threads.extend(threads)
                 all_results['streaming'] = results
                 print(f"  ✓ Started {stream_clients} streaming clients")
+            else:
+                all_results['streaming'] = {
+                    'skipped': True,
+                    'skip_reason': 'No video media found for streaming workload',
+                }
+                print("  ⚠ Skipped streaming clients: no video media found")
             
             # 2. WebSocket load
             threads, results = self._run_websocket_load(ws_clients, duration)
@@ -744,11 +847,17 @@ class WorstCaseTest:
                 print("  ✓ Started sync mode stress")
             
             # 6. Progress/SQLite stress (admin authenticated)
-            if test_data['categories']:
+            if test_data['categories'] and self.admin_claimed:
                 threads, results = self._run_progress_stress(test_data['categories'], duration)
                 all_threads.extend(threads)
                 all_results['progress_db'] = results
                 print("  ✓ Started progress/SQLite stress (admin)")
+            elif test_data['categories']:
+                all_results['progress_db'] = {
+                    'skipped': True,
+                    'skip_reason': 'admin was not claimed',
+                }
+                print("  ⚠ Skipped progress/SQLite stress: admin was not claimed")
             
             # 7. Category scanning stress (simulates page refreshes, USB detection)
             threads, results = self._run_category_scan_stress(duration)
@@ -773,9 +882,10 @@ class WorstCaseTest:
                 metrics = self.health_monitor.metrics
                 
                 status = "⚠️ THROTTLING" if metrics.is_throttling else "✓"
+                temp_text = "n/a" if metrics.cpu_temp is None else f"{metrics.cpu_temp:.1f}°C"
                 print(f"\r  [{elapsed:.0f}s/{duration}s] CPU: {metrics.cpu_percent:.1f}% | "
                       f"Mem: {metrics.memory_percent:.1f}% | "
-                      f"Temp: {metrics.cpu_temp:.1f}°C {status}    ", end='', flush=True)
+                      f"Temp: {temp_text} {status}    ", end='', flush=True)
                 
                 time.sleep(1)
             
@@ -785,16 +895,22 @@ class WorstCaseTest:
             print("\n\n⚠️  Aborted by user")
         finally:
             self.running = False
-        
-        # Wait for all threads
-        for t in all_threads:
-            t.join(timeout=5)
-        
-        self.health_monitor.stop()
-        
-        # Clean up test data
-        print("\n🧹 Cleaning up test data...")
-        self._cleanup_test_data()
+            # Drain threads and cleanup inside finally so a Ctrl-C or upstream
+            # exception still removes the test profile (and its progress rows).
+            for t in all_threads:
+                try:
+                    t.join(timeout=5)
+                except Exception:
+                    pass
+            try:
+                self.health_monitor.stop()
+            except Exception:
+                pass
+            print("\n🧹 Cleaning up test data...")
+            try:
+                self._cleanup_test_data()
+            except Exception as exc:
+                print(f"  ⚠ Cleanup raised: {exc}")
         
         total_duration = time.time() - start_time
         
@@ -856,8 +972,11 @@ class WorstCaseTest:
                 print(f"  │  RAM:  {mem['avg']:.0f}% avg (max {mem['max']:.0f}%)")
             if 'temperature' in health:
                 temp = health['temperature']
-                temp_color = "⚠️ " if temp['max'] >= 70 else ""
-                print(f"  │  Temp: {temp_color}{temp['avg']:.0f}°C avg (max {temp['max']:.0f}°C)")
+                if not temp.get('available'):
+                    print("  │  Temp: n/a (target did not report temperature)")
+                else:
+                    temp_color = "⚠️ " if temp['max'] >= 70 else ""
+                    print(f"  │  Temp: {temp_color}{temp['avg']:.0f}°C avg (max {temp['max']:.0f}°C)")
                 if temp['throttle_events'] > 0:
                     print(f"  │  ⚠️  Throttling: {temp['throttle_events']} events")
             print("  └" + "─" * 56)
@@ -867,7 +986,8 @@ class WorstCaseTest:
         health_ok = True
         issues = []
         
-        if health.get('temperature', {}).get('max', 0) >= 85:
+        temp_max = health.get('temperature', {}).get('max')
+        if temp_max is not None and temp_max >= 85:
             issues.append("❌ Critical CPU temperature")
             health_ok = False
         elif health.get('temperature', {}).get('throttle_events', 0) > 0:
@@ -891,10 +1011,27 @@ class WorstCaseTest:
     def evaluate_results(self, results: Dict) -> bool:
         """Return True when the worst-case run is healthy enough to pass."""
         health = results.get('health_summary', {})
-        if health.get('temperature', {}).get('max', 0) >= 85:
+        temp_max = health.get('temperature', {}).get('max')
+        if temp_max is not None and temp_max >= 85:
             return False
         if health.get('memory', {}).get('max', 0) >= 95:
             return False
+        if results.get('skipped'):
+            return True
+        test_results = results.get('test_results', {})
+        if test_results.get('category_scan', {}).get('media_fetches', 0) <= 0:
+            return False
+        skipped_workloads = [
+            name for name, data in test_results.items()
+            if isinstance(data, dict) and data.get('skipped')
+            and not (name == 'progress_db' and data.get('skip_reason') == 'admin was not claimed')
+        ]
+        if skipped_workloads:
+            return False
+        progress = test_results.get('progress_db')
+        if isinstance(progress, dict) and not progress.get('skipped'):
+            if progress.get('saves', 0) <= 0 or progress.get('errors', 0) > 0:
+                return False
         return True
 
 
@@ -903,6 +1040,10 @@ def main():
     parser.add_argument('--url', default='http://localhost:5000',
                         help='GhostHub base URL')
     parser.add_argument('--password', default=None,
+                        help='Legacy admin password')
+    parser.add_argument('--session-password', default=None,
+                        help='Session password')
+    parser.add_argument('--admin-password', default=None,
                         help='Admin password')
     parser.add_argument('--duration', type=int, default=60,
                         help='Test duration in seconds')
@@ -915,7 +1056,11 @@ def main():
     
     args = parser.parse_args()
     
-    test = WorstCaseTest(args.url, args.password)
+    test = WorstCaseTest(
+        args.url,
+        session_password=args.session_password,
+        admin_password=args.admin_password or args.password,
+    )
     
     # Handle Ctrl+C gracefully
     def signal_handler(sig, frame):

@@ -3,6 +3,7 @@
 import logging
 import os
 import shutil
+import time
 from typing import Dict, List, Optional, Tuple
 
 from werkzeug.utils import secure_filename
@@ -25,8 +26,8 @@ def _has_subdirectories(path: str) -> bool:
                 if entry.is_dir() and not entry.name.startswith('.'):
                     if entry.name.lower() not in SYSTEM_DIR_NAMES:
                         return True
-    except (PermissionError, OSError):
-        pass
+    except (PermissionError, OSError) as exc:
+        logger.debug("Could not scan subdirectories for %s: %s", path, exc)
     return False
 
 
@@ -39,10 +40,10 @@ def _get_folder_size(folder_path: str) -> int:
                 filepath = os.path.join(dirpath, filename)
                 try:
                     total_size += os.path.getsize(filepath)
-                except (OSError, PermissionError):
-                    pass
-    except (OSError, PermissionError):
-        pass
+                except (OSError, PermissionError) as exc:
+                    logger.debug("Could not stat %s while sizing %s: %s", filepath, folder_path, exc)
+    except (OSError, PermissionError) as exc:
+        logger.debug("Could not walk folder size for %s: %s", folder_path, exc)
     return total_size
 
 
@@ -148,8 +149,8 @@ def get_drive_folders(drive_path: str, show_hidden: bool = False, include_subdir
                         )
                         if subdirs:
                             folder_info['children'] = subdirs
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Could not list subfolders for %s: %s", entry.path, exc)
 
                 if not show_hidden and not include_hidden_info and include_subdirs:
                     if _has_subdirectories(entry.path) and 'children' not in folder_info:
@@ -219,8 +220,8 @@ def get_folder_contents(folder_path: str) -> Tuple[bool, str, Optional[List[Dict
                         'size': size,
                         'size_formatted': storage_io_service.format_bytes(size),
                     })
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug("Could not stat folder content %s: %s", file_path, exc)
 
         return True, f"Found {len(contents)} files", contents
     except Exception as exc:
@@ -268,6 +269,7 @@ def delete_folder(folder_path: str, force: bool = False) -> Tuple[bool, str]:
                 bus.emit(BUS_EVENTS['STORAGE_FOLDER_DELETED'], {
                     'folder_path': folder_path,
                     'category_id': category_id,
+                    'timestamp': time.time(),
                 })
         except Exception as exc:
             logger.debug("Media index cleanup event skipped for deleted folder %s: %s", folder_path, exc)

@@ -38,6 +38,7 @@ import { enableShowHidden, disableShowHidden, isShowHiddenEnabled, getShowHidden
 import { refreshAllLayouts } from '../../utils/liveVisibility.js';
 import { Module, Component, createElement, $, $$, append, prepend, insertBefore, remove, clear, attr, renderList, VirtualScroller, createIcon } from '../../libs/ragot.esm.min.js';
 import { toast, dialog } from '../../utils/notificationManager.js';
+import { SOCKET_EVENTS } from '../../core/socketEvents.js';
 import { createFocusTrap } from '../../utils/focusTrap.js';
 import { scheduleAutofocus } from '../../utils/focusManager.js';
 
@@ -359,8 +360,8 @@ class FileManagerModule extends Module {
         if (this._socketHandlersBound) return;
         const socket = window.ragotModules?.appStore?.get?.('socket', null);
         if (socket) {
-            this.onSocket(socket, 'usb_mounts_changed', this._handleUsbMountsChanged);
-            this.onSocket(socket, 'category_updated', this._handleCategoryUpdated);
+            this.onSocket(socket, SOCKET_EVENTS.USB_MOUNTS_CHANGED, this._handleUsbMountsChanged);
+            this.onSocket(socket, SOCKET_EVENTS.CATEGORY_UPDATED, this._handleCategoryUpdated);
             this._socketHandlersBound = true;
         }
     }
@@ -368,8 +369,8 @@ class FileManagerModule extends Module {
     _stopUsbPolling() {
         const socket = window.ragotModules?.appStore?.get?.('socket', null);
         if (!socket || !this._socketHandlersBound) return;
-        this.offSocket(socket, 'usb_mounts_changed', this._handleUsbMountsChanged);
-        this.offSocket(socket, 'category_updated', this._handleCategoryUpdated);
+        this.offSocket(socket, SOCKET_EVENTS.USB_MOUNTS_CHANGED, this._handleUsbMountsChanged);
+        this.offSocket(socket, SOCKET_EVENTS.CATEGORY_UPDATED, this._handleCategoryUpdated);
         this._socketHandlersBound = false;
     }
 
@@ -844,6 +845,21 @@ class FileManagerModule extends Module {
         this.selectedFiles = [];
         this.selectedUploadFileIndices.clear();
         this.stagedUploads = [];
+
+        // Consume deferred layout refresh flags now that the file manager is closed.
+        const appState = window.ragotModules?.appState;
+        if (appState) {
+            const needsDeferredRefresh = !!appState.needsMediaRefresh;
+            const forceDeferredRefresh = !!appState.forceMediaRefresh;
+            appState.needsMediaRefresh = false;
+            appState.forceMediaRefresh = false;
+
+            if (needsDeferredRefresh) {
+                refreshAllLayouts(forceDeferredRefresh).catch(e => {
+                    console.warn('[FileManager] Deferred refresh failed:', e);
+                });
+            }
+        }
     }
 
     destroy() {
@@ -1298,45 +1314,64 @@ class FileManagerModule extends Module {
         const selectedIndices = this._mediaListComp ? Array.from(this._mediaListComp.getSelectedIndices()) : [];
         if (selectedIndices.length === 0) return;
         if (!await dialog.confirm(`Delete ${selectedIndices.length} file(s)? This cannot be undone.`, { type: 'danger' })) return;
-        const filesToDelete = selectedIndices.map(i => this.mediaFiles[i]);
-        let success = 0;
-        for (const file of filesToDelete) {
-            try {
-                const resp = await fetch('/api/storage/media', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_path: file.path }) });
-                const result = await resp.json();
-                if (result.success) success++;
-            } catch (err) { /* continue */ }
-        }
-        if (filesToDelete.length > 0) {
+        const filesToDelete = selectedIndices.map(i => this.mediaFiles[i]).filter(Boolean);
+        if (filesToDelete.length === 0) return;
+
+        try {
+            const resp = await fetch('/api/storage/media/batch-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_paths: filesToDelete.map(file => file.path) })
+            });
+            const result = await resp.json();
+            if (!resp.ok || result.success === false) {
+                toast.error('Delete failed: ' + (result.error || 'Unknown error'));
+                return;
+            }
+
             const folderPath = filesToDelete[0].path.substring(0, filesToDelete[0].path.lastIndexOf('/'));
             await this._loadMediaFiles(folderPath);
+            refreshAllLayouts(true);
+            toast.success(`Deleted ${result.deleted || 0} of ${filesToDelete.length} file(s)`);
+        } catch (err) {
+            toast.error('Delete failed: ' + err.message);
         }
-        refreshAllLayouts(true);
-        toast.success(`Deleted ${success} of ${filesToDelete.length} file(s)`);
     }
 
     async _hideSelectedFiles() {
         const selectedIndices = this._mediaListComp ? Array.from(this._mediaListComp.getSelectedIndices()) : [];
         if (selectedIndices.length === 0) return;
-        const selectedFilesArr = selectedIndices.map(i => this.mediaFiles[i]);
+        const selectedFilesArr = selectedIndices.map(i => this.mediaFiles[i]).filter(Boolean);
+        if (selectedFilesArr.length === 0) return;
         const hiddenCount = selectedFilesArr.filter(f => f.hidden).length;
         const shouldUnhide = hiddenCount > selectedFilesArr.length / 2;
-        const endpoint = shouldUnhide ? '/api/admin/files/unhide' : '/api/admin/files/hide';
-        let success = 0;
-        for (const file of selectedFilesArr) {
-            try {
-                const payload = { file_path: file.path };
-                if (!shouldUnhide) { const id = getCategoryIdFromPath(file.path); if (id) payload.category_id = id; }
-                const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                const result = await resp.json();
-                if (result.success) success++;
-            } catch (err) { /* continue */ }
-        }
-        if (selectedFilesArr.length > 0) {
+        try {
+            const resp = await fetch('/api/admin/files/batch-visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: shouldUnhide ? 'unhide' : 'hide',
+                    files: selectedFilesArr.map(file => {
+                        const payload = { file_path: file.path };
+                        const id = getCategoryIdFromPath(file.path);
+                        if (id) payload.category_id = id;
+                        return payload;
+                    })
+                })
+            });
+            const result = await resp.json();
+            if (!resp.ok || result.success === false) {
+                toast.error('Hide/unhide failed: ' + (result.error || 'Unknown error'));
+                return;
+            }
+
             const folderPath = selectedFilesArr[0].path.substring(0, selectedFilesArr[0].path.lastIndexOf('/'));
             await this._loadMediaFiles(folderPath);
+            refreshAllLayouts(true);
+            toast.success(`${shouldUnhide ? 'Unhidden' : 'Hidden'} ${result.updated || 0} of ${selectedFilesArr.length} file(s)`);
+        } catch (err) {
+            toast.error('Operation failed: ' + err.message);
         }
-        toast.success(`${shouldUnhide ? 'Unhidden' : 'Hidden'} ${success} of ${selectedFilesArr.length} file(s)`);
     }
 
     _updateBulkActionButtons() {
@@ -1779,28 +1814,28 @@ class FileManagerModule extends Module {
 
     async _activateRevealHidden(durationSeconds) {
         try {
-            enableShowHidden();
             const resp = await fetch('/api/admin/categories/show', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ duration: durationSeconds }) });
             const result = await resp.json();
             if (resp.ok && result.success) {
+                enableShowHidden();
                 this.revealHiddenActive = true;
                 this.revealHiddenExpiry = Date.now() + (durationSeconds * 1000);
                 this._updateRevealHiddenUI(true, durationSeconds);
                 this._startRevealHiddenCountdown();
                 if (this.selectedDrive) await this._loadFolders(this.selectedDrive.path);
                 await this._refreshLayoutsAfterRevealChange();
-            } else { disableShowHidden(); toast.error('Failed to reveal hidden: ' + (result.error || result.message || 'Unknown')); }
-        } catch (err) { disableShowHidden(); toast.error('Failed: ' + err.message); }
+            } else { toast.error('Failed to reveal hidden: ' + (result.error || result.message || 'Unknown')); }
+        } catch (err) { toast.error('Failed: ' + err.message); }
     }
 
     async _deactivateRevealHidden() {
         try {
+            await fetch('/api/admin/categories/clear-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
             disableShowHidden();
             this.revealHiddenActive = false;
             this.revealHiddenExpiry = null;
             this._stopRevealHiddenCountdown();
             this._updateRevealHiddenUI(false);
-            await fetch('/api/admin/categories/clear-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
             await this._checkRevealHiddenStatus();
             if (this.selectedDrive) await this._loadFolders(this.selectedDrive.path);
             await this._refreshLayoutsAfterRevealChange();

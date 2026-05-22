@@ -9,7 +9,6 @@ from specter import Service, registry
 from app.services.media import (
     category_cache_service,
     media_index_service,
-    media_session_service,
     hidden_content_service,
     category_persistence_service,
 )
@@ -30,6 +29,7 @@ class MediaStorageEventHandlerService(Service):
         self.listen(BUS_EVENTS['STORAGE_FILE_UPLOADED'], self._handle_file_uploaded)
         self.listen(BUS_EVENTS['STORAGE_BATCH_UPLOADED'], self._handle_batch_uploaded)
         self.listen(BUS_EVENTS['STORAGE_FILE_DELETED'], self._handle_file_deleted)
+        self.listen(BUS_EVENTS['STORAGE_FILES_DELETED'], self._handle_files_deleted)
         self.listen(BUS_EVENTS['STORAGE_FILE_RENAMED'], self._handle_file_renamed)
         self.listen(BUS_EVENTS['STORAGE_FOLDER_DELETED'], self._handle_folder_deleted)
         self.listen(BUS_EVENTS['STORAGE_MOUNT_CHANGED'], self._handle_mount_changed)
@@ -47,16 +47,25 @@ class MediaStorageEventHandlerService(Service):
         try:
             stats = os.stat(target_path)
             media_type = get_media_type(filename)
+            category_path = target_dir
+            rel_path = filename
+            try:
+                cat_info = get_category_by_id(category_id)
+                cat_root = cat_info.get('path') if cat_info else None
+                if cat_root:
+                    category_path = cat_root
+                    rel_path = os.path.relpath(target_path, cat_root).replace(os.sep, '/')
+            except Exception as exc:
+                logger.debug("Could not derive uploaded rel_path for %s: %s", target_path, exc)
             media_index_service.upsert_media_index_entry(
                 category_id=category_id,
-                category_path=target_dir,
-                rel_path=filename,
+                category_path=category_path,
+                rel_path=rel_path,
                 size=stats.st_size,
                 mtime=stats.st_mtime,
                 file_type=media_type,
             )
             media_index_service.recalculate_category_version_hash(category_id)
-            media_session_service.clear_session_tracker(category_id=category_id)
 
             if media_type == 'video':
                 try:
@@ -74,17 +83,33 @@ class MediaStorageEventHandlerService(Service):
         except Exception as exc:
             logger.error("Media index update skipped for %s: %s", filename, exc)
 
+        try:
+            registry.require('library_events').emit_category_updated({
+                'reason': 'file_uploaded',
+                'category_id': category_id,
+                'filename': filename,
+                'media_url': payload.get('media_url'),
+                'force_refresh': True,
+                'invalidateCategory': True,
+                'timestamp': time.time(),
+            })
+        except Exception as exc:
+            logger.debug("Could not emit upload socket event: %s", exc)
+
     def _handle_batch_uploaded(self, payload: dict):
         uploaded_categories = payload.get('uploaded_categories', [])
         success_count = payload.get('success_count', 0)
+        uploaded_category_ids = []
 
         for category_dir in uploaded_categories:
             category_id = None
             try:
                 from app.services.storage.storage_path_service import get_category_id_from_path
                 category_id = get_category_id_from_path(category_dir)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not derive category id for uploaded dir %s: %s", category_dir, exc)
+            if category_id:
+                uploaded_category_ids.append(category_id)
 
             try:
                 if category_id:
@@ -99,7 +124,9 @@ class MediaStorageEventHandlerService(Service):
                 'reason': 'upload_complete',
                 'count': success_count,
                 'categories': uploaded_categories,
+                'category_ids': uploaded_category_ids,
                 'force_refresh': True,
+                'invalidateAll': True,
                 'timestamp': time.time()
             })
         except Exception as exc:
@@ -121,23 +148,25 @@ class MediaStorageEventHandlerService(Service):
                     cat_root = cat_info.get('path') if cat_info else None
                     if cat_root:
                         rel_path = os.path.relpath(file_path, cat_root).replace(os.sep, '/')
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Could not derive deleted rel_path for %s: %s", file_path, exc)
                 media_index_service.delete_media_index_entry(category_id, rel_path)
                 media_index_service.recalculate_category_version_hash(category_id)
-                media_session_service.clear_session_tracker(category_id=category_id)
         except Exception as exc:
             logger.debug("Media index delete skipped for %s: %s", file_path, exc)
 
         try:
-            from app.utils.thumbnail_utils import delete_thumbnail
-            from app.services.streaming.subtitle_service import delete_associated_subtitles, invalidate_subtitle_cache
-            
-            delete_thumbnail(directory, filename)
-            if is_video:
-                invalidate_subtitle_cache(file_path)
+            from app.services.storage.storage_media_file_service import (
+                _delete_thumbnail,
+                _invalidate_subtitle_cache,
+            )
+
+            if directory and filename:
+                _delete_thumbnail(directory, filename)
+            if is_video and file_path:
+                _invalidate_subtitle_cache(file_path)
         except Exception as exc:
-            pass
+            logger.debug("Thumbnail/subtitle cleanup skipped after delete: %s", exc)
 
         try:
             if media_url:
@@ -149,6 +178,110 @@ class MediaStorageEventHandlerService(Service):
             hidden_content_service.delete_hidden_file_entry(file_path)
         except Exception as exc:
             logger.error("Database cleanup after delete failed: %s", exc)
+
+        try:
+            invalidated_ids = []
+            if category_id and file_path:
+                rel_path = filename
+                try:
+                    cat_info = get_category_by_id(category_id)
+                    cat_root = cat_info.get('path') if cat_info else None
+                    if cat_root:
+                        rel_path = os.path.relpath(file_path, cat_root).replace(os.sep, '/')
+                except Exception as exc:
+                    logger.debug("Could not derive deleted rel_path for %s: %s", file_path, exc)
+                if rel_path:
+                    invalidated_ids.append(f'{category_id}::{rel_path}')
+            registry.require('library_events').emit_category_updated({
+                'reason': 'file_deleted',
+                'category_id': category_id,
+                'filename': filename,
+                'media_url': media_url,
+                'invalidatedIds': invalidated_ids,
+                'force_refresh': True,
+                'invalidateCategory': True,
+                'timestamp': time.time(),
+            })
+        except Exception as exc:
+            logger.debug("Could not emit delete socket event: %s", exc)
+
+    def _handle_files_deleted(self, payload: dict):
+        files = payload.get('files') or []
+        if not isinstance(files, list) or not files:
+            return
+
+        invalidated_by_category = {}
+        media_urls_by_category = {}
+        categories_to_rehash = set()
+
+        for item in files:
+            file_path = item.get('file_path')
+            filename = item.get('filename')
+            directory = item.get('directory')
+            category_id = item.get('category_id')
+            media_url = item.get('media_url')
+            rel_path = item.get('rel_path') or filename
+
+            try:
+                if category_id and rel_path:
+                    media_index_service.delete_media_index_entry(category_id, rel_path)
+                    categories_to_rehash.add(category_id)
+            except Exception as exc:
+                logger.debug("Media index batch delete skipped for %s: %s", file_path, exc)
+
+            try:
+                from app.services.storage.storage_media_file_service import (
+                    _delete_thumbnail,
+                    _invalidate_subtitle_cache,
+                )
+
+                if directory and filename:
+                    _delete_thumbnail(directory, filename)
+                if item.get('is_video') and file_path:
+                    _invalidate_subtitle_cache(file_path)
+            except Exception as exc:
+                logger.debug("Thumbnail/subtitle batch cleanup skipped: %s", exc)
+
+            try:
+                if media_url:
+                    registry.require('progress').handle_media_delete(
+                        media_url=media_url,
+                        category_id=category_id,
+                        filename=filename,
+                    )
+                hidden_content_service.delete_hidden_file_entry(file_path)
+            except Exception as exc:
+                logger.error("Database cleanup after batch delete failed: %s", exc)
+
+            if category_id:
+                if rel_path:
+                    invalidated_by_category.setdefault(category_id, []).append(f'{category_id}::{rel_path}')
+                if media_url:
+                    media_urls_by_category.setdefault(category_id, []).append(media_url)
+
+        for category_id in categories_to_rehash:
+            try:
+                media_index_service.recalculate_category_version_hash(category_id)
+            except Exception as exc:
+                logger.debug("Media index rehash skipped for %s: %s", category_id, exc)
+
+        emitted_categories = set(invalidated_by_category) | set(media_urls_by_category)
+        if not emitted_categories:
+            emitted_categories = set(payload.get('affected_category_ids') or [])
+
+        for category_id in emitted_categories:
+            try:
+                registry.require('library_events').emit_category_updated({
+                    'reason': 'files_deleted',
+                    'category_id': category_id,
+                    'media_urls': media_urls_by_category.get(category_id, []),
+                    'invalidatedIds': invalidated_by_category.get(category_id, []),
+                    'force_refresh': True,
+                    'invalidateCategory': True,
+                    'timestamp': payload.get('timestamp') or time.time(),
+                })
+            except Exception as exc:
+                logger.debug("Could not emit batch delete socket event: %s", exc)
 
     def _handle_file_renamed(self, payload: dict):
         file_path = payload.get('file_path')
@@ -192,15 +325,21 @@ class MediaStorageEventHandlerService(Service):
             logger.debug("Media index update skipped for rename %s: %s", file_path, exc)
 
         try:
-            from app.utils.thumbnail_utils import rename_thumbnail
-            from app.services.streaming.subtitle_service import rename_associated_subtitles, invalidate_subtitle_cache
-            
-            rename_thumbnail(directory, old_name, new_name)
-            if is_video_file(old_name):
-                rename_associated_subtitles(directory, old_name, new_name)
-                invalidate_subtitle_cache(file_path)
-        except Exception:
-            pass
+            from app.services.storage.storage_media_file_service import (
+                _rename_thumbnail,
+                _rename_associated_subtitles,
+                _invalidate_subtitle_cache,
+            )
+
+            if directory and old_name and new_name:
+                _rename_thumbnail(directory, old_name, new_name)
+            if old_name and is_video_file(old_name):
+                if directory and new_name:
+                    _rename_associated_subtitles(directory, old_name, new_name)
+                if file_path:
+                    _invalidate_subtitle_cache(file_path)
+        except Exception as exc:
+            logger.debug("Thumbnail/subtitle rename skipped: %s", exc)
 
         hidden_path_updated = hidden_content_service.update_hidden_file_path(file_path, new_path)
         if was_hidden and not hidden_path_updated:
@@ -212,7 +351,7 @@ class MediaStorageEventHandlerService(Service):
                     admin_session_id='system_rename',
                 )
             except Exception as exc:
-                pass
+                logger.debug("Could not re-hide renamed file %s: %s", new_path, exc)
 
         try:
             categories = get_all_categories_with_details()
@@ -223,8 +362,8 @@ class MediaStorageEventHandlerService(Service):
                 if file_path.startswith(cat_path + os.sep) or file_path == cat_path:
                     rel_path = os.path.relpath(file_path, cat_path).replace(os.sep, '/')
                     media_index_service.delete_media_index_entry(category['id'], rel_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Cross-category old rename cleanup skipped for %s: %s", file_path, exc)
 
         try:
             if old_media_url and new_media_url:
@@ -241,10 +380,36 @@ class MediaStorageEventHandlerService(Service):
                     old_filename=old_name,
                     new_filename=new_name,
                 )
-            if category_id:
-                media_session_service.clear_session_tracker(category_id=category_id)
         except Exception as exc:
             logger.debug("Could not emit progress rename: %s", exc)
+
+        try:
+            invalidated_ids = []
+            if category_id:
+                old_rel_path = old_name
+                try:
+                    cat_info = get_category_by_id(category_id)
+                    cat_root = cat_info.get('path') if cat_info else None
+                    if cat_root:
+                        old_rel_path = os.path.relpath(file_path, cat_root).replace(os.sep, '/')
+                except Exception as exc:
+                    logger.debug("Could not derive renamed rel_path for %s: %s", file_path, exc)
+                if old_rel_path:
+                    invalidated_ids.append(f'{category_id}::{old_rel_path}')
+            registry.require('library_events').emit_category_updated({
+                'reason': 'file_renamed',
+                'category_id': category_id,
+                'old_path': old_media_url,
+                'new_path': new_media_url,
+                'old_name': old_name,
+                'new_name': new_name,
+                'invalidatedIds': invalidated_ids,
+                'force_refresh': True,
+                'invalidateCategory': True,
+                'timestamp': time.time(),
+            })
+        except Exception as exc:
+            logger.debug("Could not emit rename socket event: %s", exc)
 
     def _handle_folder_deleted(self, payload: dict):
         category_id = payload.get('category_id')
@@ -254,6 +419,18 @@ class MediaStorageEventHandlerService(Service):
                 category_cache_service.invalidate_cache()
             except Exception as exc:
                 logger.error("Failed to delete media index by category: %s", exc)
+        try:
+            registry.require('library_events').emit_category_updated({
+                'reason': 'folder_deleted',
+                'category_id': category_id,
+                'folder_path': payload.get('folder_path'),
+                'force_refresh': True,
+                'invalidateCategory': bool(category_id),
+                'invalidateAll': not bool(category_id),
+                'timestamp': payload.get('timestamp') or time.time(),
+            })
+        except Exception as exc:
+            logger.debug("Could not emit folder-delete socket event: %s", exc)
 
     def _handle_mount_changed(self, payload: dict):
         mounted_paths = payload.get('mounted_paths', [])

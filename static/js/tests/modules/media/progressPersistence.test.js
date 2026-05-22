@@ -42,12 +42,20 @@ import {
     saveVideoLocalProgress,
 } from '../../../utils/progressDB.js';
 import { hasActiveProfile } from '../../../utils/profileUtils.js';
+import { mediaManifest } from '../../../modules/media/manifest.js';
+import { mediaOrdering } from '../../../modules/media/ordering.js';
 
 beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     hasActiveProfile.mockReturnValue(false);
     isTvAuthorityForCategory.mockReturnValue(false);
+    window.ragotModules = {
+        ...window.ragotModules,
+        appStore: {
+            getState: () => ({})
+        }
+    };
 });
 
 afterEach(() => {
@@ -360,6 +368,30 @@ describe('persistPlaybackProgress', () => {
     describe('with an active profile', () => {
         beforeEach(() => {
             hasActiveProfile.mockReturnValue(true);
+            const viewKey = 'viewer::movies';
+            const orderedIds = Array.from({ length: 6 }, (_, index) => `movies::item_${index}.mp4`);
+            mediaOrdering.orders.clear();
+            mediaOrdering.ingestView(viewKey, {
+                viewType: 'viewer_category',
+                orderedIds,
+                status: 'ready',
+                params: { category_id: 'movies', media_filter: 'all' }
+            });
+            mediaManifest.clear();
+            mediaManifest.ingest(Object.fromEntries(
+                orderedIds.map((id, index) => [id, {
+                    id,
+                    categoryId: 'movies',
+                    url: `/media/movies/item_${index}.mp4`,
+                    thumbnailUrl: `/thumbs/${index}.jpg`
+                }])
+            ));
+            window.ragotModules = {
+                ...window.ragotModules,
+                appStore: {
+                    getState: () => ({ viewer: { viewKey, activeIndex: 0 } })
+                }
+            };
         });
 
         it('emits to socket instead of saving to IndexedDB', async () => {
@@ -411,21 +443,22 @@ describe('persistPlaybackProgress', () => {
             expect(socket.emit).not.toHaveBeenCalled();
         });
 
-        it('includes media_order when provided', async () => {
+        it('emits canonical view identity without legacy order payload', async () => {
             const socket = { connected: true, emit: vi.fn() };
-            const order = ['a.mp4', 'b.mp4', 'c.mp4'];
 
             await persistPlaybackProgress({
                 socket,
                 categoryId: 'movies',
                 index: 0,
                 timestamp: 50,
-                duration: 100,
-                mediaOrder: order
+                duration: 100
             });
 
             expect(socket.emit).toHaveBeenCalledWith('update_my_state', expect.objectContaining({
-                media_order: order
+                viewKey: 'viewer::movies',
+                viewType: 'viewer_category',
+                viewParams: { category_id: 'movies', media_filter: 'all' },
+                mediaId: 'movies::item_0.mp4'
             }));
         });
 

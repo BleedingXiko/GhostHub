@@ -2,7 +2,7 @@
 
 import logging
 import os
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 from flask import request
 
@@ -139,18 +139,27 @@ class ChatController(Controller):
             if (
                 not isinstance(data['arg'], dict) or
                 'category_id' not in data['arg'] or
-                'index' not in data['arg']
+                'mediaId' not in data['arg']
             ):
                 logger.warning(
                     "Invalid myview command data from %s: missing category_id "
-                    "or index",
+                    "or mediaId",
                     client_id,
                 )
                 return
 
+            sender_state = registry.require('sync').get_session_state(session_id) or {}
+            view_payload = {
+                'category_id': sender_state.get('category_id') or data['arg'].get('category_id'),
+                'viewKey': sender_state.get('viewKey') or data['arg'].get('viewKey'),
+                'viewType': sender_state.get('viewType') or data['arg'].get('viewType'),
+                'viewParams': sender_state.get('viewParams') or data['arg'].get('viewParams') or {},
+                'mediaId': sender_state.get('mediaId') or data['arg'].get('mediaId'),
+            }
+
             from app.services.media.hidden_content_service import should_block_category_access
 
-            category_id = data['arg']['category_id']
+            category_id = view_payload['category_id']
             if should_block_category_access(category_id, show_hidden=False):
                 logger.warning(
                     "Blocked /myview for hidden category %s from %s",
@@ -166,80 +175,46 @@ class ChatController(Controller):
             user_id = self._resolve_user_id(session_id)
             data['from'] = user_id
 
-            sender_state = registry.require('sync').get_session_state(session_id)
-            media_order = sender_state.get('media_order') if sender_state else None
-
-            if not media_order:
-                try:
-                    from app.services.media import media_session_service
-                    filenames = media_session_service.get_session_order(category_id, session_id)
-                    if filenames:
-                        media_order = [
-                            f"/media/{category_id}/{quote(name)}"
-                            for name in filenames
-                        ]
-                except Exception as exc:
-                    logger.warning(
-                        "Could not derive media order for session %s: %s",
-                        session_id,
-                        exc,
-                    )
+            data['arg'].update(view_payload)
 
             logger.info(
-                "Command from %s (session %s, client %s): %s with args: %s, Order URLs: %s",
+                "Command from %s (session %s, client %s): %s with args: %s",
                 user_id,
                 session_id,
                 client_id,
                 data['cmd'],
                 data['arg'],
-                len(media_order) if media_order else 'N/A',
             )
 
-            if media_order:
-                data['arg']['media_order'] = media_order
+            try:
+                media_id = data['arg'].get('mediaId') or ''
+                # mediaId is "<category_id>::<rel_path>", but category_id itself
+                # can contain '::' (e.g. "auto::Movies::Action"). Strip the known
+                # category prefix instead of splitting on the first delimiter.
+                rel_path = None
+                if category_id and media_id.startswith(f"{category_id}::"):
+                    rel_path = media_id[len(category_id) + 2:]
+                elif '::' in media_id:
+                    rel_path = media_id.split('::', 1)[1]
+                rel_path = unquote(rel_path) if rel_path else None
+                filename = os.path.basename(rel_path) if rel_path else None
 
-                try:
-                    index = data['arg']['index']
-                    if 0 <= index < len(media_order):
-                        file_url = media_order[index]
-                        if isinstance(file_url, dict) and 'url' in file_url:
-                            file_url = file_url.get('url')
+                from app.utils.media_utils import get_thumbnail_url
 
-                        rel_path = None
-                        if file_url and file_url.startswith('/media/'):
-                            remainder = file_url.split('/media/', 1)[1]
-                            if remainder.startswith(f'{category_id}/'):
-                                rel_path = remainder[len(category_id) + 1:]
-                            else:
-                                parts = remainder.split('/', 1)
-                                rel_path = parts[1] if len(parts) > 1 else parts[0]
-                        elif file_url:
-                            rel_path = file_url
-
-                        rel_path = unquote(rel_path) if rel_path else None
-                        filename = os.path.basename(rel_path) if rel_path else None
-
-                        from app.utils.media_utils import get_thumbnail_url
-
-                        thumbnail_url = (
-                            get_thumbnail_url(category_id, rel_path)
-                            if rel_path else None
-                        )
-                        data['arg']['filename'] = filename
-                        data['arg']['thumbnail_url'] = thumbnail_url
-                        logger.info(
-                            "Added filename '%s' and thumbnail to /myview broadcast",
-                            filename,
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "Could not extract filename/thumbnail from media order: %s",
-                        exc,
-                    )
-            else:
+                thumbnail_url = (
+                    get_thumbnail_url(category_id, rel_path)
+                    if rel_path else None
+                )
+                data['arg']['filename'] = filename
+                data['arg']['thumbnail_url'] = thumbnail_url
+                logger.info(
+                    "Added filename '%s' and thumbnail to /myview broadcast",
+                    filename,
+                )
+            except Exception as exc:
                 logger.warning(
-                    "Could not retrieve media order for session %s when handling /myview",
-                    session_id,
+                    "Could not extract filename/thumbnail from mediaId: %s",
+                    exc,
                 )
 
             self._events().emit_command(data, room=CHAT_ROOM, include_self=True)

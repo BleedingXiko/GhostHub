@@ -10,6 +10,8 @@ import { Module, createElement, attr, $ } from '../../libs/ragot.esm.min.js';
 import { hasActiveProfile } from '../../utils/profileUtils.js';
 import { TV_EVENTS } from '../../core/socketEvents.js';
 import { createFocusTrap } from '../../utils/focusTrap.js';
+import { getCurrentViewerRecord, getViewerSession } from '../media/viewerState.js';
+import { selectIndexOf, selectParams, selectRecordAt, selectView } from '../media/selectors.js';
 
 // Module state
 let socket = null;
@@ -22,6 +24,7 @@ let canControl = true;
 let socketListenersAttached = false;
 let onTvPlaybackState = null;
 let isLoading = false;
+let hasReceivedFirstState = false;
 
 // Seek debounce constants
 const SEEK_DEBOUNCE_MS = 4000;
@@ -34,11 +37,26 @@ let isPlaying = false;
 
 // Stored cast info for guest sync fallback (independent of window.ragotModules.appState)
 let storedCastInfo = {
+    viewKey: null,
+    viewType: null,
+    viewParams: {},
     categoryId: null,
-    mediaIndex: null,
+    mediaId: null,
     mediaUrl: null,
     thumbnailUrl: null
 };
+
+function resetStoredCastInfo() {
+    storedCastInfo = {
+        viewKey: null,
+        viewType: null,
+        viewParams: {},
+        categoryId: null,
+        mediaId: null,
+        mediaUrl: null,
+        thumbnailUrl: null
+    };
+}
 
 // DOM element references
 let thumbnailEl = null;
@@ -55,6 +73,86 @@ let syncProgressBtn = null;
 const managedTimeouts = new Set();
 let modalFocusTrap = null;
 let modalReturnFocusEl = null;
+
+const ORDER_APPEND_GUARD = 20;
+
+function normalizeViewParams(params) {
+    return params && typeof params === 'object' && !Array.isArray(params) ? { ...params } : {};
+}
+
+function mergeStoredCastInfo(info = {}) {
+    if (!info || typeof info !== 'object') return storedCastInfo;
+
+    if (info.viewKey) storedCastInfo.viewKey = info.viewKey;
+    if (info.viewType) storedCastInfo.viewType = info.viewType;
+    if (info.viewParams !== undefined) storedCastInfo.viewParams = normalizeViewParams(info.viewParams);
+    if (info.categoryId !== undefined) storedCastInfo.categoryId = info.categoryId;
+    if (info.category_id !== undefined) storedCastInfo.categoryId = info.category_id;
+    if (info.mediaId) storedCastInfo.mediaId = info.mediaId;
+    if (info.mediaUrl) storedCastInfo.mediaUrl = info.mediaUrl;
+    if (info.media_path) storedCastInfo.mediaUrl = info.media_path;
+    if (info.thumbnailUrl) storedCastInfo.thumbnailUrl = info.thumbnailUrl;
+    if (info.thumbnail_url) storedCastInfo.thumbnailUrl = info.thumbnail_url;
+
+    return storedCastInfo;
+}
+
+function getCurrentViewerCastInfo() {
+    const appState = window.ragotModules?.appState;
+    const viewer = getViewerSession(appState);
+    const view = viewer?.viewKey ? selectView(viewer.viewKey) : null;
+    const currentMedia = getCurrentViewerRecord(appState);
+
+    return {
+        viewKey: viewer?.viewKey || null,
+        viewType: view?.viewType || null,
+        viewParams: viewer?.viewKey ? selectParams(viewer.viewKey) : {},
+        categoryId: appState?.currentCategoryId || null,
+        mediaId: currentMedia?.id || null,
+        mediaUrl: currentMedia?.url || null,
+        thumbnailUrl: currentMedia?.thumbnailUrl || null
+    };
+}
+
+function mergeCurrentViewerFallback() {
+    const fallback = getCurrentViewerCastInfo();
+    mergeStoredCastInfo({
+        viewKey: storedCastInfo.viewKey || fallback.viewKey,
+        viewType: storedCastInfo.viewType || fallback.viewType,
+        viewParams: Object.keys(storedCastInfo.viewParams || {}).length > 0
+            ? storedCastInfo.viewParams
+            : fallback.viewParams,
+        categoryId: storedCastInfo.categoryId || fallback.categoryId,
+        mediaId: storedCastInfo.mediaId || fallback.mediaId,
+        mediaUrl: storedCastInfo.mediaUrl || fallback.mediaUrl,
+        thumbnailUrl: storedCastInfo.thumbnailUrl || fallback.thumbnailUrl
+    });
+}
+
+async function resolveStoredCastRecord() {
+    mergeCurrentViewerFallback();
+
+    const { viewKey, viewType, viewParams, mediaId } = storedCastInfo;
+    const manifest = window.ragotModules?.mediaManifest;
+    if (!mediaId || !manifest) {
+        return storedCastInfo;
+    }
+
+    try {
+        await manifest.hydrate([mediaId]);
+        const record = manifest.get(mediaId);
+        if (record) {
+            mergeStoredCastInfo({
+                mediaUrl: record.url,
+                thumbnailUrl: record.thumbnailUrl || record.url
+            });
+        }
+    } catch (error) {
+        console.warn('[TV Player Modal] Failed to hydrate cast record', error);
+    }
+
+    return storedCastInfo;
+}
 
 function scheduleModalTimeout(callback, delayMs) {
     const timeoutId = tvPlayerModalLifecycle
@@ -253,6 +351,38 @@ function cacheElementReferences() {
 }
 
 /**
+ * Update subtitle text and spinning indicator based on TV connection state
+ * @param {boolean} connected
+ * @param {boolean} isBooting
+ */
+function updateSubtitleState(connected, isBooting) {
+    if (!subtitleEl) return;
+
+    if (isBooting || !connected) {
+        subtitleEl.innerHTML = `
+            <span class="tv-player-live-indicator" style="color: var(--text-secondary);">
+                <span class="tv-player-subtitle-spinner" aria-hidden="true"></span>
+                Starting TV...
+            </span>
+        `;
+    } else if (!hasReceivedFirstState) {
+        subtitleEl.innerHTML = `
+            <span class="tv-player-live-indicator" style="color: var(--text-secondary);">
+                <span class="tv-player-subtitle-spinner" aria-hidden="true"></span>
+                Loading media...
+            </span>
+        `;
+    } else {
+        subtitleEl.innerHTML = `
+            <span class="tv-player-live-indicator">
+                <span class="tv-player-live-dot"></span>
+                Casting to TV
+            </span>
+        `;
+    }
+}
+
+/**
  * Set up event listeners
  */
 function setupEventListeners() {
@@ -352,29 +482,21 @@ function showTvPlayerModal(options = {}) {
     duration = options.duration || 0;
     currentTime = options.startTime || 0;
     isPlaying = false; // FIXED: Don't assume playing until TV confirms
-    setModalLoading(options.loading === true || options.isBooting === true || options.connected === false);
+    
+    // Reset first state flag and always start in loading/waiting mode until TV responds
+    hasReceivedFirstState = false;
+    setModalLoading(true);
 
-    // CRITICAL FIX: Populate storedCastInfo from options FIRST (for page reload restoration)
-    // This ensures sync button works immediately after restoration from sessionStorage
-    if (options.mediaUrl || options.categoryId) {
-        storedCastInfo.categoryId = options.categoryId || storedCastInfo.categoryId;
-        storedCastInfo.mediaIndex = options.mediaIndex !== undefined ? options.mediaIndex : storedCastInfo.mediaIndex;
-        storedCastInfo.mediaUrl = options.mediaUrl || storedCastInfo.mediaUrl;
-        storedCastInfo.thumbnailUrl = options.thumbnailUrl || thumbnailUrl || storedCastInfo.thumbnailUrl;
-        console.log('[TV Player Modal] Stored cast info from options:', storedCastInfo);
-    }
+    // Populate canonical cast identity first so restore/sync does not depend on active viewer state.
+    mergeStoredCastInfo({
+        ...options,
+        thumbnailUrl: options.thumbnailUrl || thumbnailUrl
+    });
+    console.log('[TV Player Modal] Stored cast info from options:', storedCastInfo);
 
     // Fallback to window.ragotModules.appState (for non-restoration cases)
-    if (window.ragotModules.appState && (!storedCastInfo.categoryId || storedCastInfo.mediaIndex === undefined)) {
-        storedCastInfo.categoryId = window.ragotModules.appState.currentCategoryId || storedCastInfo.categoryId;
-        storedCastInfo.mediaIndex = window.ragotModules.appState.currentMediaIndex !== undefined ? window.ragotModules.appState.currentMediaIndex : storedCastInfo.mediaIndex;
-        if (window.ragotModules.appState.fullMediaList && window.ragotModules.appState.currentMediaIndex !== undefined) {
-            const currentMedia = window.ragotModules.appState.fullMediaList[window.ragotModules.appState.currentMediaIndex];
-            if (currentMedia) {
-                storedCastInfo.mediaUrl = currentMedia.url || storedCastInfo.mediaUrl;
-                storedCastInfo.thumbnailUrl = currentMedia.thumbnailUrl || thumbnailUrl || storedCastInfo.thumbnailUrl;
-            }
-        }
+    if (window.ragotModules.appState && (!storedCastInfo.viewKey || !storedCastInfo.mediaId)) {
+        mergeCurrentViewerFallback();
         console.log('[TV Player Modal] Stored cast info from window.ragotModules.appState:', storedCastInfo);
     }
 
@@ -402,24 +524,7 @@ function showTvPlayerModal(options = {}) {
         activateModalFocusTrap();
 
         // Show connecting status if needed
-        const subtitleEl = $('.tv-player-subtitle', modalElement);
-        if (subtitleEl) {
-            if (options.isBooting || !options.connected) {
-                subtitleEl.innerHTML = `
-                    <span class="tv-player-live-indicator" style="color: var(--text-tertiary);">
-                        <span class="tv-player-live-dot" style="background: var(--text-tertiary); animation: none;"></span>
-                        Starting TV...
-                    </span>
-                `;
-            } else {
-                subtitleEl.innerHTML = `
-                    <span class="tv-player-live-indicator">
-                        <span class="tv-player-live-dot"></span>
-                        Casting to TV
-                    </span>
-                `;
-            }
-        }
+        updateSubtitleState(options.connected !== false, options.isBooting === true);
     }, 50);
 
     // DO NOT start progress tracking here - wait for TV to confirm playback
@@ -434,28 +539,13 @@ function showTvPlayerModal(options = {}) {
  */
 function updateConnectionStatus(status = {}) {
     if (!modalElement || !isVisible) return;
-    const subtitle = $('.tv-player-subtitle', modalElement);
-    if (!subtitle) return;
 
     const isBooting = status.isBooting === true;
     const connected = status.connected === true;
-    setModalLoading(isBooting || !connected);
-
-    if (isBooting || !connected) {
-        subtitle.innerHTML = `
-            <span class="tv-player-live-indicator" style="color: var(--text-tertiary);">
-                <span class="tv-player-live-dot" style="background: var(--text-tertiary); animation: none;"></span>
-                Starting TV...
-            </span>
-        `;
-    } else {
-        subtitle.innerHTML = `
-            <span class="tv-player-live-indicator">
-                <span class="tv-player-live-dot"></span>
-                Casting to TV
-            </span>
-        `;
-    }
+    
+    // Remain in loading state if first state hasn't been received yet
+    setModalLoading(isBooting || !connected || !hasReceivedFirstState);
+    updateSubtitleState(connected, isBooting);
 }
 
 /**
@@ -549,36 +639,13 @@ function updatePlaybackState(state) {
     }
 
     // Store cast info for guest sync (independent of window.ragotModules.appState)
-    if (state.category_id !== undefined) {
-        storedCastInfo.categoryId = state.category_id;
-    }
-    if (state.media_index !== undefined) {
-        storedCastInfo.mediaIndex = state.media_index;
-    }
-    if (state.media_path) {
-        storedCastInfo.mediaUrl = state.media_path;
-    }
-    if (state.thumbnail_url) {
-        storedCastInfo.thumbnailUrl = state.thumbnail_url;
-    }
+    mergeStoredCastInfo(state);
 
-    // FIXED: Update subtitle to "Casting to TV" when we receive first playback state
-    // This confirms the TV is actually playing, not just connecting
-    if (subtitleEl && state.currentTime !== undefined) {
-        const currentHtml = subtitleEl.innerHTML;
-        if (currentHtml.includes('Starting TV')) {
-            subtitleEl.innerHTML = `
-                <span class="tv-player-live-indicator">
-                    <span class="tv-player-live-dot"></span>
-                    Casting to TV
-                </span>
-            `;
-            console.log('[TV Player Modal] Updated subtitle: Starting -> Casting');
-        }
-    }
-
+    // Mark first state as received once the TV starts reporting active play time or state
     if (state.currentTime !== undefined || state.isPlaying !== undefined) {
+        hasReceivedFirstState = true;
         setModalLoading(false);
+        updateSubtitleState(true, false);
     }
 }
 
@@ -597,7 +664,10 @@ function handleClose(e) {
     if (isMinimized) {
         console.log('[TV Player Modal] Close button clicked while minimized - stopping cast');
         if (socket) {
-            socket.emit(TV_EVENTS.TV_STOP_CASTING);
+            socket.emit(TV_EVENTS.TV_STOP_CASTING, {
+                currentTime: Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0,
+                duration: Number.isFinite(duration) && duration > 0 ? duration : 0
+            });
         }
         return;
     }
@@ -739,27 +809,16 @@ function updateSyncButtonVisibility() {
  * Handle sync progress button click
  * Guest mode saves progress to IndexedDB.
  */
-function handleSyncProgress() {
+async function handleSyncProgress() {
     console.log('[TV Player Modal] Sync progress clicked');
 
-    // Use stored cast info first (from tv_playback_state), fallback to window.ragotModules.appState
-    let categoryId = storedCastInfo.categoryId;
-    let mediaIndex = storedCastInfo.mediaIndex;
-    let videoUrl = storedCastInfo.mediaUrl;
-    let thumbnailUrl = storedCastInfo.thumbnailUrl;
+    const castInfo = await resolveStoredCastRecord();
+    const categoryId = castInfo.categoryId;
+    const mediaId = castInfo.mediaId;
+    const videoUrl = castInfo.mediaUrl;
+    const thumbnailUrl = castInfo.thumbnailUrl;
 
-    // Fallback to window.ragotModules.appState if stored info is unavailable
-    if (!categoryId || mediaIndex === undefined) {
-        categoryId = window.ragotModules.appState?.currentCategoryId;
-        mediaIndex = window.ragotModules.appState?.currentMediaIndex;
-        const fullMediaList = window.ragotModules.appState?.fullMediaList;
-        if (fullMediaList && mediaIndex !== undefined) {
-            videoUrl = fullMediaList[mediaIndex]?.url;
-            thumbnailUrl = fullMediaList[mediaIndex]?.thumbnailUrl;
-        }
-    }
-
-    if (!categoryId || mediaIndex === undefined || !videoUrl) {
+    if (!categoryId || !mediaId || !videoUrl) {
         console.warn('[TV Player Modal] Cannot sync - missing cast state');
         showSyncFeedback(false, 'No media to sync');
         return;
@@ -779,8 +838,8 @@ function handleSyncProgress() {
         }
 
         if (currentTime > 0) {
-            saveLocalProgress(categoryId, mediaIndex, totalCount, currentTime, duration, thumbnailUrl);
-            console.log(`[Guest Sync] Saved category progress to IndexedDB: cat=${categoryId}, idx=${mediaIndex}, time=${currentTime.toFixed(1)}s`);
+            saveLocalProgress(categoryId, 0, totalCount, currentTime, duration, thumbnailUrl);
+            console.log(`[Guest Sync] Saved category progress to IndexedDB: cat=${categoryId}, media=${mediaId}, time=${currentTime.toFixed(1)}s`);
         }
 
         showSyncFeedback(true, 'Progress saved!');
@@ -1103,6 +1162,7 @@ function destroyTvPlayerModal() {
     isVisible = false;
     isMinimized = false;
     isDragging = false;
+    resetStoredCastInfo();
 }
 
 export {

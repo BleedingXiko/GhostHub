@@ -26,14 +26,12 @@ import { openViewer, openViewerByUrl } from './navigation.js';
  * State shape:
  *   continueWatchingData  — array from streamingState
  *   categoriesData        — array from streamingState
- *   categoryMediaCache    — object from streamingState (to pick hero thumbnail from first media)
  */
 export class StreamingHeroComponent extends Component {
     constructor() {
         super({
             continueWatchingData: [],
             categoriesData: [],
-            categoryMediaCache: {},
         });
         // Last rendered hero item — used to skip or surgically patch re-renders.
         this._lastHeroItem = null;
@@ -42,7 +40,7 @@ export class StreamingHeroComponent extends Component {
     // ── Internal hero item resolution ──────────────────────────────────────
 
     _getHeroItem() {
-        const { continueWatchingData, categoriesData, categoryMediaCache } = this.state;
+        const { continueWatchingData, categoriesData } = this.state;
 
         // Priority 1: most recent Continue Watching item
         if (continueWatchingData.length > 0) {
@@ -61,22 +59,14 @@ export class StreamingHeroComponent extends Component {
         // Priority 2/3: use the first category's own thumbnail.
         // We intentionally do NOT use media[0].thumbnailUrl here — the category
         // thumbnail from /api/categories is available immediately (no cache needed)
-        // and stays stable across cache loads, preventing image flicker when
-        // categoryMediaCache populates asynchronously after the initial render.
+        // and stays stable across row view hydration, preventing image flicker.
         if (categoriesData.length > 0) {
             const firstCat = categoriesData[0];
             const catName = firstCat.name;
             const catThumb = firstCat.thumbnailUrl || firstCat.thumbnail;
 
-            // Still prefer the category name from cached media if available
-            const cacheKey = `${firstCat.id}|sf:|mf:all`;
-            const cache = categoryMediaCache[cacheKey];
-            const displayName = (cache?.media?.length > 0)
-                ? (cache.media[0].name?.replace(/\.[^/.]+$/, '') || catName)
-                : catName;
-
             return {
-                categoryName: displayName,
+                categoryName: catName,
                 thumbnailUrl: catThumb,
                 categoryId: firstCat.id,
                 index: 0,

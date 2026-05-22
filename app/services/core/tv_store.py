@@ -94,8 +94,11 @@ def build_casting_info(state=None):
     if not state:
         return None
     return {
+        'viewKey': state.get('viewKey'),
+        'viewType': state.get('viewType'),
+        'viewParams': state.get('viewParams') or {},
+        'mediaId': state.get('mediaId'),
         'category_id': state.get('category_id'),
-        'media_index': state.get('media_index'),
         'media_path': state.get('media_path'),
         'media_type': state.get('media_type'),
         'thumbnail_url': state.get('thumbnail_url'),

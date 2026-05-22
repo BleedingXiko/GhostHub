@@ -28,6 +28,10 @@ let networkConnectionRef = null;
 let networkChangeHandler = null;
 let networkChangeCleanup = null;
 let ghoststreamLifecycle = null;
+const GHOSTSTREAM_STATUS_CACHE_TTL_MS = 5000;
+let ghoststreamStatusCache = null;
+let ghoststreamStatusCacheAt = 0;
+let ghoststreamStatusInFlight = null;
 
 function getRuntimeConfig() {
     return window.ragotModules?.appStore?.get?.('config', {}) || {};
@@ -444,7 +448,7 @@ export function createConfigPopup(anchorElement) {
                 resultDiv.className = 'gs-add-result success';
                 input.value = '';
                 // Refresh status
-                await checkStatus();
+                await checkStatus({ force: true });
                 // Rebuild popup to show new server
                 setTimeout(() => createConfigPopup(anchorElement), 1000);
             } else {
@@ -517,43 +521,65 @@ export function createConfigPopup(anchorElement) {
 /**
  * Check GhostStream service status
  */
-export async function checkStatus() {
-    try {
-        const response = await fetch('/api/ghoststream/status');
-        if (!response.ok) {
-            throw new Error(`Status check failed: ${response.status}`);
-        }
+export async function checkStatus(options = {}) {
+    const { force = false } = options;
+    const now = Date.now();
+    if (!force && ghoststreamStatusCache && (now - ghoststreamStatusCacheAt) < GHOSTSTREAM_STATUS_CACHE_TTL_MS) {
+        applyStatus(ghoststreamStatusCache);
+        return ghoststreamStatusCache;
+    }
+    if (!force && ghoststreamStatusInFlight) {
+        return ghoststreamStatusInFlight;
+    }
 
-        const data = await response.json();
-        const wasAvailable = ghoststreamAvailable;
-
-        ghoststreamAvailable = data.available;
-        ghoststreamServers = data.servers || [];
-        preferredServer = data.preferred_server;
-        capabilities = data.capabilities;
-
-        // Notify if availability changed
-        if (wasAvailable !== ghoststreamAvailable) {
-            console.log(`[GhostStream] Availability changed: ${ghoststreamAvailable}`);
-            triggerEvent('statusChange', {
-                available: ghoststreamAvailable,
-                servers: ghoststreamServers,
-                capabilities
-            });
-
-            // Connect WebSocket for progress updates if available
-            if (ghoststreamAvailable && preferredServer) {
-                connectProgressWebSocket();
+    ghoststreamStatusInFlight = (async () => {
+        try {
+            const response = await fetch('/api/ghoststream/status');
+            if (!response.ok) {
+                throw new Error('Status check failed: ' + response.status);
             }
-        }
 
-        return data;
-    } catch (error) {
-        console.warn('[GhostStream] Status check failed:', error.message);
-        ghoststreamAvailable = false;
-        return null;
+            const data = await response.json();
+            ghoststreamStatusCache = data;
+            ghoststreamStatusCacheAt = Date.now();
+            applyStatus(data);
+            return data;
+        } catch (error) {
+            console.warn('[GhostStream] Status check failed:', error.message);
+            ghoststreamAvailable = false;
+            return null;
+        } finally {
+            ghoststreamStatusInFlight = null;
+        }
+    })();
+    return ghoststreamStatusInFlight;
+}
+
+function applyStatus(data) {
+    if (!data) return;
+    const wasAvailable = ghoststreamAvailable;
+
+    ghoststreamAvailable = data.available;
+    ghoststreamServers = data.servers || [];
+    preferredServer = data.preferred_server;
+    capabilities = data.capabilities;
+
+    // Notify if availability changed
+    if (wasAvailable !== ghoststreamAvailable) {
+        console.log('[GhostStream] Availability changed: ' + ghoststreamAvailable);
+        triggerEvent('statusChange', {
+            available: ghoststreamAvailable,
+            servers: ghoststreamServers,
+            capabilities
+        });
+
+        // Connect WebSocket for progress updates if available
+        if (ghoststreamAvailable && preferredServer) {
+            connectProgressWebSocket();
+        }
     }
 }
+
 
 /**
  * Check if GhostStream transcoding is available
@@ -894,7 +920,7 @@ export async function addManualServer(address) {
         const data = await response.json();
 
         if (response.ok) {
-            await checkStatus();
+            await checkStatus({ force: true });
             return { success: true };
         }
 

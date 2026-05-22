@@ -7,6 +7,7 @@ import { ensureFeatureAccess } from '../../utils/authManager.js';
 import { videoIcon, archiveIcon, downloadIcon, folderIcon, fileIcon } from '../../utils/icons.js';
 import { isUserAdmin } from '../../utils/progressDB.js';
 import { Module, createElement, attr, $, $$ } from '../../libs/ragot.esm.min.js';
+import { getCurrentViewerRecord } from './viewerState.js';
 
 // Reference to app state (set via init)
 let appState = null;
@@ -48,11 +49,7 @@ function updateFloatingDownloadVisibility() {
  * @returns {Object|null} The current media item or null if not available.
  */
 function getCurrentMediaItem() {
-    if (appState && appState.fullMediaList && typeof appState.currentMediaIndex === 'number' &&
-        appState.currentMediaIndex >= 0 && appState.currentMediaIndex < appState.fullMediaList.length) {
-        return appState.fullMediaList[appState.currentMediaIndex];
-    }
-    return null;
+    return getCurrentViewerRecord(appState);
 }
 
 /**

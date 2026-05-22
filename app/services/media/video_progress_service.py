@@ -51,6 +51,22 @@ def save_video_progress(
                 logger.info("Rejected progress save for deleted profile %s", profile_id)
                 return False, "Active profile is invalid."
 
+            existing = conn.execute(
+                """
+                SELECT video_duration, thumbnail_url, category_id
+                FROM video_progress
+                WHERE video_path = ? AND profile_id = ?
+                """,
+                (str(video_path), str(profile_id)),
+            ).fetchone()
+            if existing:
+                if video_duration is None or video_duration <= 0:
+                    video_duration = existing['video_duration']
+                if not thumbnail_url:
+                    thumbnail_url = existing['thumbnail_url']
+                if not category_id:
+                    category_id = existing['category_id']
+
             conn.execute(
                 """
                 INSERT OR REPLACE INTO video_progress

@@ -29,9 +29,29 @@ class TestGetConfig:
             assert response.status_code == 200
             data = response.get_json()
             assert 'categories' in data
-            assert 'python_config' in data
+            assert 'python_config' not in data
             assert 'isPasswordProtectionActive' in data
             assert 'is_admin' in data
+
+    def test_get_config_admin_includes_python_config(self, admin_client, app_context, mock_config):
+        """Should include Python config for admin sessions."""
+        mock_config('SESSION_PASSWORD', '')
+
+        with patch('app.controllers.system.config_controller.config_service') as mock_service:
+            mock_service.load_config.return_value = (
+                {
+                    'categories': [],
+                    'python_config': {'ADMIN_PASSWORD': 'admin'}
+                },
+                None
+            )
+
+            response = admin_client.get('/api/config')
+
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['is_admin'] is True
+            assert data['python_config']['ADMIN_PASSWORD'] == 'admin'
 
     def test_get_config_with_password_protection(self, client, app_context, mock_config):
         """Should indicate password protection status."""

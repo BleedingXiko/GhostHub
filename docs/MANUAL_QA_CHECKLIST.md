@@ -70,7 +70,9 @@ Run this checklist on actual Pi hardware before publishing or announcing a relea
 - [ ] Navigation between images works
 
 ### Performance
-- [ ] 100+ images load without lag
+- [ ] 10k+ indexed media library opens without loading an entire category/month into memory
+- [ ] Streaming rows, gallery timeline, month overlay, and search share hydrated records through `window.ragotModules.mediaManifest`
+- [ ] Visible-window navigation hydrates only missing ids through `/api/media/records`
 - [ ] Thumbnails load progressively (lazy loading)
 - [ ] No memory issues with large galleries
 

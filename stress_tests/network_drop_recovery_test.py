@@ -53,9 +53,16 @@ class Colors:
 class NetworkDropTest:
     """Test network failure recovery"""
 
-    def __init__(self, base_url: str, session_password: Optional[str] = None, output_file: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str,
+        session_password: Optional[str] = None,
+        admin_password: Optional[str] = None,
+        output_file: Optional[str] = None,
+    ):
         self.base_url = base_url.rstrip('/')
         self.session_password = session_password
+        self.admin_password = admin_password
         self.session = requests.Session()
         self.output_file = output_file
         self.results = {
@@ -79,14 +86,23 @@ class NetworkDropTest:
 
         print(f"[{timestamp}] {prefix} {message}")
 
-    def _record_result(self, test_name: str, passed: bool, details: Dict):
+    def _record_result(self, test_name: str, passed: bool, details: Dict, skipped: bool = False):
         """Record test result"""
-        self.results['tests'].append({
+        result = {
             'name': test_name,
             'passed': passed,
             'timestamp': datetime.now().isoformat(),
             'details': details
-        })
+        }
+        if skipped:
+            result['skipped'] = True
+            result['skip_reason'] = details.get('skip_reason') or details.get('error')
+        self.results['tests'].append(result)
+
+    def _record_skip(self, test_name: str, reason: str) -> bool:
+        self._log(f"Skipping {test_name}: {reason}", "WARN")
+        self._record_result(test_name, True, {'skip_reason': reason}, skipped=True)
+        return True
 
     def _ensure_session(self) -> None:
         """Ensure session cookie is set."""
@@ -130,6 +146,17 @@ class NetworkDropTest:
         self._log("Session password validation failed.", "ERROR")
         return False
 
+    def _claim_admin(self) -> bool:
+        self._ensure_session()
+        if not self._validate_session_password():
+            return False
+        payload = {'password': self.admin_password} if self.admin_password else {}
+        try:
+            resp = self.session.post(f"{self.base_url}/api/admin/claim", json=payload, timeout=10)
+            return resp.status_code == 200 and resp.json().get('success', False)
+        except Exception:
+            return False
+
     def _get_test_drive(self) -> str:
         """Get a valid drive path for upload tests."""
         try:
@@ -152,6 +179,11 @@ class NetworkDropTest:
             if not self._validate_session_password():
                 self._record_result("Upload Resume After Drop", False, {'error': 'session_password_required'})
                 return False
+            if not self._claim_admin():
+                return self._record_skip(
+                    "Upload Resume After Drop",
+                    "admin is required before uploads so cleanup can succeed",
+                )
 
             # Create test data - 10MB file split into 10 chunks
             chunk_size = 1 * 1024 * 1024  # 1MB chunks
@@ -256,9 +288,9 @@ class NetworkDropTest:
             self._log("Cleaning up network drop test file...")
             try:
                 file_path = f"{drive_path}/network_drop_test.mp4"
-                cleanup_resp = self.session.delete(
-                    f"{self.base_url}/api/storage/media",
-                    json={'file_path': file_path},
+                cleanup_resp = self.session.post(
+                    f"{self.base_url}/api/storage/media/batch-delete",
+                    json={'file_paths': [file_path]},
                     timeout=10
                 )
                 if cleanup_resp.status_code == 200:
@@ -418,8 +450,9 @@ class NetworkDropTest:
         self.results['end_time'] = datetime.now().isoformat()
         self.results['summary'] = {
             'total_tests': len(self.results['tests']),
-            'passed': sum(1 for t in self.results['tests'] if t['passed']),
-            'failed': sum(1 for t in self.results['tests'] if not t['passed'])
+            'passed': sum(1 for t in self.results['tests'] if t['passed'] and not t.get('skipped')),
+            'failed': sum(1 for t in self.results['tests'] if not t['passed'] and not t.get('skipped')),
+            'skipped': sum(1 for t in self.results['tests'] if t.get('skipped')),
         }
 
         try:
@@ -467,11 +500,12 @@ def main():
     parser.add_argument('--drops', type=int, default=3,
                        help='Number of drops to simulate')
     parser.add_argument('--session-password', help='Session password if required')
+    parser.add_argument('--admin-password', help='Admin password for upload cleanup')
     parser.add_argument('--output', help='Output JSON file for results')
 
     args = parser.parse_args()
 
-    tester = NetworkDropTest(args.url, args.session_password, args.output)
+    tester = NetworkDropTest(args.url, args.session_password, args.admin_password, args.output)
 
     try:
         if args.test == 'all':

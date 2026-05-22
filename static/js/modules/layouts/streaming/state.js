@@ -2,14 +2,25 @@
  * Streaming Layout - State Management
  *
  * StreamingStateModule extends Module so other modules/components can subscribe
- * to state changes. All legacy getter/setter exports are thin wrappers kept for
- * backward compatibility with data.js, rows.js, cards.js, navigation.js, etc.
+ * to normalized category/order state changes.
  */
 import { Module, $ } from '../../../libs/ragot.esm.min.js';
+import { selectView } from '../../media/selectors.js';
 
 export const MEDIA_PER_PAGE = 20;
 export const SCROLL_LOAD_THRESHOLD = 200;
 export const MAX_CONTINUE_WATCHING = 15;
+const CATEGORY_VIEW_FIELDS = [
+    'viewKey',
+    'viewPage',
+    'viewHasMore',
+    'viewStatus',
+    'viewSubfolder',
+    'viewMediaFilter',
+    'subfolders',
+    'asyncIndexing',
+    'indexingProgress',
+];
 
 // ── StreamingStateModule ────────────────────────────────────────────────────
 
@@ -22,9 +33,9 @@ export class StreamingStateModule extends Module {
 
             // Media data
             categoriesData: [],
-            categoryMediaCache: {},
             continueWatchingData: [],
             whatsNewData: [],
+            whatsNewViewKey: null,
             videoProgressMap: {},
             continueWatchingLoading: false,
             whatsNewLoading: false,
@@ -45,7 +56,7 @@ export class StreamingStateModule extends Module {
             gridTotalItems: 0,
 
             // Pagination
-            currentPage: 1,
+            activePage: 1,
             limit: 20,
             total: 0,
             totalPages: 1,
@@ -74,6 +85,7 @@ export function getIsLoading() { return streamingState.state.isLoading; }
 export function getCategoriesData() { return streamingState.state.categoriesData; }
 export function getContinueWatchingData() { return streamingState.state.continueWatchingData; }
 export function getWhatsNewData() { return streamingState.state.whatsNewData; }
+export function getWhatsNewViewKey() { return streamingState.state.whatsNewViewKey; }
 export function getVideoProgressMap() { return streamingState.state.videoProgressMap; }
 export function getContinueWatchingLoading() { return streamingState.state.continueWatchingLoading; }
 export function getWhatsNewLoading() { return streamingState.state.whatsNewLoading; }
@@ -85,7 +97,7 @@ export function getCategoryNameFilter() { return streamingState.state.categoryNa
 export function getSubfolderFilter() { return streamingState.state.subfolderFilter; }
 export function getParentNameFilter() { return streamingState.state.parentNameFilter; }
 export function getCategoryIdsFilter() { return streamingState.state.categoryIdsFilter; }
-export function getCurrentPage() { return streamingState.state.currentPage; }
+export function getActivePage() { return streamingState.state.activePage; }
 export function getLimit() { return streamingState.state.limit; }
 export function getTotal() { return streamingState.state.total; }
 export function getTotalPages() { return streamingState.state.totalPages; }
@@ -98,10 +110,43 @@ export function getGridTotalItems() { return streamingState.state.gridTotalItems
 export function setContainer(container) { streamingState.setState({ streamingContainer: container }); }
 export function setIsStreamingLayout(value) { streamingState.setState({ isStreamingLayout: value }); }
 export function setIsLoading(value) { streamingState.setState({ isLoading: value }); }
-export function setCategoriesData(data) { streamingState.setState({ categoriesData: data }); }
-export function setCategoryMediaCache(cache) { streamingState.setState({ categoryMediaCache: cache }); }
+export function deriveStreamingRowViewKey(category, filterState = {}) {
+    if (!category) return null;
+    const subfolderFilter = filterState.subfolderFilter !== undefined ? filterState.subfolderFilter : streamingState.state.subfolderFilter;
+    const categoryIdFilter = filterState.categoryIdFilter !== undefined ? filterState.categoryIdFilter : streamingState.state.categoryIdFilter;
+    const mediaFilter = filterState.mediaFilter !== undefined ? filterState.mediaFilter : streamingState.state.mediaFilter;
+
+    const subfolder = (subfolderFilter && String(categoryIdFilter) === String(category.id)) ? subfolderFilter : '';
+    const viewType = subfolder ? 'subfolder_grid' : 'streaming_row';
+    const mf = mediaFilter || 'all';
+    return `${viewType}::${category.id}::${subfolder}::${mf}::${MEDIA_PER_PAGE}`;
+}
+
+export function setCategoriesData(data) {
+    if (!Array.isArray(data)) {
+        streamingState.setState({ categoriesData: data });
+        return;
+    }
+    const existing = streamingState.state.categoriesData || [];
+    const filterState = {
+        subfolderFilter: streamingState.state.subfolderFilter,
+        categoryIdFilter: streamingState.state.categoryIdFilter,
+        mediaFilter: streamingState.state.mediaFilter,
+    };
+    const merged = data.map((incoming) => {
+        const matched = existing.find((item) => String(item?.id) === String(incoming?.id));
+        const base = matched ? { ...matched, ...incoming } : { ...incoming };
+        base.viewKey = deriveStreamingRowViewKey(base, filterState);
+        if (!base.viewStatus) {
+            base.viewStatus = matched?.viewStatus || 'idle';
+        }
+        return base;
+    });
+    streamingState.setState({ categoriesData: merged });
+}
 export function setContinueWatchingData(data) { streamingState.setState({ continueWatchingData: data }); }
 export function setWhatsNewData(data) { streamingState.setState({ whatsNewData: data }); }
+export function setWhatsNewViewKey(viewKey) { streamingState.setState({ whatsNewViewKey: viewKey || null }); }
 export function setVideoProgressMap(map) { streamingState.setState({ videoProgressMap: map }); }
 export function setContinueWatchingLoading(value) { streamingState.setState({ continueWatchingLoading: value }); }
 export function setWhatsNewLoading(value) { streamingState.setState({ whatsNewLoading: value }); }
@@ -112,7 +157,7 @@ export function setCategoryNameFilter(name) { streamingState.setState({ category
 export function setSubfolderFilter(subfolder) { streamingState.setState({ subfolderFilter: subfolder }); }
 export function setParentNameFilter(name) { streamingState.setState({ parentNameFilter: name }); }
 export function setCategoryIdsFilter(ids) { streamingState.setState({ categoryIdsFilter: ids }); }
-export function setCurrentPage(page) { streamingState.setState({ currentPage: page }); }
+export function setActivePage(page) { streamingState.setState({ activePage: page }); }
 export function setLimit(value) { streamingState.setState({ limit: value }); }
 export function setTotal(value) { streamingState.setState({ total: value }); }
 export function setTotalPages(value) { streamingState.setState({ totalPages: value }); }
@@ -120,48 +165,89 @@ export function setHasMore(value) { streamingState.setState({ hasMore: value });
 export function setGridMode(value) { streamingState.setState({ gridMode: value }); }
 export function setGridTotalItems(value) { streamingState.setState({ gridTotalItems: value }); }
 
-// ── Cache operations ─────────────────────────────────────────────────────────
-// Replace the whole reference on each mutation so Module subscribers see the change.
-
-export function getCategoryCache(categoryId, subfolder = null, mf = 'all') {
-    const key = `${categoryId}|sf:${subfolder || ''}|mf:${mf || 'all'}`;
-    return streamingState.state.categoryMediaCache[key];
+export function getCategoryView(categoryId, subfolder = null, mf = 'all') {
+    const category = (streamingState.state.categoriesData || []).find((item) => String(item?.id) === String(categoryId));
+    if (!category?.viewKey && !category?.viewStatus) return null;
+    if ((category.viewSubfolder || '') !== (subfolder || '')) return null;
+    if ((category.viewMediaFilter || 'all') !== (mf || 'all')) return null;
+    return categoryToView(category);
 }
 
-export function setCategoryCache(categoryId, data, subfolder = null, mf = 'all') {
-    const key = `${categoryId}|sf:${subfolder || ''}|mf:${mf || 'all'}`;
-    const cache = { ...streamingState.state.categoryMediaCache };
-    cache[key] = data;
-    streamingState.setState({ categoryMediaCache: cache });
+export function setCategoryView(categoryId, data, subfolder = null, mf = 'all') {
+    updateCategoryRecord(categoryId, {
+        viewKey: data?.viewKey || null,
+        viewPage: data?.page || 1,
+        viewHasMore: data?.hasMore === true,
+        viewStatus: data?.status || 'ready',
+        viewSubfolder: subfolder || '',
+        viewMediaFilter: mf || 'all',
+        subfolders: data?.subfolders || [],
+        asyncIndexing: data?.asyncIndexing === true,
+        indexingProgress: data?.indexingProgress || 0,
+    });
 }
 
-export function clearCategoryMediaCache() {
-    streamingState.setState({ categoryMediaCache: {} });
+export function clearCategoryViews() {
+    streamingState.setState({
+        categoriesData: (streamingState.state.categoriesData || []).map(stripCategoryView),
+    });
 }
 
-export function pruneCategoryMediaCache(validCategoryIds) {
+export function pruneCategoryViews(validCategoryIds) {
     if (!Array.isArray(validCategoryIds) || validCategoryIds.length === 0) {
-        streamingState.setState({ categoryMediaCache: {} });
+        clearCategoryViews();
         return;
     }
-
     const validIds = new Set(validCategoryIds.map((categoryId) => String(categoryId)));
-    const nextCache = Object.fromEntries(
-        Object.entries(streamingState.state.categoryMediaCache).filter(([key]) => {
-            const [categoryId] = key.split('|sf:');
-            return validIds.has(categoryId);
-        }),
-    );
-    streamingState.setState({ categoryMediaCache: nextCache });
+    streamingState.setState({
+        categoriesData: (streamingState.state.categoriesData || []).map((category) =>
+            validIds.has(String(category?.id)) ? category : stripCategoryView(category)
+        ),
+    });
 }
 
-export function updateCategoryCache(categoryId, updates, subfolder = null, mf = 'all') {
-    const key = `${categoryId}|sf:${subfolder || ''}|mf:${mf || 'all'}`;
-    const existing = streamingState.state.categoryMediaCache[key];
+function categoryToView(category) {
+    const view = selectView(category.viewKey);
+    return {
+        orderedIds: view?.orderedIds || [],
+        viewKey: category.viewKey || null,
+        page: category.viewPage || 1,
+        hasMore: category.viewHasMore === true || view?.hasMore === true,
+        status: category.viewStatus || view?.status || 'idle',
+        subfolders: category.subfolders || [],
+        asyncIndexing: category.asyncIndexing === true,
+        indexingProgress: category.indexingProgress || 0,
+    };
+}
+
+function stripCategoryView(category) {
+    const next = { ...(category || {}) };
+    const fieldsToKeep = ['viewKey', 'viewSubfolder', 'viewMediaFilter'];
+    CATEGORY_VIEW_FIELDS.forEach((field) => {
+        if (!fieldsToKeep.includes(field)) {
+            delete next[field];
+        }
+    });
+    return next;
+}
+
+function updateCategoryRecord(categoryId, patch) {
+    let changed = false;
+    const categories = (streamingState.state.categoriesData || []).map((category) => {
+        if (String(category?.id) !== String(categoryId)) return category;
+        changed = true;
+        return { ...category, ...patch };
+    });
+    if (!changed && categoryId) {
+        categories.push({ id: categoryId, ...patch });
+    }
+    streamingState.setState({ categoriesData: categories });
+}
+
+export function updateCategoryView(categoryId, updates, subfolder = null, mf = 'all') {
+    const existing = getCategoryView(categoryId, subfolder, mf);
     if (!existing) return;
-    const cache = { ...streamingState.state.categoryMediaCache };
-    cache[key] = { ...existing, ...updates };
-    streamingState.setState({ categoryMediaCache: cache });
+    setCategoryView(categoryId, { ...existing, ...updates }, subfolder, mf);
 }
 
 // ── Video progress operations ────────────────────────────────────────────────
@@ -268,7 +354,7 @@ export function updateVideoProgressMapUrl(oldUrl, newUrl) {
     streamingState.setState({ videoProgressMap: map });
 }
 
-export function updateCategoryMediaCacheForRename(oldUrl, newUrl) {
+export function invalidateCategoryViewRecords(oldUrl, newUrl) {
     if (!oldUrl || !newUrl) return;
     const oldThumb = buildThumbnailUrlFromVideoUrl(oldUrl);
     const newThumb = buildThumbnailUrlFromVideoUrl(newUrl);
@@ -283,16 +369,14 @@ export function updateCategoryMediaCacheForRename(oldUrl, newUrl) {
         return clone;
     }
 
-    const cache = { ...streamingState.state.categoryMediaCache };
-    Object.keys(cache).forEach(key => {
-        const entry = cache[key];
-        if (!entry || !Array.isArray(entry.media)) return;
-        cache[key] = { ...entry, media: entry.media.map(applyRename) };
-    });
+    // Manifest/ordering invalidation is owned by MediaInvalidationModule's
+    // surgical path (invalidateIds + dropIdsFromAllViews + per-category
+    // refetch). Re-invalidating here would abort the in-flight refetch's
+    // AbortController, leaving the row missing the renamed id until reload.
 
     const whatsNewData = Array.isArray(streamingState.state.whatsNewData)
         ? streamingState.state.whatsNewData.map(applyRename)
         : streamingState.state.whatsNewData;
 
-    streamingState.setState({ categoryMediaCache: cache, whatsNewData });
+    streamingState.setState({ whatsNewData });
 }

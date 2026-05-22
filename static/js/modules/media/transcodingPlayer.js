@@ -18,8 +18,9 @@ import {
     persistPlaybackProgress,
     shouldMarkCompletedOnExit
 } from './progressPersistence.js';
-import { getCurrentLayout } from '../../utils/layoutUtils.js';
+import { isPlaybackProgressAllowed } from './progressSync.js';
 import { isScrubPreviewActive } from './scrubPreviewState.js';
+import { getKnownViewerCount, getViewerSession } from './viewerState.js';
 
 // Module-level socket reference (set via init)
 let socket = null;
@@ -43,8 +44,8 @@ function handleVideoEndBehavior() {
     if (videoEndBehavior === 'play_next' && !isCurrentlyAutoPlay) {
         // Check if next media is available
         const appState = window.ragotModules?.appState;
-        const currentIndex = appState?.currentMediaIndex;
-        const totalMedia = appState?.fullMediaList?.length || 0;
+        const currentIndex = getViewerSession(appState)?.activeIndex;
+        const totalMedia = getKnownViewerCount(appState);
 
         if (currentIndex !== undefined && currentIndex < totalMedia - 1) {
             // Next media is available, play it
@@ -69,11 +70,12 @@ function handleVideoEndBehavior() {
  */
 export function createTranscodingVideoElement(file, isActive, decision) {
     const ghoststream = window.ragotModules?.ghoststreamManager;
+    const activeIndex = getViewerSession(window.ragotModules?.appState)?.activeIndex ?? 0;
 
     const container = createElement('div', {
         className: 'viewer-media ghoststream-transcode-container',
-        dataset: { transcoding: 'true', url: file.url, index: window.ragotModules.appState.currentMediaIndex },
-        'data-index': window.ragotModules.appState.currentMediaIndex
+        dataset: { transcoding: 'true', url: file.url, index: activeIndex },
+        'data-index': activeIndex
     });
 
     // Show poster/thumbnail
@@ -231,16 +233,15 @@ function setupCachedProgressSaving(video, file, categoryId) {
         if (isScrubPreviewActive(video)) return;
         if (currentTime <= 0) return;
 
-        // Gallery layout does NOT save progress
-        if (getCurrentLayout() === 'gallery') {
+        if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) {
             return;
         }
 
         const safeDuration = cachedKnownDuration > 0 ? cachedKnownDuration :
             (duration && isFinite(duration)) ? duration : 0;
         const thumbnailUrl = file.thumbnailUrl || file.url;
-        const index = window.ragotModules.appState.currentMediaIndex;
-        const totalCount = window.ragotModules.appState.fullMediaList?.length || 0;
+        const index = getViewerSession(window.ragotModules?.appState)?.activeIndex ?? 0;
+        const totalCount = getKnownViewerCount(window.ragotModules?.appState);
         const activeSocket = socket || window.ragotModules?.appStore?.get?.('socket', null);
 
         persistPlaybackProgress({
@@ -317,9 +318,11 @@ function setupCachedProgressSaving(video, file, categoryId) {
  * @private
  */
 async function setupCachedResume(video, file, categoryId, setDuration) {
+    if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) return;
+
     let savedTimestamp = 0;
 
-    if (hasActiveProfile()) {
+    if (isPlaybackProgressAllowed(window.ragotModules?.appState) && hasActiveProfile()) {
         try {
             const resp = await fetch(`/api/progress/video?video_path=${encodeURIComponent(file.url)}`);
             if (resp.ok) {
@@ -330,7 +333,7 @@ async function setupCachedResume(video, file, categoryId, setDuration) {
                 }
             }
         } catch (e) { /* ignore */ }
-    } else {
+    } else if (isPlaybackProgressAllowed(window.ragotModules?.appState)) {
         const savedProgress = getVideoLocalProgress(file.url);
         if (savedProgress?.video_timestamp > 0) {
             savedTimestamp = savedProgress.video_timestamp;
@@ -743,16 +746,15 @@ function setupHLSProgressSaving(video, file, categoryId, hlsTimeOffset, sourceDu
         const actualPosition = hlsCurrentTime + hlsTimeOffset;
         if (actualPosition <= 0) return;
 
-        // Gallery layout does NOT save progress
-        if (getCurrentLayout() === 'gallery') {
+        if (!isPlaybackProgressAllowed(window.ragotModules?.appState)) {
             return;
         }
 
         const safeDuration = knownDuration > 0 ? knownDuration :
             (duration && isFinite(duration) && duration > 0) ? (duration + hlsTimeOffset) : 0;
         const thumbnailUrl = file.thumbnailUrl || file.url;
-        const index = window.ragotModules.appState.currentMediaIndex;
-        const totalCount = window.ragotModules.appState.fullMediaList?.length || 0;
+        const index = getViewerSession(window.ragotModules?.appState)?.activeIndex ?? 0;
+        const totalCount = getKnownViewerCount(window.ragotModules?.appState);
         const activeSocket = socket || window.ragotModules?.appStore?.get?.('socket', null);
 
         persistPlaybackProgress({

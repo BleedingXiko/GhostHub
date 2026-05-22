@@ -3,6 +3,7 @@
  * Adds the currently playing media item to the shared session playlist.
  */
 import { refreshAllLayouts } from '../utils/liveVisibility.js';
+import { getCurrentViewerRecord, getViewerSession } from '../modules/media/viewerState.js';
 
 export const add = {
     description: '• Adds the current media item to the shared session playlist.',
@@ -16,22 +17,19 @@ export const add = {
 
         // Check if we are viewing media using app state (like /myview)
         const categoryId = appState.currentCategoryId;
-        const currentIndex = appState.currentMediaIndex;
+        const viewer = getViewerSession(appState);
 
         // Check if category is loaded and index is valid (not null/undefined)
-        if (!categoryId || currentIndex == null) {
+        if (!categoryId || !viewer) {
             displayLocalMessage('No media item open.', { icon: 'x' });
             return;
         }
 
-        const currentList = appState.fullMediaList || [];
-
-        if (currentIndex < 0 || currentIndex >= currentList.length) {
+        const currentItem = getCurrentViewerRecord(appState);
+        if (!currentItem) {
             displayLocalMessage('No media item open.', { icon: 'x' });
             return;
         }
-
-        const currentItem = currentList[currentIndex];
 
         try {
             const response = await fetch('/api/session/playlist/add', {
@@ -60,4 +58,3 @@ export const add = {
         }
     }
 };
-

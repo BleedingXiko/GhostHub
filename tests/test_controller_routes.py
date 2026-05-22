@@ -84,13 +84,24 @@ class TestMediaControllerRoutes:
         paths = _registered_paths(router)
         assert '/categories' in paths
 
-    def test_media_controller_registers_search_and_listing_routes(self):
+    def test_media_controller_registers_search_route(self):
         from app.controllers.media.media_controller import MediaController
         router = _make_router()
         MediaController().build_routes(router)
         paths = _registered_paths(router)
         assert '/search' in paths
-        assert '/categories/<category_id>/media' in paths
+
+    def test_media_ordering_and_records_routes(self):
+        from app.controllers.media.media_ordering_controller import MediaOrderingController
+        from app.controllers.media.media_records_controller import MediaRecordsController
+
+        ordering_router = _make_router()
+        records_router = _make_router()
+        MediaOrderingController().build_routes(ordering_router)
+        MediaRecordsController().build_routes(records_router)
+
+        assert '/order' in _registered_paths(ordering_router)
+        assert '/records' in _registered_paths(records_router)
 
     def test_media_delivery_controller_registers_media_and_thumbnail_routes(self):
         from app.controllers.media.media_delivery_controller import MediaDeliveryController

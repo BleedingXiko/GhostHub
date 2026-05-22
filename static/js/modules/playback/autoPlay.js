@@ -6,6 +6,8 @@
  */
 
 import { Module, createElement, attr, $, $$ } from '../../libs/ragot.esm.min.js';
+import { selectRecordAt } from '../media/selectors.js';
+import { getViewerSession } from '../media/viewerState.js';
 
 // Auto-Play State
 const autoPlayState = {
@@ -162,9 +164,9 @@ export function toggleAutoPlay(interval) {
     updateAutoPlayIndicator(true);
     console.log(`Auto-Play Started (Image Interval: ${autoPlayState.interval / 1000}s)`);
 
-    const appState = window.ragotModules?.appState;
-    if (appState?.currentMediaIndex !== undefined) {
-        handleAutoPlay(appState.currentMediaIndex);
+    const viewer = getViewerSession(window.ragotModules?.appState);
+    if (viewer) {
+        handleAutoPlay(viewer.activeIndex);
     }
 
     return "started";
@@ -182,8 +184,8 @@ export function handleAutoPlay(index) {
     }
     if (!autoPlayState.active) return;
 
-    const appState = window.ragotModules?.appState;
-    const currentFile = appState?.fullMediaList?.[index];
+    const viewer = getViewerSession(window.ragotModules?.appState);
+    const currentFile = viewer ? selectRecordAt(viewer.viewKey, index) : null;
     if (!currentFile) return;
 
     const mediaViewer = window.ragotModules?.appDom?.mediaViewer;

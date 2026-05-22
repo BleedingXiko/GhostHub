@@ -303,6 +303,19 @@
     grid-template-columns: repeat(3, 1fr);
 }
 
+/* VirtualScroller sentinels move into the grid as chunkContainer. They must
+   remain in the DOM so IntersectionObserver fires, but must not consume a
+   grid cell — otherwise items shift into wrong columns. */
+.gallery-grid .vs-sentinel,
+.gallery-grid .vs-placeholder {
+    grid-column: 1 / -1;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+    visibility: hidden;
+    overflow: hidden;
+}
+
 /* ===== MEDIA ITEM ===== */
 .gallery-item {
     position: relative;

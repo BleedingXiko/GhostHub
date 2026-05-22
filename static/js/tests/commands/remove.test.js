@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { remove } from '../../commands/remove.js';
+import { mediaManifest } from '../../modules/media/manifest.js';
+import { mediaOrdering } from '../../modules/media/ordering.js';
 
 describe('Remove Command', () => {
   let mockSocket;
@@ -19,14 +21,24 @@ describe('Remove Command', () => {
 
     const mockAppState = {
       currentCategoryId: 'session-playlist',
-      currentMediaIndex: 0,
-      fullMediaList: [
-        { url: '/media/movie1.mp4', name: 'Movie 1' },
-        { url: '/media/movie2.mp4', name: 'Movie 2' }
-      ]
+      viewer: { viewKey: 'playlist-view', activeIndex: 0 }
     };
+    mediaManifest.clear();
+    mediaOrdering.orders.clear();
+    mediaManifest.ingest({
+      'session-playlist::movie1.mp4': { id: 'session-playlist::movie1.mp4', url: '/media/movie1.mp4', name: 'Movie 1' },
+      'session-playlist::movie2.mp4': { id: 'session-playlist::movie2.mp4', url: '/media/movie2.mp4', name: 'Movie 2' }
+    }, []);
+    mediaOrdering.ingestView('playlist-view', {
+      viewKey: 'playlist-view',
+      viewType: 'streaming_grid',
+      orderedIds: ['session-playlist::movie1.mp4', 'session-playlist::movie2.mp4'],
+      params: { category_id: 'session-playlist', media_filter: 'all' }
+    });
 
     window.ragotModules = {
+      mediaManifest,
+      mediaOrdering,
       appState: mockAppState,
       appStore: {
         getState: vi.fn(() => mockAppState),
@@ -82,7 +94,7 @@ describe('Remove Command', () => {
     });
 
     it('should show error if no media selected', async () => {
-      window.ragotModules.appState.currentMediaIndex = null;
+      window.ragotModules.appState.viewer = null;
 
       await remove.execute(mockSocket, mockDisplayMessage, '');
 
@@ -93,7 +105,7 @@ describe('Remove Command', () => {
     });
 
     it('should show error if index out of range', async () => {
-      window.ragotModules.appState.currentMediaIndex = 100;
+      window.ragotModules.appState.viewer.activeIndex = 100;
 
       await remove.execute(mockSocket, mockDisplayMessage, '');
 
@@ -135,7 +147,10 @@ describe('Remove Command', () => {
     });
 
     it('should go back to categories if last item removed', async () => {
-      window.ragotModules.appState.fullMediaList = [{ url: '/media/movie1.mp4', name: 'Movie 1' }];
+      mediaOrdering.ingestView('playlist-view', {
+        ...mediaOrdering.selectView('playlist-view'),
+        orderedIds: ['session-playlist::movie1.mp4']
+      });
 
       global.fetch.mockResolvedValue({
         ok: true,
@@ -158,7 +173,7 @@ describe('Remove Command', () => {
       expect(window.ragotModules.mediaNavigation.renderMediaWindow).toHaveBeenCalled();
     });
 
-    it('should update state without mutating original list', async () => {
+    it('should update ordering without mutating original list', async () => {
       global.fetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ success: true })
@@ -166,10 +181,7 @@ describe('Remove Command', () => {
 
       await remove.execute(mockSocket, mockDisplayMessage, '');
 
-      expect(window.ragotModules.appStore.actions.setField).toHaveBeenCalledWith(
-        'fullMediaList',
-        expect.arrayContaining([expect.objectContaining({ url: '/media/movie2.mp4' })])
-      );
+      expect(mediaOrdering.selectView('playlist-view').orderedIds).toEqual(['session-playlist::movie2.mp4']);
     });
 
     it('should show error message on failure', async () => {

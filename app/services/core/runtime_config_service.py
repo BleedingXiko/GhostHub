@@ -2,6 +2,8 @@
 
 import os
 
+from flask import current_app, has_app_context
+
 from app.config import Config
 from specter import Service, registry
 
@@ -63,6 +65,8 @@ class RuntimeConfigService(Service):
 
 def get_runtime_config_value(key, default=None):
     """Read runtime config through Specter when available, else fall back to Config."""
+    if has_app_context():
+        return current_app.config.get(key, default)
     service = registry.resolve('runtime_config')
     if service:
         return service.get(key, default)
@@ -71,6 +75,8 @@ def get_runtime_config_value(key, default=None):
 
 def get_runtime_instance_path():
     """Return the current Flask instance path with Config fallback."""
+    if has_app_context():
+        return current_app.instance_path
     service = registry.resolve('runtime_config')
     if service:
         return service.instance_path()
@@ -79,6 +85,8 @@ def get_runtime_instance_path():
 
 def get_runtime_root_path():
     """Return the current Flask root path with filesystem fallback."""
+    if has_app_context():
+        return current_app.root_path
     service = registry.resolve('runtime_config')
     if service:
         return service.root_path()
@@ -87,6 +95,8 @@ def get_runtime_root_path():
 
 def get_runtime_static_folder():
     """Return the current Flask static folder with Config fallback."""
+    if has_app_context():
+        return current_app.static_folder
     service = registry.resolve('runtime_config')
     if service:
         return service.static_folder()
@@ -95,6 +105,8 @@ def get_runtime_static_folder():
 
 def get_runtime_flask_app():
     """Return the active Flask app object when Specter has already booted."""
+    if has_app_context():
+        return current_app._get_current_object()
     service = registry.resolve('runtime_config')
     if service:
         return service._app()

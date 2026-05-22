@@ -11,6 +11,8 @@ from typing import Dict, Optional, Tuple
 from collections import defaultdict
 import ipaddress
 
+import gevent
+
 # Use gevent locks instead of threading.Lock to avoid greenlet assertion warnings
 # when called from streaming generators. gevent.lock.BoundedSemaphore(1) is
 # equivalent to threading.Lock but greenlet-aware.
@@ -20,6 +22,7 @@ from app.services.core.runtime_config_service import get_runtime_config_value
 from app.services.system.rate_limit_runtime_store import rate_limit_runtime_store
 
 logger = logging.getLogger(__name__)
+BURST_WINDOW_SECONDS = 2.0
 
 
 def _rate_limit_runtime_access(reader):
@@ -70,6 +73,11 @@ class TokenBucket:
                 self.tokens -= tokens
                 return True
             return False
+
+    def refund(self, tokens: float) -> None:
+        """Return tokens after a later bucket rejects the same operation."""
+        with self.lock:
+            self.tokens = min(self.capacity, self.tokens + tokens)
 
     def _refill(self):
         """Refill tokens based on elapsed time."""
@@ -127,11 +135,11 @@ class RateLimiter:
             download_per_client_mbps: Download limit per client (Mbps)
             download_global_mbps: Total download limit (Mbps)
         """
-        # Convert Mbps to bytes/sec
-        upload_per_client_bps = float(upload_per_client_mbps) * 1024 * 1024
-        upload_global_bps = float(upload_global_mbps) * 1024 * 1024
-        download_per_client_bps = float(download_per_client_mbps) * 1024 * 1024
-        download_global_bps = float(download_global_mbps) * 1024 * 1024
+        # Convert megabits/sec to bytes/sec. Config values are Mbps, not MB/s.
+        upload_per_client_bps = float(upload_per_client_mbps) * 1_000_000 / 8
+        upload_global_bps = float(upload_global_mbps) * 1_000_000 / 8
+        download_per_client_bps = float(download_per_client_mbps) * 1_000_000 / 8
+        download_global_bps = float(download_global_mbps) * 1_000_000 / 8
 
         with self.lock:
             # NOTE: Config allows setting to 0 to disable rate limiting for that category.
@@ -139,21 +147,21 @@ class RateLimiter:
             self.global_buckets = {}
             if upload_global_bps > 0:
                 self.global_buckets['upload'] = TokenBucket(
-                    capacity=upload_global_bps * 10,
+                    capacity=upload_global_bps * BURST_WINDOW_SECONDS,
                     refill_rate=upload_global_bps
                 )
             if download_global_bps > 0:
                 self.global_buckets['download'] = TokenBucket(
-                    capacity=download_global_bps * 10,
+                    capacity=download_global_bps * BURST_WINDOW_SECONDS,
                     refill_rate=download_global_bps
                 )
 
             # Store per-client limits for lazy initialization (only if enabled)
             self.per_client_limits = {}
             if upload_per_client_bps > 0:
-                self.per_client_limits['upload'] = (upload_per_client_bps * 10, upload_per_client_bps)
+                self.per_client_limits['upload'] = (upload_per_client_bps * BURST_WINDOW_SECONDS, upload_per_client_bps)
             if download_per_client_bps > 0:
-                self.per_client_limits['download'] = (download_per_client_bps * 10, download_per_client_bps)
+                self.per_client_limits['download'] = (download_per_client_bps * BURST_WINDOW_SECONDS, download_per_client_bps)
 
         logger.info(
             f"Rate limiter initialized: "
@@ -183,17 +191,18 @@ class RateLimiter:
         # Periodically cleanup stale clients
         self._maybe_cleanup()
 
-        # Check global limit first
-        with self.lock:
-            global_bucket = self.global_buckets.get(operation)
-        if global_bucket and not global_bucket.consume(bytes_count):
-            logger.warning(f"Global {operation} rate limit exceeded")
-            return False
-
         # Check per-client limit
         client_bucket = self._get_client_bucket(client_ip, operation)
         if client_bucket and not client_bucket.consume(bytes_count):
             logger.debug(f"Client {client_ip} {operation} rate limit exceeded")
+            return False
+
+        with self.lock:
+            global_bucket = self.global_buckets.get(operation)
+        if global_bucket and not global_bucket.consume(bytes_count):
+            if client_bucket:
+                client_bucket.refund(bytes_count)
+            logger.warning(f"Global {operation} rate limit exceeded")
             return False
 
         return True
@@ -222,7 +231,7 @@ class RateLimiter:
                 )
 
                 if multiplier != 1.0:
-                    logger.debug(f"Client {client_ip} gets {multiplier}x rate limit ({refill_rate / 1024 / 1024:.1f} Mbps)")
+                    logger.debug(f"Client {client_ip} gets {multiplier}x rate limit ({refill_rate * 8 / 1_000_000:.1f} Mbps)")
 
             return self.client_buckets[client_ip][operation]
 
@@ -328,8 +337,8 @@ def init_rate_limiter(upload_per_client_mbps: float = 50.0,
     Initialize global rate limiter.
 
     Default limits are generous for home NAS use:
-    - 50 Mbps per client (625 KB/s, fast enough for 4K streaming)
-    - 100 Mbps global (1.25 MB/s total, reasonable for Pi's 1 Gbps ethernet)
+    - 50 Mbps per client (6.25 MB/s, fast enough for 4K streaming)
+    - 100 Mbps global (12.5 MB/s total, reasonable for Pi's 1 Gbps ethernet)
     """
     _get_rate_limiter().init_limits(
         upload_per_client_mbps,
@@ -342,6 +351,60 @@ def init_rate_limiter(upload_per_client_mbps: float = 50.0,
 def check_upload_limit(client_ip: str, bytes_count: int) -> bool:
     """Check if upload is within rate limits."""
     return _get_rate_limiter().check_limit(client_ip, 'upload', bytes_count)
+
+
+def wait_for_upload_capacity(
+    client_ip: str,
+    bytes_count: int,
+    timeout: float = 30.0,
+) -> bool:
+    """Block until the upload limiter can accept this many bytes.
+
+    Real rate-limiters slow callers down; they don't fail their requests.
+    The HTTP-429 path is fine for synthetic stress tests that want to
+    measure rejection rate, but for an actual chunked upload it makes the
+    browser give up partway through and corrupts the file. This helper
+    polls the limiter with gevent.sleep until tokens are available (or the
+    timeout elapses), so chunks queue up and eventually succeed at the
+    configured rate rather than dropping on the floor.
+
+    Returns True if the request was eventually allowed, False on timeout.
+    """
+    limiter = _get_rate_limiter()
+    deadline = time.time() + timeout
+    while True:
+        if limiter.check_limit(client_ip, 'upload', bytes_count):
+            return True
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        # Ask the buckets how long to wait for the deficit to refill, then
+        # sleep that long (capped so a misconfigured bucket can't park us
+        # forever, and floored so we always yield to other greenlets).
+        wait = 0.05
+        try:
+            global_bucket = limiter.global_buckets.get('upload')
+            client_bucket = limiter._get_client_bucket(client_ip, 'upload')
+            for bucket in (client_bucket, global_bucket):
+                if bucket is not None:
+                    wait = max(wait, bucket.get_wait_time(bytes_count))
+        except Exception:
+            pass
+        gevent.sleep(min(wait, remaining, 1.0))
+
+
+def get_effective_upload_limit_mbps(client_ip: str) -> Optional[float]:
+    """Return the effective per-client upload limit for a client, or None when disabled."""
+    limiter = _get_rate_limiter()
+    with limiter.lock:
+        limit = limiter.per_client_limits.get('upload')
+    if not limit:
+        return None
+    _capacity, refill_rate = limit
+    multiplier = _get_rate_limit_multiplier(client_ip)
+    if multiplier == 0.0:
+        return None
+    return refill_rate * multiplier * 8 / 1_000_000
 
 
 def check_download_limit(client_ip: str, bytes_count: int) -> bool:

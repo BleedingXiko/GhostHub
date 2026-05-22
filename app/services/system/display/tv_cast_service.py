@@ -33,6 +33,16 @@ def _coerce_bool(value):
     return bool(value)
 
 
+def _coerce_non_negative_float(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
 class TVCastService(Service):
     """Own TV display connection, cast session, and playback-state coordination."""
 
@@ -51,6 +61,10 @@ class TVCastService(Service):
     @staticmethod
     def _hdmi():
         return registry.require('hdmi_runtime_service')
+
+    @staticmethod
+    def _progress():
+        return registry.require('progress')
 
     def get_connection_status_payload(self):
         """Build the current TV/cast status payload for a newly connected client."""
@@ -150,8 +164,11 @@ class TVCastService(Service):
             'media_type': state.get('media_type', 'video'),
             'media_path': state['media_path'],
             'loop': state.get('loop', True),
+            'viewKey': state.get('viewKey'),
+            'viewType': state.get('viewType'),
+            'viewParams': state.get('viewParams') or {},
+            'mediaId': state.get('mediaId'),
             'category_id': state.get('category_id'),
-            'media_index': state.get('media_index'),
             'thumbnail_url': state.get('thumbnail_url'),
             'start_time': state.get('current_time', 0),
             'duration': state.get('duration', 0),
@@ -218,6 +235,8 @@ class TVCastService(Service):
 
         media_type = data.get('media_type', 'video')
         media_path = data.get('media_path', '')
+        media_id = data.get('mediaId')
+        view_params = data.get('viewParams') if isinstance(data.get('viewParams'), dict) else {}
         loop = data.get('loop', True)
         start_time = data.get('start_time', 0)
         duration = data.get('duration', 0)
@@ -229,11 +248,11 @@ class TVCastService(Service):
         is_guest_cast = not is_admin
         logger.info("[Cast] Initiating %s cast. Session: %s", 'Admin' if is_admin else 'Guest', session_id[:8] if session_id else 'N/A')
         tv_logger.info(
-            "cast_start admin=%s guest=%s category_id=%s media_index=%s",
+            "cast_start admin=%s guest=%s category_id=%s media_id=%s",
             is_admin,
             is_guest_cast,
             data.get('category_id'),
-            data.get('media_index'),
+            media_id,
         )
         self._hdmi().on_cast_start()
 
@@ -242,8 +261,11 @@ class TVCastService(Service):
             'media_type': media_type,
             'media_path': media_path,
             'loop': loop,
+            'viewKey': data.get('viewKey'),
+            'viewType': data.get('viewType'),
+            'viewParams': view_params,
+            'mediaId': media_id,
             'category_id': data.get('category_id'),
-            'media_index': data.get('media_index'),
             'thumbnail_url': data.get('thumbnail_url'),
             'current_time': start_time,
             'duration': duration if duration > 0 else 0,
@@ -280,6 +302,10 @@ class TVCastService(Service):
                 'timestamp': time.time(),
                 'media_path': media_path,
                 'media_type': media_type,
+                'viewKey': data.get('viewKey'),
+                'viewType': data.get('viewType'),
+                'viewParams': view_params,
+                'mediaId': media_id,
             })
             self._events().emit_kiosk_booting(
                 {
@@ -312,8 +338,11 @@ class TVCastService(Service):
             'media_type': media_type,
             'media_path': media_path,
             'loop': loop,
+            'viewKey': data.get('viewKey'),
+            'viewType': data.get('viewType'),
+            'viewParams': view_params,
+            'mediaId': media_id,
             'category_id': data.get('category_id'),
-            'media_index': data.get('media_index'),
             'thumbnail_url': data.get('thumbnail_url'),
             'start_time': start_time,
             'duration': duration if duration > 0 else 0,
@@ -381,6 +410,9 @@ class TVCastService(Service):
             update['paused'] = True
         tv_store.update_playback_state(update)
 
+        if action in ['play', 'pause', 'seek']:
+            self._commit_tv_progress(force=True)
+
         self._events().emit_playback_control(
             {
                 'action': action,
@@ -431,8 +463,11 @@ class TVCastService(Service):
             'currentTime': state['current_time'],
             'duration': state.get('duration', 0),
             'isPlaying': not state['paused'],
+            'viewKey': state.get('viewKey'),
+            'viewType': state.get('viewType'),
+            'viewParams': state.get('viewParams') or {},
+            'mediaId': state.get('mediaId'),
             'category_id': state.get('category_id'),
-            'media_index': state.get('media_index'),
             'media_path': state.get('media_path'),
             'thumbnail_url': state.get('thumbnail_url'),
             'is_guest_cast': state.get('is_guest_cast', True),
@@ -475,8 +510,9 @@ class TVCastService(Service):
             room=tv_sid,
         )
 
-    def stop_cast(self, client_id, session_id, is_admin):
+    def stop_cast(self, client_id, session_id, is_admin, data=None):
         """Stop the current cast and clear server-side cast state."""
+        data = data or {}
         tv_logger = self._get_tv_logger()
         logger.info("Client %s requested to stop TV casting.", client_id)
         tv_logger.info(
@@ -507,6 +543,18 @@ class TVCastService(Service):
             self._events().emit_error('Only admin can stop admin casts.', room=client_id)
             return
 
+        stop_update = {}
+        stop_time = _coerce_non_negative_float(data.get('currentTime'))
+        stop_duration = _coerce_non_negative_float(data.get('duration'))
+        if stop_time is not None:
+            stop_update['current_time'] = stop_time
+        if stop_duration is not None and stop_duration > 0:
+            stop_update['duration'] = stop_duration
+        if stop_update:
+            state = {**state, **stop_update}
+            tv_store.update_playback_state(stop_update)
+
+        self._commit_tv_progress(state=state, force=True)
         tv_store.clear_playback_state()
         tv_sid = tv_store.get_tv_sid()
         if tv_sid:
@@ -524,6 +572,19 @@ class TVCastService(Service):
             },
         )
         logger.info("Stop casting command processed.")
+
+    def _commit_tv_progress(self, state=None, *, force=False):
+        """Persist profile-owned progress from the server's TV cast state."""
+        state = state or tv_store.get_playback_state()
+        if not state:
+            return
+        try:
+            self._progress().process_tv_progress_update(
+                state,
+                force=force,
+            )
+        except Exception as exc:
+            logger.warning("Failed to commit TV progress: %s", exc)
 
     def _resolve_local_media_path(self, media_path):
         if not isinstance(media_path, str) or not media_path.startswith('/media/'):

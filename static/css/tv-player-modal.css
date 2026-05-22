@@ -452,8 +452,21 @@
 }
 
 /* Loading state */
-.tv-player-modal.loading .tv-player-btn-play-pause {
+.tv-player-modal.loading .tv-player-controls {
     pointer-events: none;
+    opacity: 0.4;
+    filter: grayscale(100%);
+    transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.tv-player-subtitle-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    display: inline-block;
+    animation: tv-spinner-spin 0.8s linear infinite;
 }
 
 .tv-player-loading-spinner {

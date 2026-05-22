@@ -11,6 +11,7 @@ import {
 import { getShowHiddenHeaders } from './showHiddenManager.js';
 import { hasActiveProfile } from './profileUtils.js';
 import { $ } from '../libs/ragot.esm.min.js';
+import { getCurrentViewerRecord, getViewerSession } from '../modules/media/viewerState.js';
 
 // ==================== HTML UTILITIES ====================
 
@@ -368,16 +369,16 @@ export async function navigateToMedia(categoryId, mediaUrl = null, index = 0) {
     }
 
     // Fallback to default mediaLoader (shared by grid layouts when opening viewer)
-    if (window.ragotModules?.mediaLoader?.viewCategory) {
+    if (window.ragotModules?.mediaLoader?.openCategoryViewer) {
         try {
-            if (mediaUrl) {
-                await window.ragotModules.mediaLoader.viewCategory(categoryId, [mediaUrl], index);
-            } else {
-                await window.ragotModules.mediaLoader.viewCategory(categoryId, null, index);
-            }
+            await window.ragotModules.mediaLoader.openCategoryViewer({
+                categoryId,
+                startIndex: index,
+                startMediaId: mediaUrl,
+            });
             return true;
         } catch (err) {
-            console.error('[LayoutUtils] Default viewCategory error:', err);
+            console.error('[LayoutUtils] Default openCategoryViewer error:', err);
         }
     }
 
@@ -399,10 +400,12 @@ export function getCurrentMediaState() {
     // Fallback to shared app state service
     const appState = window.ragotModules?.appState;
     if (appState) {
+        const viewer = getViewerSession(appState);
+        const currentMedia = getCurrentViewerRecord(appState);
         return {
             categoryId: appState.currentCategoryId,
-            mediaUrl: appState.fullMediaList?.[appState.currentMediaIndex]?.url,
-            index: appState.currentMediaIndex
+            mediaUrl: currentMedia?.url,
+            index: viewer?.activeIndex ?? -1
         };
     }
 

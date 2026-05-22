@@ -11,6 +11,8 @@ vi.mock('../../utils/authManager.js', () => ({
 
 import { myview } from '../../commands/myview.js';
 import { ensureFeatureAccess } from '../../utils/authManager.js';
+import { mediaManifest } from '../../modules/media/manifest.js';
+import { mediaOrdering } from '../../modules/media/ordering.js';
 
 describe('MyView Command', () => {
   let mockSocket;
@@ -24,10 +26,24 @@ describe('MyView Command', () => {
     };
     mockDisplayMessage = vi.fn();
 
+    mediaManifest.clear();
+    mediaOrdering.orders.clear();
+    mediaManifest.ingest({
+      'movies::movie5.mp4': { id: 'movies::movie5.mp4', url: '/media/movie5.mp4', name: 'Movie 5' }
+    }, []);
+    mediaOrdering.ingestView('movies-view', {
+      viewKey: 'movies-view',
+      viewType: 'streaming_grid',
+      orderedIds: ['movies::movie5.mp4'],
+      params: { category_id: 'movies', media_filter: 'all' }
+    });
+
     window.ragotModules = {
+      mediaManifest,
+      mediaOrdering,
       appState: {
         currentCategoryId: 'movies',
-        currentMediaIndex: 5
+        viewer: { viewKey: 'movies-view', activeIndex: 0 }
       }
     };
   });
@@ -87,7 +103,7 @@ describe('MyView Command', () => {
     });
 
     it('should show error if no media index', async () => {
-      window.ragotModules.appState.currentMediaIndex = null;
+      window.ragotModules.appState.viewer = null;
 
       await myview.execute(mockSocket, mockDisplayMessage, '');
 
@@ -102,7 +118,13 @@ describe('MyView Command', () => {
 
       expect(mockSocket.emit).toHaveBeenCalledWith('command', {
         cmd: 'myview',
-        arg: { category_id: 'movies', index: 5 },
+        arg: {
+          category_id: 'movies',
+          viewKey: 'movies-view',
+          viewType: 'streaming_grid',
+          viewParams: { category_id: 'movies', media_filter: 'all' },
+          mediaId: 'movies::movie5.mp4'
+        },
         from: 'test-socket-id'
       });
     });

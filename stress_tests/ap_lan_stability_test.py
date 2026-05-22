@@ -316,7 +316,7 @@ class NetworkModeTest:
         try:
             resp = sync_session.post(
                 f"{self.ghosthub_url}/api/sync/toggle",
-                json={'enabled': True, 'media': {'category_id': cat_id, 'file_url': '', 'index': 0}},
+                json={'enabled': True, 'media': self._sync_payload(cat_id, 0)},
                 timeout=5
             )
             if resp.status_code != 200:
@@ -334,7 +334,7 @@ class NetworkModeTest:
                 # Test sync update (same session = host)
                 resp = sync_session.post(
                     f"{self.ghosthub_url}/api/sync/update",
-                    json={'category_id': cat_id, 'index': idx, 'file_url': f'/test/{idx}'},
+                    json=self._sync_payload(cat_id, idx),
                     timeout=5
                 )
                 results['requests'] += 1
@@ -342,7 +342,6 @@ class NetworkModeTest:
                     results['successful'] += 1
                 else:
                     results['errors'] += 1
-                
                 # Also test status endpoint
                 sync_session.get(f"{self.ghosthub_url}/api/sync/status", timeout=5)
                 results['requests'] += 1
@@ -363,6 +362,19 @@ class NetworkModeTest:
             pass
         
         return results
+
+    @staticmethod
+    def _sync_payload(category_id, index):
+        return {
+            'category_id': category_id,
+            'viewKey': f"sim::{category_id}::all",
+            'viewType': 'streaming_grid',
+            'viewParams': {
+                'category_id': category_id,
+                'media_filter': 'all',
+            },
+            'mediaId': f"{category_id}::item_{index}",
+        }
     
     def run_full_test(self, duration: int = 60) -> Dict:
         """Run comprehensive stability test."""

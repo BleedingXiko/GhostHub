@@ -10,6 +10,7 @@ import { videoIcon, imageIcon, fileIcon, folderIcon } from '../../utils/icons.js
 import { Component, createElement, renderList, clear, append, show, hide, $ } from '../../libs/ragot.esm.min.js';
 import { getLeafName } from './categoryFilterPill.js';
 import { scheduleAutofocus } from '../../utils/focusManager.js';
+import { hydrateSearchResults } from '../media/searchDataSource.js';
 
 // ==========================================
 // Utility functions
@@ -111,9 +112,9 @@ class SearchResultsComponent extends Component {
 
     _renderResults(data, query) {
         this._optionIndex = -1;
-        const totalMatches = data.results
-            ? data.results.reduce((sum, cat) => sum + cat.total_matches, 0)
-            : 0;
+        const viewMeta = data.viewMeta || {};
+        const fileGroups = data.fileGroups || [];
+        const totalMatches = fileGroups.reduce((sum, cat) => sum + cat.total_matches, 0);
 
         // Build unified locations list (de-duped)
         const locations = this._buildLocations(data);
@@ -127,7 +128,7 @@ class SearchResultsComponent extends Component {
         // Summary
         append(container, createElement('div', {
             className: 'gh-search__summary',
-        }, data.truncated
+        }, viewMeta.truncated
             ? `Found ${totalLocations} matching locations and ${totalMatches} matching files (showing top results)`
             : `Found ${totalLocations} matching locations and ${totalMatches} matching files`
         ));
@@ -146,9 +147,9 @@ class SearchResultsComponent extends Component {
         }
 
         // Files section
-        if (data.results && data.results.length > 0) {
+        if (fileGroups.length > 0) {
             append(container, createElement('div', { className: 'gh-search__section-header' }, 'Files'));
-            data.results.forEach(category => {
+            fileGroups.forEach(category => {
                 append(container, this._renderCategoryGroup(category, query));
             });
         }
@@ -157,12 +158,13 @@ class SearchResultsComponent extends Component {
     }
 
     _buildLocations(data) {
+        const viewMeta = data.viewMeta || {};
         const locations = [];
         const seenDisplayNames = new Set();
         const seenCategoryIds = new Set();
 
-        if (data.matched_categories) {
-            data.matched_categories.forEach(cat => {
+        if (viewMeta.matched_categories) {
+            viewMeta.matched_categories.forEach(cat => {
                 const key = cat.name.toLowerCase();
                 if (!seenDisplayNames.has(key)) {
                     locations.push({ type: 'category', id: cat.id, name: cat.name });
@@ -172,8 +174,8 @@ class SearchResultsComponent extends Component {
             });
         }
 
-        if (data.matched_parent_folders) {
-            data.matched_parent_folders.forEach(pf => {
+        if (viewMeta.matched_parent_folders) {
+            viewMeta.matched_parent_folders.forEach(pf => {
                 const key = pf.name.toLowerCase();
                 if (!seenDisplayNames.has(key)) {
                     const baseName = getLeafName(pf.name);
@@ -190,8 +192,8 @@ class SearchResultsComponent extends Component {
             });
         }
 
-        if (data.matched_folders) {
-            data.matched_folders.forEach(folder => {
+        if (viewMeta.matched_folders) {
+            viewMeta.matched_folders.forEach(folder => {
                 const folderName = folder.name || folder.rel_path.split('/').pop();
                 const folderKey = folderName.toLowerCase();
                 const contextKey = `${folderKey} (${(folder.category_name || '').toLowerCase()})`;
@@ -321,7 +323,7 @@ async function navigateToResult(categoryId, mediaUrl) {
         console.error('[SearchBar] mediaLoader not available');
         return;
     }
-    await window.ragotModules.mediaLoader.viewCategory(categoryId, [mediaUrl], 0);
+    await window.ragotModules.mediaLoader.openSingleMediaViewer({ categoryId, mediaUrl });
 }
 
 async function navigateToCategory(categoryId, categoryName = null) {
@@ -547,9 +549,11 @@ class SearchBarComponent extends Component {
                 return;
             }
 
-            const data = await response.json();
-            const hasAny = (data.results?.length || 0) + (data.matched_categories?.length || 0) +
-                (data.matched_parent_folders?.length || 0) + (data.matched_folders?.length || 0) > 0;
+            const rawData = await response.json();
+            const data = await hydrateSearchResults(rawData, query, 1800);
+            const viewMeta = data.viewMeta || {};
+            const hasAny = (data.fileGroups?.length || 0) + (viewMeta.matched_categories?.length || 0) +
+                (viewMeta.matched_parent_folders?.length || 0) + (viewMeta.matched_folders?.length || 0) > 0;
 
             if (!hasAny) {
                 this.results.showMessage(`No results found for "${query}"`);

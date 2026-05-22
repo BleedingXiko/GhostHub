@@ -41,6 +41,8 @@ class TestProfileController:
         data = response.get_json()
         assert data['success'] is True
         assert data['profile']['id'] == created['id']
+        assert data['active_profile']['id'] == created['id']
+        assert any(profile['id'] == created['id'] for profile in data['profiles'])
 
         with client.session_transaction() as sess:
             assert sess.get('active_profile_id') == created['id']

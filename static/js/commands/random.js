@@ -8,6 +8,7 @@
 import { getShowHiddenHeaders } from '../utils/showHiddenManager.js';
 import { ensureFeatureAccess } from '../utils/authManager.js';
 import { $ } from '../libs/ragot.esm.min.js';
+import { getKnownViewerCount } from '../modules/media/viewerState.js';
 
 export const random = {
     description: '• Navigates to a random media item. Stays in current category if active (random from loaded items), otherwise picks a new random category (random from its first page).',
@@ -29,7 +30,7 @@ export const random = {
         try {
             if (!window.ragotModules || !window.ragotModules.mediaLoader || !window.ragotModules.mediaNavigation ||
                 typeof window.ragotModules.mediaNavigation.renderMediaWindow !== 'function' ||
-                typeof window.ragotModules.mediaLoader.viewCategory !== 'function') {
+                typeof window.ragotModules.mediaLoader.openCategoryViewer !== 'function') {
                 displayLocalMessage('Media modules not available.', { icon: 'x' });
                 return;
             }
@@ -47,8 +48,7 @@ export const random = {
             }
 
             if (inMediaView && currentCategoryId && !forceNewCategory) {
-                const currentMediaList = appState.fullMediaList || [];
-                const mediaCountInCurrentList = currentMediaList.length;
+                const mediaCountInCurrentList = getKnownViewerCount(appState);
 
                 if (mediaCountInCurrentList > 0) {
                     const randomIndex = Math.floor(Math.random() * mediaCountInCurrentList);
@@ -93,10 +93,9 @@ export const random = {
                 }
 
                 const randomCategory = availableCategories[Math.floor(Math.random() * availableCategories.length)];
-                await mediaLoader.viewCategory(randomCategory.id, null, 0);
+                await mediaLoader.openCategoryViewer({ categoryId: randomCategory.id, startIndex: 0 });
 
-                const firstPageMediaList = appState.fullMediaList || [];
-                const countOnFirstPage = firstPageMediaList.length;
+                const countOnFirstPage = getKnownViewerCount(appState);
 
                 if (countOnFirstPage > 0) {
                     const randomIndexOnFirstPage = Math.floor(Math.random() * countOnFirstPage);

@@ -3,7 +3,8 @@
 import hashlib
 import logging
 import os
-from typing import Dict, Optional, Tuple
+import time
+from typing import Dict, List, Optional, Tuple
 
 from werkzeug.utils import secure_filename
 
@@ -159,7 +160,8 @@ def delete_file(file_path: str) -> Tuple[bool, str]:
                 'directory': directory,
                 'category_id': category_id,
                 'media_url': media_url,
-                'is_video': is_video
+                'is_video': is_video,
+                'timestamp': time.time(),
             })
         except Exception as exc:
             logger.error("Failed to emit STORAGE_FILE_DELETED bus event: %s", exc)
@@ -174,6 +176,101 @@ def delete_file(file_path: str) -> Tuple[bool, str]:
     except Exception as exc:
         logger.error("Unexpected error deleting file: %s", exc)
         return False, "Delete failed due to server error"
+
+
+def delete_files(file_paths: List[str]) -> Dict:
+    """Delete multiple media files and emit one grouped storage event."""
+    from app.services.storage.storage_drive_service import is_managed_storage_path
+    from app.services.storage import storage_io_service, storage_path_service
+    from app.utils.media_utils import is_media_file, is_video_file
+
+    results = []
+    deleted_items = []
+    affected_category_ids = set()
+    invalidated_ids = []
+
+    for file_path in file_paths:
+        item = {'file_path': file_path, 'success': False}
+        try:
+            if not is_managed_storage_path(file_path, require_writable=True):
+                item['error'] = 'Access denied'
+            elif not os.path.exists(file_path):
+                item['error'] = 'File not found'
+            elif not os.path.isfile(file_path):
+                item['error'] = 'Path is not a file'
+            elif not is_media_file(os.path.basename(file_path)):
+                item['error'] = 'Can only delete media files'
+            else:
+                filename = os.path.basename(file_path)
+                directory = os.path.dirname(file_path)
+                category_id = storage_path_service._get_category_id_from_path(directory)
+                media_url = storage_path_service.get_media_url_from_path(file_path)
+                is_video = is_video_file(filename)
+                rel_path = filename
+                try:
+                    from app.services.media.category_query_service import get_category_by_id
+
+                    cat_info = get_category_by_id(category_id) if category_id else None
+                    cat_root = cat_info.get('path') if cat_info else None
+                    if cat_root:
+                        rel_path = os.path.relpath(file_path, cat_root).replace(os.sep, '/')
+                except Exception as exc:
+                    logger.debug("Could not derive deleted rel_path for %s: %s", file_path, exc)
+
+                storage_io_service.get_file_io_pool().spawn(os.remove, file_path).get()
+
+                deleted = {
+                    'file_path': file_path,
+                    'filename': filename,
+                    'directory': directory,
+                    'category_id': category_id,
+                    'media_url': media_url,
+                    'is_video': is_video,
+                    'rel_path': rel_path,
+                }
+                deleted_items.append(deleted)
+                if category_id:
+                    affected_category_ids.add(category_id)
+                    if rel_path:
+                        invalidated_ids.append(f'{category_id}::{rel_path}')
+                item.update({
+                    'success': True,
+                    'message': f"Deleted: {filename}",
+                    'category_id': category_id,
+                    'media_url': media_url,
+                })
+        except PermissionError:
+            item['error'] = 'Permission denied - cannot delete this file'
+        except OSError as exc:
+            logger.error("Error deleting file %s: %s", file_path, exc)
+            item['error'] = f"Delete failed: {str(exc)}"
+        except Exception as exc:
+            logger.error("Unexpected error deleting file %s: %s", file_path, exc)
+            item['error'] = 'Delete failed due to server error'
+        results.append(item)
+
+    if deleted_items:
+        try:
+            from specter import bus
+            from app.constants import BUS_EVENTS
+
+            bus.emit(BUS_EVENTS['STORAGE_FILES_DELETED'], {
+                'files': deleted_items,
+                'affected_category_ids': sorted(affected_category_ids),
+                'invalidated_ids': invalidated_ids,
+                'timestamp': time.time(),
+            })
+        except Exception as exc:
+            logger.error("Failed to emit STORAGE_FILES_DELETED bus event: %s", exc)
+
+    deleted_count = sum(1 for result in results if result.get('success'))
+    return {
+        'deleted': deleted_count,
+        'failed': len(results) - deleted_count,
+        'results': results,
+        'affected_category_ids': sorted(affected_category_ids),
+        'invalidated_media_ids': invalidated_ids,
+    }
 
 
 def rename_file(file_path: str, new_name: str) -> Tuple[bool, str, Optional[str]]:
@@ -219,13 +316,19 @@ def rename_file(file_path: str, new_name: str) -> Tuple[bool, str, Optional[str]
 
         storage_io_service.get_file_io_pool().spawn(os.rename, file_path, new_path).get()
 
+        category_id = None
+        try:
+            category_id = storage_path_service._get_category_id_from_path(directory)
+        except Exception:
+            category_id = None
+
         try:
             from specter import bus
             from app.constants import BUS_EVENTS
 
             old_media_url = storage_path_service.get_media_url_from_path(file_path)
             new_media_url = storage_path_service.get_media_url_from_path(new_path)
-            
+
             bus.emit(BUS_EVENTS['STORAGE_FILE_RENAMED'], {
                 'file_path': file_path,
                 'new_path': new_path,
@@ -235,7 +338,8 @@ def rename_file(file_path: str, new_name: str) -> Tuple[bool, str, Optional[str]
                 'category_id': category_id,
                 'was_hidden': was_hidden,
                 'old_media_url': old_media_url,
-                'new_media_url': new_media_url
+                'new_media_url': new_media_url,
+                'timestamp': time.time(),
             })
         except Exception as exc:
             logger.error("Failed to emit STORAGE_FILE_RENAMED bus event: %s", exc)

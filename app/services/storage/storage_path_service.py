@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.parse import quote
 
 from werkzeug.utils import secure_filename
@@ -81,7 +81,7 @@ def get_unique_filename(directory: str, filename: str) -> str:
     return filename
 
 
-def _get_category_id_from_path(directory: str) -> Optional[str]:
+def _get_auto_category_id_from_path(directory: str) -> Optional[str]:
     """Resolve an auto category ID from a filesystem directory path."""
     usb_roots = ['/media', '/media/usb', '/media/ghost', '/media/pi', '/mnt']
     path_normalized = os.path.normpath(directory)
@@ -98,6 +98,45 @@ def _get_category_id_from_path(directory: str) -> Optional[str]:
     return None
 
 
+def _get_best_registered_category_for_path(path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return the deepest registered category containing a path."""
+    try:
+        from app.services.media.category_query_service import get_all_categories_with_details
+
+        normalized_path = os.path.normpath(path)
+        best_match = None
+        for category in get_all_categories_with_details(show_hidden=True):
+            cat_path = category.get('path')
+            if not cat_path:
+                continue
+            cat_path_norm = os.path.normpath(cat_path)
+            if normalized_path == cat_path_norm or normalized_path.startswith(cat_path_norm + os.sep):
+                if best_match is None or len(cat_path_norm) > len(os.path.normpath(best_match.get('path', ''))):
+                    best_match = category
+        if best_match:
+            return best_match.get('id'), os.path.normpath(best_match.get('path'))
+    except Exception as exc:
+        logger.debug("Could not resolve registered category for %s: %s", path, exc)
+    return None, None
+
+
+def _get_category_id_from_path(directory: str) -> Optional[str]:
+    """Resolve the category ID that owns a filesystem directory.
+
+    Registered categories win over the auto-derived id: an upload into a
+    subfolder (e.g. /media/ghost/Drive/Movies/x.mp4) must be attributed to
+    the registered drive category (auto::ghost::Drive), not to a synthetic
+    subfolder id (auto::ghost::Drive::Movies) that no category in the DB
+    owns — otherwise the indexer writes the file under a phantom category
+    and the UI invalidation targets nothing real.
+    """
+    category_id, _category_path = _get_best_registered_category_for_path(directory)
+    if category_id:
+        return category_id
+
+    return _get_auto_category_id_from_path(directory)
+
+
 def get_category_id_from_path(directory: str) -> Optional[str]:
     """Public wrapper for resolving a category ID from a path."""
     return _get_category_id_from_path(directory)
@@ -106,36 +145,30 @@ def get_category_id_from_path(directory: str) -> Optional[str]:
 def get_media_url_from_path(file_path: str) -> Optional[str]:
     """Build a `/media/...` URL for a filesystem path when possible."""
     try:
-        directory = os.path.dirname(file_path)
+        directory = os.path.normpath(os.path.dirname(file_path))
         filename = os.path.basename(file_path)
         if not filename:
             return None
 
-        category_id = _get_category_id_from_path(directory)
+        # Prefer the deepest registered category so subfolder uploads resolve
+        # to the drive's actual category id (not a synthetic per-subfolder id).
+        # Auto-derivation is a fallback only when no registered category owns
+        # the path.
+        category_id, category_root = _get_best_registered_category_for_path(directory)
         if not category_id:
-            try:
-                from app.services.media.category_query_service import get_all_categories_with_details
-
-                categories = get_all_categories_with_details(show_hidden=True)
-                best_match = None
-                for category in categories:
-                    cat_path = category.get('path')
-                    if not cat_path:
-                        continue
-                    cat_path_norm = os.path.normpath(cat_path)
-                    if directory == cat_path_norm or directory.startswith(cat_path_norm + os.sep):
-                        if best_match is None or len(cat_path_norm) > len(best_match.get('path', '')):
-                            best_match = category
-                if best_match:
-                    category_id = best_match.get('id')
-            except Exception:
-                category_id = None
+            category_id = _get_auto_category_id_from_path(directory)
+            category_root = directory if category_id else None
 
         if not category_id:
             return None
 
-        return f"/media/{category_id}/{quote(filename)}"
-    except Exception:
+        rel_path = filename
+        if category_root:
+            rel_path = os.path.relpath(file_path, category_root).replace(os.sep, '/')
+
+        return f"/media/{category_id}/{quote(rel_path)}"
+    except Exception as exc:
+        logger.debug("Could not build media URL for %s: %s", file_path, exc)
         return None
 
 
@@ -179,8 +212,8 @@ def cleanup_empty_parent(folder_path: str) -> int:
                 if entry.is_file():
                     try:
                         os.remove(entry.path)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Could not remove cleanup sidecar %s: %s", entry.path, exc)
 
             os.rmdir(current)
             logger.info("Auto-deleted empty folder: %s", current)

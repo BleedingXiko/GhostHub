@@ -481,6 +481,7 @@
 .streaming-scroll-container {
     display: flex;
     gap: var(--space-md);
+    min-width: 0;
     overflow-x: auto;
     overflow-y: hidden;
     padding: var(--space-sm) var(--space-xl);
@@ -489,6 +490,15 @@
     /* Firefox */
     -ms-overflow-style: none;
     /* IE/Edge */
+}
+
+.streaming-subfolder-strip,
+.streaming-media-strip {
+    display: contents;
+}
+
+.streaming-subfolder-strip[hidden] {
+    display: none;
 }
 
 .streaming-scroll-container::-webkit-scrollbar {
@@ -501,6 +511,8 @@
    (and sentinels) become direct flex children of streaming-scroll-container. */
 .streaming-scroll-container .vs-container,
 .streaming-scroll-container .streaming-h-vs,
+.streaming-media-strip .vs-container,
+.streaming-media-strip .streaming-h-vs,
 .streaming-grid-wrapper .vs-container {
     display: contents;
 }

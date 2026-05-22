@@ -7,7 +7,6 @@ import {
     isActive,
     getContainer,
     setContainer,
-    getMediaByDate,
     getCategoriesData,
     getMediaFilter,
     setMediaFilter,
@@ -31,17 +30,21 @@ import {
     getParentNameFilter,
     setParentNameFilter,
     setCategoryIdsFilter,
-    getCategoryIdsFilter
+    getCategoryIdsFilter,
+    getGalleryTimelineViewKey,
+    bumpTimelineProjection,
+    getDateKey
 } from './state.js';
 import { cameraIcon, warningIcon } from '../../../utils/icons.js';
 import { appendShowHiddenParam } from '../../../utils/showHiddenManager.js';
 import {
     buildThumbnailImageAttrs,
-    createThumbnailShell
+    createThumbnailShell,
+    setThumbnailImageState
 } from '../../../utils/mediaUtils.js';
-import { loadInitialMedia, loadMoreForDate, loadMoreDates } from './data.js';
-import { initLazyLoading, cleanupLazyLoading, observeLazyImage, refreshLazyLoader } from './lazyLoad.js';
-import { openViewer } from './navigation.js';
+import { loadInitialMedia, loadMoreDates } from './mediaDataSource.js';
+import { observeLazyImage, resetLazyImage } from './lazyLoad.js';
+import { openViewer, openViewerFromGalleryCard } from './navigation.js';
 import { ensureFeatureAccess } from '../../../utils/authManager.js';
 import { openFileManager } from '../../admin/files.js';
 import {
@@ -55,14 +58,17 @@ import {
 import ThumbnailProgress from '../../shared/thumbnailProgress.js';
 import { updateCategoryFilterPill, handlePillClear, getLeafName } from '../../ui/categoryFilterPill.js';
 import { formatDateDisplay } from '../../../utils/layoutUtils.js';
-import { Module, Component, VirtualScroller, createElement, $, $$, append, prepend, insertBefore, remove, clear, attr, renderGrid, renderList, createInfiniteScroll, morphDOM } from '../../../libs/ragot.esm.min.js';
+import { Module, Component, VirtualScroller, createElement, $, $$, append, prepend, insertBefore, remove, clear, attr, renderGrid } from '../../../libs/ragot.esm.min.js';
 import { toast } from '../../../utils/notificationManager.js';
+import { selectView, selectRecordsForView, subscribeView } from '../../media/selectors.js';
 
 // Constants
 const ITEMS_PER_DATE_GROUP = 9;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 6;
 const ZOOM_DEFAULT = 3;
+const MONTH_OVERLAY_CHUNK_SIZE = 60;
+const VIDEO_BADGE_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
 export function clearDateGroupState() {
     clearDateGroupStateInternal();
@@ -96,8 +102,8 @@ export class GalleryMonthOverlayComponent extends Component {
             open: false,
             year: null,
             month: null,
-            media: [],
-            loading: false,
+            viewKey: null,
+            mediaIds: [],
             error: null,
             hasPrev: false,
             hasNext: false,
@@ -108,6 +114,10 @@ export class GalleryMonthOverlayComponent extends Component {
         this._onMediaClick = null;
         this._onTimelineClick = null;
         this._onRetry = null;
+        this._unsubscribeView = null;
+        this._subscribedViewKey = null;
+        this._gridComp = null;
+        this._gridViewKey = null;
     }
 
     setCloseHandler(fn) { this._onClose = fn; }
@@ -138,8 +148,20 @@ export class GalleryMonthOverlayComponent extends Component {
     }
 
     render() {
-        const { open, year, month, media, loading, error, hasPrev, hasNext } = this.state;
+        const { open, year, month, viewKey, error, hasPrev, hasNext } = this.state;
+        const view = viewKey ? (selectView(viewKey) || {}) : {};
+        const liveMediaIds = view.orderedIds || [];
+        const displayError = error || (view.status === 'error' ? `Couldn't load. Please try again.` : null);
+        const loading = open && !displayError && (!viewKey || view.status === 'fetching');
         const hiddenClass = open ? '' : ' hidden';
+
+        // Keep an order-only subscription so the spinner→grid transition fires
+        // when the first batch arrives. The inner MonthOverlayGridComponent
+        // owns its own subscription for record updates; we deliberately avoid
+        // a duplicate update() here to keep this overlay's re-renders cheap.
+        if (this._isMounted) {
+            this._subscribeToOverlayView(viewKey);
+        }
 
         const monthLabel = year && month
             ? new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -150,22 +172,20 @@ export class GalleryMonthOverlayComponent extends Component {
             bodyContent = createElement('div', { className: 'gallery-month-loading' },
                 createElement('div', { className: 'gallery-loading-spinner' })
             );
-        } else if (error) {
+        } else if (displayError) {
             bodyContent = createElement('div', { className: 'gallery-month-empty gallery-month-error' }, [
-                createElement('p', { textContent: error }),
+                createElement('p', { textContent: displayError }),
                 createElement('button', {
                     className: 'gallery-month-retry-btn',
                     textContent: 'Try Again'
                 })
             ]);
-        } else if (!media || media.length === 0) {
+        } else if (liveMediaIds.length === 0) {
             bodyContent = createElement('div', { className: 'gallery-month-empty' },
                 createElement('p', { textContent: 'No photos or videos for this month.' })
             );
         } else {
-            const grid = createElement('div', { className: 'gallery-grid zoom-3' });
-            media.forEach((m, i) => append(grid, renderMediaItem(m, i)));
-            bodyContent = grid;
+            bodyContent = createElement('div', { className: 'gallery-month-grid-slot' });
         }
 
         const timeline = this._buildTimeline();
@@ -224,13 +244,10 @@ export class GalleryMonthOverlayComponent extends Component {
                 this._onRetry?.();
                 return;
             }
-            // Card click → open viewer
+            // Card click → open viewer rooted in this month's view so the
+            // viewer sees the same ordering the user saw in the overlay.
             const item = e.target.closest('.gallery-item');
-            if (item) {
-                const categoryId = item.dataset.categoryId;
-                const mediaUrl = item.dataset.mediaUrl;
-                if (categoryId && mediaUrl) openViewer(categoryId, mediaUrl);
-            }
+            if (item) openViewerFromGalleryCard(item, this.state.viewKey);
         });
 
         this.on(document, 'keydown', (e) => {
@@ -259,8 +276,105 @@ export class GalleryMonthOverlayComponent extends Component {
             else if (dx > 0 && this.state.hasNext) this._onNavigate?.('next');
         }, { passive: true });
 
+        this._subscribeToOverlayView(this.state.viewKey);
+        this._syncGridComponent();
+
         // Auto-scroll timeline strips to center the active items
         requestAnimationFrame(() => this._scrollTimelineToActive());
+    }
+
+    onStop() {
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
+        this._subscribedViewKey = null;
+        this._unmountGridComponent();
+    }
+
+    /**
+     * Subscribe to a view key for status/order transitions only.
+     * The inner MonthOverlayGridComponent owns its own subscription for
+     * record updates; the outer modal only needs to know when the view
+     * flips loading → ready (or vice versa) and when the id list changes.
+     * Re-rendering on every record bump caused a full modal rebuild on
+     * each batched hydration.
+     */
+    _subscribeToOverlayView(viewKey) {
+        if (this._subscribedViewKey === viewKey && this._unsubscribeView) return;
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
+        this._subscribedViewKey = viewKey || null;
+        this._lastOverlayStatus = null;
+        this._lastOverlayIdsRef = null;
+        if (!viewKey) return;
+        const refreshIfShapeChanged = () => {
+            if (!this._isMounted) return;
+            const next = selectView(viewKey) || {};
+            const nextStatus = next.status || 'idle';
+            const nextIds = next.orderedIds || [];
+            const statusChanged = nextStatus !== this._lastOverlayStatus;
+            const idsChanged = nextIds !== this._lastOverlayIdsRef;
+            this._lastOverlayStatus = nextStatus;
+            this._lastOverlayIdsRef = nextIds;
+            if (!statusChanged && !idsChanged) return;
+            this.update();
+        };
+        this._unsubscribeView = subscribeView(viewKey, refreshIfShapeChanged, { owner: this });
+        // Seed the snapshot so the first real change is detected correctly.
+        const initial = selectView(viewKey) || {};
+        this._lastOverlayStatus = initial.status || 'idle';
+        this._lastOverlayIdsRef = initial.orderedIds || [];
+    }
+
+    update() {
+        if (typeof super.update === 'function') {
+            super.update();
+        } else {
+            this._performUpdate?.();
+        }
+        // Auto-scroll timeline strips to center the active pill after re-render
+        requestAnimationFrame(() => this._scrollTimelineToActive());
+        this._syncGridComponent();
+    }
+
+    setState(newState) {
+        super.setState(newState);
+        requestAnimationFrame(() => {
+            if (!this._isMounted) return;
+            this._subscribeToOverlayView(this.state.viewKey);
+            this._scrollTimelineToActive();
+            this._syncGridComponent();
+        });
+    }
+
+    setStateSync(newState) {
+        super.setStateSync(newState);
+        if (!this._isMounted) return;
+        this._subscribeToOverlayView(this.state.viewKey);
+        requestAnimationFrame(() => this._scrollTimelineToActive());
+        this._syncGridComponent();
+    }
+
+    _syncGridComponent() {
+        const { open, viewKey, error } = this.state;
+        const slot = this.element?.querySelector('.gallery-month-grid-slot');
+        if (!open || error || !viewKey || !slot) {
+            this._unmountGridComponent();
+            return;
+        }
+        if (this._gridComp && this._gridViewKey === viewKey) return;
+        this._unmountGridComponent();
+        clear(slot);
+        this._gridViewKey = viewKey;
+        this._gridComp = new MonthOverlayGridComponent(viewKey);
+        this._gridComp.mount(slot);
+    }
+
+    _unmountGridComponent() {
+        if (this._gridComp) {
+            this._gridComp.unmount();
+        }
+        this._gridComp = null;
+        this._gridViewKey = null;
     }
 
     _scrollTimelineToActive() {
@@ -269,6 +383,77 @@ export class GalleryMonthOverlayComponent extends Component {
             const activeMonth = monthsStrip.querySelector('.active');
             if (activeMonth) activeMonth.scrollIntoView({ behavior: 'instant', inline: 'center', block: 'nearest' });
         }
+    }
+}
+
+class MonthOverlayGridComponent extends Component {
+    constructor(viewKey) {
+        super({});
+        this._viewKey = viewKey;
+        this._unsubscribeView = null;
+        this._vs = null;
+        this._lastSignature = null;
+    }
+
+    render() {
+        return createElement('div', {
+            className: 'gallery-grid zoom-3',
+            style: { position: 'relative' }
+        });
+    }
+
+    onStart() {
+        this._mountVirtualScroller({ force: true });
+        this._unsubscribeView = subscribeView(this._viewKey, () => {
+            this._mountVirtualScroller();
+        }, { owner: this });
+    }
+
+    onStop() {
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
+        if (this._vs) {
+            this._vs.unmount();
+            this._vs = null;
+        }
+        this._lastSignature = null;
+    }
+
+    _signatureFor(records) {
+        return (records || []).map((record) => record?.id || record?.url || '').join('|');
+    }
+
+    _mountVirtualScroller({ force = false } = {}) {
+        if (!this.element) return;
+        const records = selectRecordsForView(this._viewKey);
+        const signature = this._signatureFor(records);
+        if (!force && signature === this._lastSignature) return;
+        this._lastSignature = signature;
+
+        if (this._vs) {
+            this._vs.unmount();
+            this._vs = null;
+        }
+        clear(this.element);
+        this._vs = new VirtualScroller({
+            root: this.element.closest('.modal__body') || this.element,
+            chunkContainer: this.element,
+            totalItems: () => records.length,
+            chunkSize: MONTH_OVERLAY_CHUNK_SIZE,
+            maxChunks: 8,
+            poolSize: 0,
+            renderChunk: (chunkIndex) => {
+                const start = chunkIndex * MONTH_OVERLAY_CHUNK_SIZE;
+                const items = records.slice(start, start + MONTH_OVERLAY_CHUNK_SIZE);
+                const chunk = createElement('div', { style: { display: 'contents' } });
+                items.forEach((media, index) => append(chunk, renderMediaItem(media, start + index)));
+                $$('img[data-src]', chunk).forEach(img => observeLazyImage(img));
+                return chunk;
+            },
+            measureChunk: (el) => el.offsetHeight,
+            rootMargin: '900px 0px',
+        });
+        this._vs.mount(this.element);
     }
 }
 
@@ -712,10 +897,12 @@ export class GallerySelectionToolbarComponent extends Component {
 // ── DateGroupComponent ────────────────────────────────────────────────────────
 
 class DateGroupComponent extends Component {
-    constructor(dateKey, media) {
-        super({ media });
+    constructor(dateKey, viewKey) {
+        super({});
         this._dateKey = dateKey;
+        this._viewKey = viewKey;
         this._vs = null;
+        this._unsubscribeView = null;
     }
 
     render() {
@@ -723,7 +910,7 @@ class DateGroupComponent extends Component {
         const displayDate = formatDateDisplay(dateKey);
         const serverTotal = getDateTotal(dateKey);
         const monthTotal = getMonthTotal(dateKey);
-        const media = this.state.media;
+        const media = this._getVisibleMedia();
         const loadedCount = media.length;
 
         // Show max 9 items per date group in timeline view - full month in overlay on header click
@@ -752,9 +939,36 @@ class DateGroupComponent extends Component {
     }
 
     onStart() {
-        // Always show max 9 items per date group in timeline - full month in overlay on header click
-        const visibleMedia = this.state.media.slice(0, ITEMS_PER_DATE_GROUP);
-        renderGrid(this.refs.grid, visibleMedia, (m) => m.url, (m) => renderMediaItem(m, 0), updateGalleryItem, { applyGridStyles: false, poolKey: 'gallery-item' });
+        this._renderGrid();
+        if (this._viewKey) {
+            this._unsubscribeView = subscribeView(this._viewKey, () => {
+                this._renderGrid();
+            }, { owner: this });
+        }
+    }
+
+    onStop() {
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
+    }
+
+    _getVisibleMedia() {
+        return selectRecordsForView(this._viewKey)
+            .filter((media) => {
+                const dateKey = media?.dateKey || getDateKey(media?.modified || media?.created || null);
+                return dateKey === this._dateKey;
+            })
+            .slice(0, ITEMS_PER_DATE_GROUP);
+    }
+
+    _renderGrid() {
+        const visibleMedia = this._getVisibleMedia();
+        const count = $('.gallery-date-count', this.element);
+        if (count) count.textContent = String(getMonthTotal(this._dateKey) || getDateTotal(this._dateKey) || visibleMedia.length);
+        // Key by stable id (category_id::rel_path). Using m.url leaves the
+        // renderer vulnerable to mismatches when the same DOM slot picks up
+        // a re-hydrated record with a different file path.
+        renderGrid(this.refs.grid, visibleMedia, (m) => m.id || m.url, (m) => renderMediaItem(m, 0), updateGalleryItem, { applyGridStyles: false, poolKey: null });
         $$('img[data-src]', this.refs.grid).forEach(img => observeLazyImage(img));
     }
 }
@@ -766,15 +980,21 @@ class DateGroupComponent extends Component {
 const MAX_DATE_CHUNKS = 30;
 
 class GalleryTimelineComponent extends Component {
-    constructor(dateKeys, mediaByDate, hasMoreDates) {
+    constructor(dateKeys, hasMoreDates, viewKey = null) {
         super({});
         this._dateKeys = dateKeys;
-        this._mediaByDate = mediaByDate;
         this._hasMoreDates = hasMoreDates;
+        this._viewKey = viewKey;
+        this._unsubscribeView = null;
 
         this._vs = null;
         this._loadingMoreDates = false;
         this._scrollTop = 0;
+        this._dateKeysSignature = this._signatureFor(dateKeys, hasMoreDates);
+    }
+
+    _signatureFor(dateKeys, hasMoreDates) {
+        return `${(dateKeys || []).join('|')}::${hasMoreDates ? 1 : 0}`;
     }
 
     render() {
@@ -794,10 +1014,9 @@ class GalleryTimelineComponent extends Component {
             totalItems: () => this._dateKeys.length + (this._hasMoreDates ? 1 : 0),
             chunkSize: 1,
             maxChunks: MAX_DATE_CHUNKS,
-            poolSize: 10,
+            poolSize: 0,
             renderChunk: (i) => this._renderGroup(i),
-            onRecycle: (el, i) => this._recycleGroup(el, i),
-            onEvict: (el) => this._evictGroup(el),
+            onChunkEvicted: (i) => this._evictGroup(i),
             measureChunk: (el) => el.offsetHeight,
             buildPlaceholder: (i, px) => createElement('div', {
                 className: 'gallery-date-placeholder',
@@ -808,6 +1027,7 @@ class GalleryTimelineComponent extends Component {
         });
 
         this._vs.mount(this.element);
+        this._subscribeToTimelineView(this._viewKey);
 
         this.on(this.element, 'click', async (e) => this._onClick(e));
 
@@ -852,11 +1072,54 @@ class GalleryTimelineComponent extends Component {
     }
 
     onStop() {
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
         if (this._vs) {
-            try { this._vs.unmount(); } catch (_) { }
+            this._vs.unmount();
             this._vs = null;
         }
         cleanupAutoCollapseObserver();
+    }
+
+    setTimelineSource({ dateKeys, hasMoreDates, viewKey }) {
+        const nextSig = this._signatureFor(dateKeys, hasMoreDates);
+        const signatureChanged = nextSig !== this._dateKeysSignature;
+        this._dateKeys = dateKeys;
+        this._hasMoreDates = hasMoreDates;
+        this._dateKeysSignature = nextSig;
+        this._subscribeToTimelineView(viewKey);
+        if (signatureChanged) this.refresh();
+    }
+
+    _subscribeToTimelineView(viewKey) {
+        if (this._viewKey === viewKey && this._unsubscribeView) return;
+        this._unsubscribeView?.();
+        this._unsubscribeView = null;
+        this._viewKey = viewKey || null;
+        if (!this._viewKey) return;
+        this._unsubscribeView = subscribeView(this._viewKey, () => {
+            this._syncTimelineSnapshot();
+        }, { owner: this });
+    }
+
+    _syncTimelineSnapshot({ reset = true } = {}) {
+        const nextDateKeys = getSortedDateKeys();
+        const nextHasMore = getHasMoreDates();
+        const nextSig = this._signatureFor(nextDateKeys, nextHasMore);
+        const signatureChanged = nextSig !== this._dateKeysSignature;
+
+        this._dateKeys = nextDateKeys;
+        this._hasMoreDates = nextHasMore;
+        this._dateKeysSignature = nextSig;
+
+        // Only reset the VS when the date-key list (or hasMore) actually
+        // changed. Record-only updates (e.g. month-overlay hydration touching
+        // ids that overlap the timeline view) are handled inside each
+        // DateGroupComponent via its own subscribeView; a full reset here just
+        // makes the visible date groups flicker.
+        if (!signatureChanged) return;
+        bumpTimelineProjection();
+        if (reset && this._vs) this._vs.reset();
     }
 
     _renderGroup(i) {
@@ -864,17 +1127,16 @@ class GalleryTimelineComponent extends Component {
             if (!this._hasMoreDates || this._loadingMoreDates) return null;
             this._loadingMoreDates = true;
             return loadMoreDates().then((result) => {
-                this._dateKeys = getSortedDateKeys();
-                this._mediaByDate = getMediaByDate();
-                this._hasMoreDates = getHasMoreDates();
-                if (this._vs) this._vs.reset();
+                if (!result?.orderedIds?.length) {
+                    this._syncTimelineSnapshot();
+                }
                 return null;
             }).finally(() => {
                 this._loadingMoreDates = false;
             });
         }
         const k = this._dateKeys[i];
-        const comp = new DateGroupComponent(k, this._mediaByDate[k] || []);
+        const comp = new DateGroupComponent(k, this._viewKey);
         const el = comp.render();
 
         // Wire RAGOT lifecycle manually for virtualized chunks
@@ -887,33 +1149,9 @@ class GalleryTimelineComponent extends Component {
         return el;
     }
 
-    _recycleGroup(el, i) {
-        if (i >= this._dateKeys.length) return;
-        const k = this._dateKeys[i];
-        const media = this._mediaByDate[k] || [];
-
-        // If the chunk previously held a component, stop it before morphing/recycling
-        if (el.__ragotComponent) {
-            el.__ragotComponent.onStop();
-            // Reuse the instance if possible, or create new. morphDOM will fix the rest.
-            el.__ragotComponent._dateKey = k;
-            el.__ragotComponent.state = { ...el.__ragotComponent.state, media };
-        } else {
-            el.__ragotComponent = new DateGroupComponent(k, media);
-            el.__ragotComponent.element = el;
-            el.__ragotComponent._isMounted = true;
-        }
-
-        const newEl = el.__ragotComponent.render();
-        newEl.dataset.dateIndex = String(i);
-        morphDOM(el, newEl);
-
-        // Re-start the component with the new content
-        el.__ragotComponent.onStart();
-    }
-
-    _evictGroup(el) {
-        if (el.__ragotComponent) {
+    _evictGroup(i) {
+        const el = this._vs?.getChunkElement?.(i);
+        if (el?.__ragotComponent) {
             el.__ragotComponent.onStop();
         }
     }
@@ -949,9 +1187,9 @@ class GalleryTimelineComponent extends Component {
 
         const galleryItem = target.closest('.gallery-item');
         if (galleryItem && !target.closest('.gallery-item-check')) {
-            const categoryId = galleryItem.dataset.categoryId;
-            const mediaUrl = galleryItem.dataset.mediaUrl;
-            if (categoryId && mediaUrl) openViewer(categoryId, mediaUrl);
+            // Route through the timeline view so the viewer inherits the
+            // fully-hydrated ordering, not a fresh category page-1 fetch.
+            openViewerFromGalleryCard(galleryItem, this._viewKey);
         }
     }
 
@@ -1003,8 +1241,8 @@ export function render(preservedScrollTop = null) {
     if (!container || !isActive()) return;
 
     const dateKeys = getSortedDateKeys();
-    const mediaByDate = getMediaByDate();
     const hasMoreDates = getHasMoreDates();
+    const viewKey = getGalleryTimelineViewKey();
     const categoriesData = getCategoriesData();
     const categoryIdFilter = getCategoryIdFilter();
 
@@ -1032,16 +1270,13 @@ export function render(preservedScrollTop = null) {
     }
 
     if (_timelineComponent && _timelineComponent._isMounted) {
-        _timelineComponent._dateKeys = dateKeys;
-        _timelineComponent._mediaByDate = mediaByDate;
-        _timelineComponent._hasMoreDates = hasMoreDates;
-        _timelineComponent.refresh();
+        _timelineComponent.setTimelineSource({ dateKeys, hasMoreDates, viewKey });
     } else {
         if (_timelineComponent) _timelineComponent.unmount();
         const timelineSlot = $('#gallery-timeline-slot', container);
         if (timelineSlot) clear(timelineSlot);
 
-        _timelineComponent = new GalleryTimelineComponent(dateKeys, mediaByDate, hasMoreDates);
+        _timelineComponent = new GalleryTimelineComponent(dateKeys, hasMoreDates, viewKey);
         _timelineComponent._scrollTop = scrollTop;
         _timelineComponent.mount(timelineSlot || container);
     }
@@ -1072,7 +1307,6 @@ function _collapseGroup(dateKey, scrollArea) {
         dateGroupState.set(dateKey, state);
     }
     if (_timelineComponent) {
-        _timelineComponent._mediaByDate = getMediaByDate();
         _timelineComponent.refresh();
     }
 }
@@ -1291,17 +1525,63 @@ function renderMediaItem(media, index) {
         fetchPriority: 'low',
         showPendingState: true
     }));
-    if (isVideo) children.push(createElement('span', { className: 'gallery-item-video', innerHTML: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' }));
+    if (isVideo) children.push(createElement('span', { className: 'gallery-item-video', innerHTML: VIDEO_BADGE_SVG }));
     return createElement('div', {
         className: `gallery-item gh-stagger ${selected ? 'selected' : ''}`,
         tabIndex: index === 0 ? 0 : -1,
         role: 'link',
         style: { '--card-index': index },
-        dataset: { categoryId: media.categoryId || '', mediaUrl: media.url || '', index }
+        dataset: {
+            categoryId: media.categoryId || '',
+            mediaUrl: media.url || '',
+            // Stable id beats URL: indexOf in the timeline view's orderedIds
+            // is exact. Reading from dataset (vs. closure) keeps the click
+            // path correct after in-place item updates.
+            recordId: media.id || '',
+            index,
+        }
     }, ...children);
 }
 
 function updateGalleryItem(el, media) {
+    const prevMediaUrl = el.dataset.mediaUrl || '';
+    const nextMediaUrl = media.url || '';
+    el.dataset.mediaUrl = nextMediaUrl;
+    el.dataset.categoryId = media.categoryId || '';
+    // Keep stable id in sync. renderGrid keys by id, so the same DOM slot
+    // can receive a different record on rebuild — the click handler needs
+    // to see the new id, not the prior one.
+    el.dataset.recordId = media.id || '';
+
+    const img = $('.gallery-item-thumbnail', el);
+    if (img) {
+        const thumbnailUrl = media.thumbnailUrl || media.url;
+        const nextSrc = thumbnailUrl ? appendShowHiddenParam(thumbnailUrl) : '';
+        // Force resync whenever the underlying media URL on this slot changed.
+        // Comparing data-src alone is unreliable: the lazy loader may have set
+        // img.src but left data-src stale (or vice versa), so a row whose
+        // record was swapped could keep showing the old thumbnail while
+        // dataset.mediaUrl already points to the new media — causing the
+        // "click opens wrong media" bug.
+        const slotChanged = prevMediaUrl && prevMediaUrl !== nextMediaUrl;
+        const currentSrc = img.dataset.src || img.getAttribute('src') || '';
+        if (nextSrc && (slotChanged || currentSrc !== nextSrc)) {
+            img.dataset.src = nextSrc;
+            img.removeAttribute('src');
+            setThumbnailImageState(img, 'pending');
+            resetLazyImage(img);
+            observeLazyImage(img);
+        }
+    }
+
+    const badge = $('.gallery-item-video', el);
+    const shouldHaveBadge = media.type === 'video';
+    if (badge && !shouldHaveBadge) {
+        badge.remove();
+    } else if (!badge && shouldHaveBadge) {
+        append(el, createElement('span', { className: 'gallery-item-video', innerHTML: VIDEO_BADGE_SVG }));
+    }
+
     const selected = isMediaSelected(media.url);
     el.classList.toggle('selected', selected);
     const check = $('.gallery-item-check', el);

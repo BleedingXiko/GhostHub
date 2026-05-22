@@ -29,7 +29,7 @@ import {
     cleanupProfileSocketHandlers,
     PROFILE_SELECTED_EVENT,
 } from './modules/profile/events.js';
-import { APP_EVENTS } from './core/appEvents.js';
+import { SOCKET_EVENTS } from './core/socketEvents.js';
 
 // Utility modules
 import * as cacheManager from './utils/cacheManager.js';
@@ -42,11 +42,15 @@ import { checkRevealHiddenStatus } from './utils/showHiddenManager.js';
 import { toast, dialog, initNotificationManager } from './utils/notificationManager.js';
 import { initTooltipManager, destroyTooltipManager } from './utils/tooltipManager.js';
 import { hasActiveProfile } from './utils/profileUtils.js';
-import { Module, bus, ragotRegistry, $ } from './libs/ragot.esm.min.js';
+import { Module, ragotRegistry, $ } from './libs/ragot.esm.min.js';
 
 // Feature modules
 import * as mediaLoader from './modules/media/loader.js';
 import * as mediaNavigation from './modules/media/navigation.js';
+import { mediaManifest } from './modules/media/manifest.js';
+import { mediaOrdering } from './modules/media/ordering.js';
+import * as mediaSelectors from './modules/media/selectors.js';
+import { MediaInvalidationModule } from './modules/media/invalidation.js';
 import * as uiController from './modules/ui/controller.js';
 import { initSearchBar, destroySearchBar } from './modules/ui/searchBar.js';
 import * as syncManager from './modules/sync/manager.js';
@@ -74,6 +78,10 @@ import * as photoViewer from './modules/media/photoViewer.js';
 import ThumbnailProgress from './modules/shared/thumbnailProgress.js';
 
 const mainLifecycle = new Module().start();
+const mediaInvalidation = new MediaInvalidationModule(mediaManifest, mediaOrdering);
+mainLifecycle.adopt(mediaManifest);
+mainLifecycle.adopt(mediaOrdering);
+mainLifecycle.adopt(mediaInvalidation);
 
 // Single-source registry provisioning (main.js owns all registrations).
 ragotRegistry.provide('cacheManager', cacheManager, mainLifecycle);
@@ -105,6 +113,10 @@ ragotRegistry.provide('appRuntime', {
 }, mainLifecycle);
 ragotRegistry.provide('mediaLoader', mediaLoader, mainLifecycle);
 ragotRegistry.provide('mediaNavigation', mediaNavigation, mainLifecycle);
+ragotRegistry.provide('mediaManifest', mediaManifest, mainLifecycle);
+ragotRegistry.provide('mediaOrdering', mediaOrdering, mainLifecycle);
+ragotRegistry.provide('mediaSelectors', mediaSelectors, mainLifecycle);
+ragotRegistry.provide('mediaInvalidation', mediaInvalidation, mainLifecycle);
 ragotRegistry.provide('uiController', uiController, mainLifecycle);
 ragotRegistry.provide('syncManager', syncManager, mainLifecycle);
 ragotRegistry.provide('chatManager', chatManager, mainLifecycle);
@@ -285,17 +297,20 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
                     // Get socket options from config
                     const socketOptions = {
                         reconnectionAttempts: getConfigValue('javascript_config.main.socket_reconnectionAttempts', 5),
-                        reconnectionDelay: getConfigValue('javascript_config.main.socket_reconnectionDelay', 2000)
-                        // Add other Socket.IO client options here if they become configurable
+                        reconnectionDelay: getConfigValue('javascript_config.main.socket_reconnectionDelay', 2000),
+                        transports: ['websocket', 'polling'],
+                        upgrade: true,
+                        rememberUpgrade: true
                     };
                     console.log('Initializing main socket with options:', socketOptions);
                     const socket = io(socketOptions);
 
                     // Store socket in app state as single source of truth
                     appStore.set('socket', socket, { source: 'main.socket.init' });
+                    mediaInvalidation.attachSocket(socket);
 
                     // Factory reset: USB sentinel file detected — passwords nuked, reload to clear gate
-                    mainLifecycle.onSocket(socket, 'factory_reset', () => {
+                    mainLifecycle.onSocket(socket, SOCKET_EVENTS.FACTORY_RESET, () => {
                         dialog.alert(
                             'Passwords have been reset to defaults. The page will reload.',
                             { title: 'Factory Reset' }
@@ -333,16 +348,6 @@ document.addEventListener('DOMContentLoaded', async () => { // Make async
                     registerProfileSocketHandlers(socket, profileSelector);
                     streamingLayout.registerSocketHandlers(socket);
                     galleryLayout.registerSocketHandlers(socket);
-
-                    // file_renamed: update IndexedDB progress and notify listeners
-                    mainLifecycle.onSocket(socket, 'file_renamed', (data) => {
-                        import('./utils/progressDB.js').then(({ renameVideoProgress }) => {
-                            renameVideoProgress(data.old_path, data.new_path);
-                        }).catch(e => {
-                            console.warn('Failed to handle file_rename event:', e);
-                        });
-                        bus.emit(APP_EVENTS.FILE_RENAMED_UPDATED, { oldPath: data.old_path, newPath: data.new_path });
-                    });
 
                 } catch (e) {
                     console.error('Error initializing chat, media navigation, or socket listeners:', e);

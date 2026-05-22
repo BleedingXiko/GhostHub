@@ -6,7 +6,7 @@ import os
 
 from flask import Response, request
 
-from specter import Controller, registry
+from specter import Controller
 from app.utils.auth import admin_required, get_show_hidden_flag
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,12 @@ class StorageFileController(Controller):
         def delete_media_file():
             """Delete a media file from storage."""
             return self.delete_media_file()
+
+        @router.route('/media/batch-delete', methods=['POST'])
+        @admin_required
+        def batch_delete_media_files():
+            """Delete multiple media files from storage."""
+            return self.batch_delete_media_files()
 
         @router.route('/media', methods=['PATCH'])
         @admin_required
@@ -175,7 +181,6 @@ class StorageFileController(Controller):
             from app.services.storage import storage_media_file_service
 
             parent_folder = os.path.dirname(file_path)
-            filename = os.path.basename(file_path)
 
             success, message = storage_media_file_service.delete_file(file_path)
             if not success:
@@ -183,23 +188,54 @@ class StorageFileController(Controller):
                     return {'success': False, 'error': message}, 403
                 return {'success': False, 'error': message}, 400
 
-            try:
-                registry.require('storage_events').emit_content_visibility_changed({
-                    'type': 'file_deleted',
-                    'file_path': file_path,
-                    'filename': filename,
-                    'folder': parent_folder,
-                    'force_refresh': False,
-                })
-                logger.info("Emitted file_deleted event for: %s", filename)
-            except Exception as exc:
-                logger.error("Failed to emit file_deleted event: %s", exc)
-
             self.spawn(self._post_delete_cleanup, parent_folder)
             return {'success': True, 'message': message}
         except Exception as exc:
             logger.error("Error deleting file: %s", exc)
             return {'error': 'Failed to delete file'}, 500
+
+    def batch_delete_media_files(self):
+        """Delete a capped batch of media files and broadcast one grouped removal."""
+        data = request.get_json(silent=True)
+        file_paths = data.get('file_paths') if isinstance(data, dict) else None
+        if not isinstance(file_paths, list):
+            return {'success': False, 'error': 'file_paths must be a list'}, 400
+        if len(file_paths) > 500:
+            return {'success': False, 'error': 'Cannot delete more than 500 files at once'}, 413
+
+        clean_paths = [path for path in file_paths if isinstance(path, str) and path.strip()]
+        if not clean_paths:
+            return {'success': False, 'error': 'No file paths provided'}, 400
+
+        denied = [
+            path for path in clean_paths
+            if not self._is_managed_storage_path(path, require_writable=True)
+        ]
+        if denied:
+            return {
+                'success': False,
+                'error': 'Access denied',
+                'denied': denied[:10],
+            }, 403
+
+        try:
+            from app.services.storage import storage_media_file_service
+
+            result = storage_media_file_service.delete_files(clean_paths)
+            parent_folders = sorted({
+                os.path.dirname(path)
+                for path in clean_paths
+                if isinstance(path, str) and os.path.dirname(path)
+            })
+            if parent_folders:
+                self.spawn(self._post_batch_delete_cleanup, parent_folders)
+            return {
+                'success': result['deleted'] > 0,
+                **result,
+            }
+        except Exception as exc:
+            logger.error("Error deleting file batch: %s", exc)
+            return {'success': False, 'error': 'Failed to delete files'}, 500
 
     def rename_media_file(self):
         """Rename a media file and broadcast the new URL."""
@@ -230,24 +266,6 @@ class StorageFileController(Controller):
                 logger.warning("Cache update failed after rename: %s", exc)
                 non_fatal_warnings.append('cache_update_failed')
 
-            old_media_url = storage_path_service.get_media_url_from_path(file_path)
-            new_media_url = (
-                storage_path_service.get_media_url_from_path(new_path)
-                if new_path else None
-            )
-            if old_media_url and new_media_url:
-                try:
-                    registry.require('storage_events').emit_file_renamed(
-                        {
-                            'old_path': old_media_url,
-                            'new_path': new_media_url,
-                        },
-                        broadcast=True,
-                    )
-                except Exception as exc:
-                    logger.warning("Socket emit failed after rename: %s", exc)
-                    non_fatal_warnings.append('socket_emit_failed')
-
             response_payload = {
                 'success': True,
                 'message': message,
@@ -275,6 +293,33 @@ class StorageFileController(Controller):
             self._refresh_category_cache(category_id)
         except Exception as exc:
             logger.error("Cache invalidation after delete failed: %s", exc)
+
+    def _post_batch_delete_cleanup(self, parent_folders):
+        """Run post-delete folder cleanup and cache refresh once per affected category."""
+        from app.services.storage import storage_path_service
+
+        category_ids = set()
+        for parent_folder in parent_folders:
+            try:
+                storage_path_service.cleanup_empty_parent(parent_folder)
+            except Exception as exc:
+                logger.debug("Cleanup after batch delete: %s", exc)
+
+            try:
+                category_id = storage_path_service.get_category_id_from_path(parent_folder)
+                if category_id:
+                    category_ids.add(category_id)
+            except Exception as exc:
+                logger.debug("Could not resolve category after batch delete: %s", exc)
+
+        if not category_ids:
+            self._refresh_category_cache(None)
+            return
+        for category_id in category_ids:
+            try:
+                self._refresh_category_cache(category_id)
+            except Exception as exc:
+                logger.error("Cache invalidation after batch delete failed: %s", exc)
 
     def _refresh_category_cache(self, category_id):
         """Refresh a single category cache when possible, else invalidate globally."""

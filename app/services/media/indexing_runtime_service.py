@@ -240,7 +240,11 @@ class IndexingRuntimeService(Service):
                 )
 
                 registry.require('library_events').emit_category_updated(
-                    {'reason': 'reindex_complete', 'force_refresh': True},
+                    {
+                        'reason': 'reindex_complete',
+                        'force_refresh': True,
+                        'invalidateAll': True,
+                    },
                 )
         finally:
             self.set_state({'reindex_running': False})
@@ -353,6 +357,7 @@ class IndexingRuntimeService(Service):
                             'total_files': total_files,
                             'timestamp': current_time,
                             'reason': 'index_updated',
+                            'invalidateCategory': True,
                         },
                     )
             except Exception as exc:

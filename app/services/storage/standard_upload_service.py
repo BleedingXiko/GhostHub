@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from typing import Dict, Set, Tuple
 
 import gevent
@@ -70,11 +71,14 @@ def upload_file(
             from app.constants import BUS_EVENTS
             
             category_id = storage_path_service._get_category_id_from_path(target_dir)
+            media_url = storage_path_service.get_media_url_from_path(target_path)
             bus.emit(BUS_EVENTS['STORAGE_FILE_UPLOADED'], {
                 'target_dir': target_dir,
                 'target_path': target_path,
                 'filename': filename,
                 'category_id': category_id,
+                'media_url': media_url,
+                'timestamp': time.time(),
             })
         except Exception as exc:
             logger.debug("Failed to emit STORAGE_FILE_UPLOADED bus event: %s", exc)
@@ -131,6 +135,7 @@ def upload_files(
         bus.emit(BUS_EVENTS['STORAGE_BATCH_UPLOADED'], {
             'success_count': success_count,
             'uploaded_categories': list(uploaded_categories),
+            'timestamp': time.time(),
         })
     except Exception as exc:
         logger.debug("Failed to emit STORAGE_BATCH_UPLOADED bus event: %s", exc)

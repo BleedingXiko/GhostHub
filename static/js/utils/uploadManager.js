@@ -250,6 +250,7 @@ export async function uploadFiles(files, drivePath, subfolder = '', onProgress =
     const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0);
     currentUploadSession = {
         files,
+        fileCount: files.length,
         drivePath,
         subfolder,
         results: { success: 0, failed: 0, errors: [], log: [] }, // Added log
@@ -378,6 +379,7 @@ export async function uploadFiles(files, drivePath, subfolder = '', onProgress =
         }
     } finally {
         currentUploadSession.isRunning = false;
+        releaseCurrentSessionFileHandles();
         // Don't clear currentUploadSession yet so the UI can show final results
         updateGlobalIndicator(100, true);
     }
@@ -607,8 +609,19 @@ export function cancelAllUploads() {
     
     if (currentUploadSession) {
         currentUploadSession.isRunning = false;
+        releaseCurrentSessionFileHandles();
     }
     updateGlobalIndicator(0, true);
+}
+
+function releaseCurrentSessionFileHandles() {
+    if (!currentUploadSession?.files) return;
+    currentUploadSession.fileSummaries = currentUploadSession.files.map((item) => ({
+        name: item.customFilename || item.file?.name || '',
+        size: item.file?.size || 0,
+        relativePath: item.relativePath || ''
+    }));
+    currentUploadSession.files = [];
 }
 
 /**
@@ -659,7 +672,7 @@ function updateGlobalIndicator(percent = 0, finished = false) {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </div>
                 <div class="gui-details">
-                    <div class="gui-text">Uploading ${currentUploadSession.files.length} files...</div>
+                    <div class="gui-text">Uploading ${currentUploadSession.fileCount || currentUploadSession.files.length} files...</div>
                     <div class="gui-progress-container">
                         <div class="gui-progress-fill" style="width: 0%"></div>
                     </div>
@@ -689,7 +702,7 @@ function updateGlobalIndicator(percent = 0, finished = false) {
     if (fill) fill.style.width = `${percent}%`;
     
     const text = $('.gui-text', indicator);
-    if (text) text.textContent = `Uploading ${currentUploadSession.files.length} files (${percent}%)`;
+    if (text) text.textContent = `Uploading ${currentUploadSession.fileCount || currentUploadSession.files.length} files (${percent}%)`;
 }
 
 /**

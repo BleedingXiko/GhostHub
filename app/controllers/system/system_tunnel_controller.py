@@ -217,6 +217,7 @@ class SystemTunnelController(Controller):
                     'active_clients': rate_stats.get('active_clients'),
                     'global_upload_tokens_available': rate_stats.get('global_upload_available'),
                     'global_download_tokens_available': rate_stats.get('global_download_available'),
+                    'effective_upload_limit_mbps': rate_limit_service.get_effective_upload_limit_mbps(client_ip),
                 },
                 'health': 'healthy',
             }

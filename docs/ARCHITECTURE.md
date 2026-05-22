@@ -282,7 +282,7 @@ Controller families:
 | Domain | Controllers |
 |---|---|
 | `core` | `MainController`, `ConnectionController`, `ProfileController` |
-| `media` | `CategoryController`, `MediaController`, `MediaDeliveryController`, `MediaDiscoveryController`, `ProgressController`, `SubtitleController` |
+| `media` | `CategoryController`, `MediaController`, `MediaOrderingController`, `MediaRecordsController`, `MediaDeliveryController`, `MediaDiscoveryController`, `ProgressController`, `SubtitleController` |
 | `storage` | `StorageManagementController`, `StorageFileController`, `StorageUploadController` |
 | `streaming` | `ChatController`, `SyncController` |
 | `system` | `ConfigController`, `SystemTransferController`, `SystemTunnelController`, `SystemUtilityController`, `TVController` |
@@ -299,7 +299,7 @@ The active manifest includes service families across:
 | Domain | Examples |
 |---|---|
 | `core` | `AppStartupService`, `AppRequestLifecycleService`, `RuntimeConfigService`, `SocketTransportService`, `WorkerRuntimeService` |
-| `media` | `LibraryRuntimeService`, `IndexingRuntimeService`, `ThumbnailRuntimeService`, `MediaStorageEventHandlerService`, `ProgressEventService` |
+| `media` | `LibraryRuntimeService`, `IndexingRuntimeService`, `ThumbnailRuntimeService`, `MediaStorageEventHandlerService`, `MediaOrderingService`, `MediaRecordsService`, `ProgressEventService` |
 | `storage` | `StorageDriveRuntimeService`, `StorageEventService`, `UploadSessionRuntimeService`, `StorageWorkerBootService` |
 | `streaming` | `ChatEventService`, `SyncEventService` |
 | `ghoststream` | `GhostStreamRuntimeService`, `GhostStreamEventService`, `TranscodeCacheRuntimeService`, `GhostStreamWorkerBootService` |
@@ -355,6 +355,7 @@ Media code owns library semantics:
 - category discovery and hierarchy
 - category persistence and caching
 - media indexing and query surfaces
+- media ordering windows and record hydration
 - hidden-content enforcement
 - subtitle handling
 - progress persistence
@@ -364,9 +365,32 @@ Representative modules:
 
 - [`app/services/media/category_service.py`](../app/services/media/category_service.py)
 - [`app/services/media/media_index_service.py`](../app/services/media/media_index_service.py)
+- [`app/services/media/media_ordering_service.py`](../app/services/media/media_ordering_service.py)
+- [`app/services/media/media_records_service.py`](../app/services/media/media_records_service.py)
 - [`app/services/media/video_progress_service.py`](../app/services/media/video_progress_service.py)
 - [`app/services/media/subtitle_service.py`](../app/services/media/subtitle_service.py)
 - [`app/services/media/library_runtime_service.py`](../app/services/media/library_runtime_service.py)
+
+#### Media data fetch contract
+
+Media browsing is split into two explicit channels:
+
+| Channel | Endpoint | Owner | Payload role |
+|---|---|---|---|
+| ordering | `GET /api/media/order` | `MediaOrderingController` and `MediaOrderingService` | returns ordered stable ids, pagination state, and view metadata; can inline-hydrate the returned window when `hydrate=true` |
+| hydration | `POST /api/media/records` | `MediaRecordsController` and `MediaRecordsService` | returns canonical media records keyed by id |
+
+The server owns query semantics and ordering. It does not send full record lists for every browsing view. View-shaped requests such as streaming rows, subfolder grids, gallery timeline pages, gallery months, and search first ask for ordered ids. The client then hydrates only the missing ids through the records endpoint or uses `hydrate=true` to hydrate the returned sliding window in the same response.
+
+Stable media ids use:
+
+```text
+<category_id>::<rel_path>
+```
+
+That id is the canonical join key between ordering windows, hydrated records, invalidation events, viewer navigation, and search results.
+
+Large-library behavior depends on this split. A 10k+ item library should not become a 10k-record response just because a layout opens. Each mounted view pins only the ids in its visible or near-visible window, requests hydration for records missing from the shared manifest, and lets unpinned records age out through client-side LRU eviction.
 
 #### Storage domain
 
@@ -631,7 +655,7 @@ The HTTP API is organized by capability:
 | main shell | `/` | shell render and RAGOT lab ingress |
 | profiles | `/api/profiles` and `/api/profiles/...` | profile CRUD and active-profile selection |
 | config | `/api/config` | merged runtime config fetch/save |
-| media and categories | `/api/categories`, `/api/search`, media-specific endpoints | browsing, discovery, media metadata |
+| media and categories | `/api/categories`, `/api/search`, `/api/media/order`, `/api/media/records`, media-specific endpoints | categories, ordering windows, record hydration, discovery metadata |
 | media delivery | `/media/...`, `/thumbnails/...` | content and artifact serving |
 | progress | `/api/progress/...` | continue-watching operations |
 | subtitles | `/api/subtitles/...` | subtitle discovery, extraction, and delivery |
@@ -693,7 +717,38 @@ Rule of thumb:
 - bus events are internal runtime fanout
 - local function calls are still preferred when no broadcast semantics are needed
 
-### 9.4 Event flow model
+### 9.4 Media browsing API contract
+
+The canonical browsing API is id-first. Three endpoints own everything:
+
+| Endpoint | Method | Owner | Role |
+|---|---|---|---|
+| `/api/media/order` | GET | `MediaOrderingController` → `MediaOrderingService` | Single ordered id window. Returns `{ orderedIds, hasMore, pageToken, viewMeta }`. Optional `{ records, missing }` when `hydrate=true`. |
+| `/api/media/orders` | POST | `MediaOrderingController` | Batched ordered id windows. Body: `{ requests: [<order params>...] }`, max 50. Each request is fetched in parallel via gevent and returned in the same order as input. Used by the streaming layout to populate every row's `orderedIds` in one round-trip. |
+| `/api/media/records` | POST | `MediaRecordsController` → `MediaRecordsService` | Stable id hydration. Body: `{ ids: [...] }`, max 200. Returns `{ records, missing }`. |
+
+Authoritative canonical view types (declared in `MediaOrderingController.CANON_VIEW_TYPES`):
+
+- `streaming_row` — one streaming layout horizontal row, scoped to a category.
+- `streaming_grid` — single-category grid in the streaming layout.
+- `subfolder_grid` — drilled-into subfolder grid in the streaming layout.
+- `gallery_timeline` — gallery date-grouped timeline (whole timeline or a single date page).
+- `gallery_month` — gallery month overlay.
+- `whats_new` — recent-media row.
+- `search` — search result window. The id list comes from `/api/search` (which still owns category/folder/parent matching); files inside the search result are hydrated through `mediaManifest` the same way.
+- `viewer_category` — backing view the active viewer pages through. The controller maps this to `streaming_grid`/`subfolder_grid` server-side.
+- `viewer_local` — client-only synthetic view for share-link / single-record viewers. Never sent to the server.
+
+Surrounding endpoints:
+
+- `/api/search` returns the same `viewKey` / `orderedIds` / `records` / `viewMeta` shape so the client can ingest it through `hydrateSearchResults` (`static/js/modules/media/searchDataSource.js`) without a separate code path.
+- `/api/media/timeline/years` is metadata-only for timeline navigation.
+
+Stable media id format: `<category_id>::<rel_path>`. This is the join key between ordering, records, invalidation payloads, viewer navigation, and card click identity (`card.dataset.recordId`).
+
+Do not add new view-specific endpoints that return full media records for an entire category, month, row, or search page. New browsing surfaces should add a `view` shape to `MediaOrderingService` (and the `CANON_VIEW_TYPES` set), then hydrate records through `MediaRecordsService` — either by calling `/api/media/records` or by passing `hydrate=true` on the order request for the current window.
+
+### 9.5 Event flow model
 
 ```mermaid
 flowchart LR
@@ -734,6 +789,7 @@ It registers shared runtime modules into the RAGOT registry, including:
 - app state and store
 - app DOM references
 - media loading and navigation services
+- media manifest, ordering, and invalidation modules
 - UI controller
 - sync and chat managers
 - admin controls
@@ -759,9 +815,10 @@ Current startup in [`static/js/main.js`](../static/js/main.js) is deliberately p
 11. initialize GhostStream early
 12. initialize shell-level modules
 13. initialize admin controls and TV cast UI
-14. initialize guest IndexedDB progress when no active profile exists
-15. initialize the active layout
-16. create and wire the shared Socket.IO client
+14. initialize shared media manifest, ordering, and invalidation modules
+15. initialize guest IndexedDB progress when no active profile exists
+16. initialize the active layout
+17. create and wire the shared Socket.IO client
 
 This order is not incidental. Profiles and visibility state affect early rendering.
 
@@ -776,14 +833,36 @@ Examples of shared state:
 - shared socket instance
 - active profile metadata
 - current category/page/index
-- full media list and dedupe set
+- active media viewer position
 - sync-mode flags
 - preload/fetch/cleanup state
 - low-memory cleanup timers
 
-State mutation is intended to flow through the store and registered actions, not ad hoc object mutation from arbitrary modules.
+State mutation is intended to flow through the store and registered actions, not ad hoc object mutation from arbitrary modules. Full media record arrays do not belong in the app store; the normalized media manifest owns hydrated records.
 
-### 10.5 RAGOT ownership split
+### 10.5 Media manifest, ordering, selectors, and invalidation
+
+Media records have one client-side owner. The frontend split mirrors the backend split: ordering owns id windows, manifest owns records, selectors project them into views, invalidation bridges the socket layer.
+
+| Module | Responsibility |
+|---|---|
+| [`static/js/modules/media/manifest.js`](../static/js/modules/media/manifest.js) | Hydrated record store keyed by stable id. Owns pinning, missing ids, failed-id retry with backoff, batched hydration via `POST /api/media/records`, LRU eviction, and a per-frame `dirtyIds` set used by `subscribeView` to detect record changes. |
+| [`static/js/modules/media/ordering.js`](../static/js/modules/media/ordering.js) | Per-view ordered id windows. Owns request status (`idle` / `fetching` / `ready` / `stale` / `error`), pagination via `_mergeIds`, request cancellation (one `AbortController` per view), bounded LRU of view entries, and `dropIdsFromAllViews` for surgical id removal across every cached view. |
+| [`static/js/modules/media/selectors.js`](../static/js/modules/media/selectors.js) | The only layer that projects ordered ids into hydrated records (`selectRecordsForView`, `selectChunkRecords`, `selectIdAt`, `selectIndexOf`, `selectUnhydratedIdsInWindow`). Also exposes `subscribeView(viewKey, callback)` — the canonical subscription path layouts use to react to ordering + manifest changes for a single view. |
+| [`static/js/modules/media/invalidation.js`](../static/js/modules/media/invalidation.js) | Single bridge between `CATEGORY_UPDATED` / `USB_MOUNTS_CHANGED` socket payloads and manifest + ordering state. Handles `invalidatedIds` (surgical), `category_id` (per-category), and `invalidateAll`. Emits `APP_EVENTS.FILE_RENAMED_UPDATED` on the client bus for non-manifest consumers (progress DB, viewer URL state). |
+| [`static/js/modules/media/viewerState.js`](../static/js/modules/media/viewerState.js) | Viewer session selectors (`getViewerSession`, `setViewerSession`, `getCurrentViewerRecord`). The viewer holds a `viewKey` + `activeIndex` only; the visible record is always projected from the manifest. |
+| [`static/js/modules/media/searchDataSource.js`](../static/js/modules/media/searchDataSource.js) | Ingests `/api/search` payloads into ordering + manifest (`hydrateSearchResults`) and builds file-result groups from selector output. |
+| Layout adapters | [`streaming/mediaDataSource.js`](../static/js/modules/layouts/streaming/mediaDataSource.js) and [`gallery/mediaDataSource.js`](../static/js/modules/layouts/gallery/mediaDataSource.js) translate layout intent into `ordering.requestOrder` calls and project the resulting view through selectors. Streaming uses the batched `/api/media/orders` endpoint to fan out one row request per category in a single round-trip. |
+
+The manifest is not a compatibility cache for old endpoints. It is the canonical client record store. Layouts store ordered ids and derive loaded/error state from ordering status plus manifest hydration state. Layout-private full-record arrays are an anti-pattern.
+
+Manifest memory is tiered for Raspberry Pi targets rather than sized to whole libraries: LITE devices keep roughly 500 hydrated records, STANDARD devices keep roughly 1,200, and PRO browsers keep roughly 2,500. `mediaOrdering` caps cached view entries (default 64) with LRU eviction; the manifest caps confirmed-missing ids (default 4,000). Large libraries are re-derived from stable `viewKey` / `viewType` / `viewParams` instead of retained as unbounded client arrays.
+
+Hydration failure is transient unless the records endpoint explicitly reports an id as missing. Failed pinned ids retry with exponential backoff capped at 10 s, and unpinned failed ids are dropped on the next retry sweep. This prevents a temporary records fetch failure from permanently poisoning the client manifest.
+
+`MediaInvalidationModule` is the only place that should touch manifest + ordering in response to a socket event. Layouts must subscribe via `subscribeView` and react to the resulting view shape — they must not re-issue manifest invalidation in their own socket handlers. Doubling up there is how in-flight refetch `AbortController`s get cancelled mid-flight and rows end up stuck on stale ids.
+
+### 10.6 RAGOT ownership split
 
 GhostHub's frontend architecture depends on using RAGOT correctly:
 
@@ -800,7 +879,7 @@ Primary references:
 - `static/js/libs/ragot.esm.min.js`
 - [`static/js/modules/layouts/README.md`](../static/js/modules/layouts/README.md)
 
-### 10.6 Frontend module families
+### 10.7 Frontend module families
 
 | Area | Examples |
 |---|---|
@@ -842,21 +921,33 @@ Regardless of layout, GhostHub keeps:
 
 ### 11.2 Streaming layout
 
-The streaming layout in [`static/js/modules/layouts/streaming/index.js`](../static/js/modules/layouts/streaming/index.js) owns the cinematic browsing model:
+The streaming layout in [`static/js/modules/layouts/streaming/index.js`](../static/js/modules/layouts/streaming/index.js) is decomposed into single-responsibility component modules. The coordinator owns lifecycle and routing between row mode and grid mode; every visible row is its own RAGOT Component that subscribes to its own `viewKey`.
 
-- hero presentation
-- row-based browsing
-- category emphasis
-- continue-watching-friendly presentation
+| File | Responsibility |
+|---|---|
+| `index.js` | `StreamingLayoutModule` lifecycle, `loadAndRender`, mount/unmount of container, hero, filter bar, rows container, and grid. |
+| `componentWiring.js` | Setup of hero, filter bar, layout-level event listeners, filter actions, error rendering. |
+| `CategoryRowsContainer.js` | One per layout. Subscribes to `streamingState` and reconciles the desired row identity set against mounted `CategoryRowComponent` children — mounts/unmounts only on identity change, no per-row data patching. |
+| `CategoryRowComponent.js` | One per category-subfolder pair. Subscribes via `subscribeView(viewKey)`. Distinguishes append-only pagination (`vs.reset()`) from genuine shape change (full VS rebuild). Holds its own VS instance, scroll buttons, and subfolder-card decoration. |
+| `ContinueWatchingRowComponent.js` | Driven by `streamingState.continueWatchingData` (progress-derived, not an ordering view). Uses RAGOT `renderList` for in-place patching. |
+| `WhatsNewRowComponent.js` | Driven by both `streamingState.whatsNewData` and the backing `whats_new` ordering view via `subscribeView` — manifest invalidations reconcile the row in place. |
+| `grid.js` | `StreamingGridComponent` for single-category / subfolder grids. Owns chunked vertical VS with `chunkContainer` so sentinels stay outside the CSS grid; supports `rebind` for category switches without a full remount. |
+| `mediaDataSource.js` | All ordering/manifest reads + writes for this layout. Owns the batched `/api/media/orders` call. |
+| `state.js` | `StreamingStateModule` (filters, pagination, CW/WN snapshots, viewKey derivation per category). |
+| `rowShell.js` | Pure DOM helpers shared across row Components: shell builder, loading card, header/breadcrumb meta, prime-window math, prefetch heuristic. |
+| `lazyLoad.js` | Streaming-only thumbnail IntersectionObserver wrapper. Buffers `observeLazyImage` calls and observes on the next RAF; re-queues disconnected images so VS chunk mounts win the race. |
+| `pagination.js`, `indexUpdates.js`, `progressBars.js`, `progressUpdates.js`, `subfolderInstantNavigation.js` | Single-purpose handlers wired in from `index.js`. |
+| `cards.js`, `hero.js`, `renderer.js` | Card factories, hero Component, container/filter bar Components. |
+
+Streaming does not fetch or store category-sized record arrays. The data adapter requests ordered id windows for rows and grids, pins the ids that are currently needed, hydrates missing records through the shared manifest, and renders records projected from that manifest. Every card carries `data-record-id` (the stable id) and `data-media-url`; viewer entry resolves by stable id first and falls back to URL only for share/deep-link callers.
 
 ### 11.3 Gallery layout
 
-The gallery layout in [`static/js/modules/layouts/gallery/index.js`](../static/js/modules/layouts/gallery/index.js) owns the archive-oriented browsing model:
+The gallery layout in [`static/js/modules/layouts/gallery/index.js`](../static/js/modules/layouts/gallery/index.js) owns the archive-oriented browsing model: denser exploration, timeline/date grouping, photo-first navigation, gallery-specific interactions.
 
-- denser exploration
-- timeline/date grouping
-- photo-first navigation
-- gallery-specific interactions
+Gallery follows the same contract. `mediaDataSource.js` calls `ordering.requestOrder` with `gallery_timeline` for the date-grouped timeline (paginated by `dates_page`) and `gallery_month` for the month overlay. Records hydrate through `mediaManifest` and are read via `selectRecordsForView`. Month overlays hold a `viewKey` + `mediaIds`, never independent media arrays.
+
+`/api/media/timeline/years` remains a separate metadata endpoint for the sidebar/mobile timeline — it does not flow through `MediaOrderingService` because it returns no media ids, only year/month structure.
 
 ### 11.4 Shared layout infrastructure
 
@@ -875,6 +966,7 @@ If a feature is shared across layouts, it usually belongs:
 
 - in shell-level modules
 - in layout shared helpers
+- in the media manifest or ordering modules
 - in the app store
 - or in backend APIs/events
 
@@ -929,7 +1021,34 @@ sequenceDiagram
 
 The key design choice is that storage mutation and media indexing are decoupled by explicit internal events.
 
-### 12.3 Progress persistence flow
+### 12.3 Media browsing hydration flow
+
+```mermaid
+sequenceDiagram
+    participant Layout
+    participant Ordering as mediaOrdering
+    participant Manifest as mediaManifest
+    participant OrderAPI as /api/media/order
+    participant RecordsAPI as /api/media/records
+
+    Layout->>Ordering: requestOrder(viewKey, view, params)
+    Ordering->>OrderAPI: GET ordered id window, optionally hydrate=true
+    OrderAPI-->>Ordering: orderedIds, hasMore, pageToken, viewMeta, optional records
+    Layout->>Manifest: pin(viewKey, visibleIds)
+    Layout->>Manifest: ingest inline records or hydrate(missingIds)
+    Manifest->>RecordsAPI: POST ids when order response did not include them
+    RecordsAPI-->>Manifest: records keyed by stable id, missing ids
+    Layout->>Manifest: read records for ordered ids
+```
+
+Important properties:
+
+- ordering requests are cancellable and settle as `ready` or `error`
+- loading is derived from ordering status plus manifest hydration state
+- temporary hydration failures retry; explicit missing ids do not loop forever
+- invalidation drops affected records and marks scoped ordering views stale
+
+### 12.4 Progress persistence flow
 
 When an active profile exists:
 
@@ -1135,6 +1254,8 @@ Do not use them:
 - new globals on `current_app`
 - raw socket string literals in feature code
 - layout-specific duplication of app-wide logic
+- reintroducing view-specific full-record fetch endpoints for media browsing
+- storing hydrated media records in layout-private arrays when they belong in `mediaManifest`
 - mixing guest-mode and active-profile persistence rules in arbitrary places
 - fixing a lifecycle bug by adding a second workaround lifecycle nearby
 
@@ -1155,6 +1276,13 @@ Use this map when deciding where to inspect or modify behavior.
 | HTML shell contract | [`templates/index.html`](../templates/index.html) |
 | frontend composition root | [`static/js/main.js`](../static/js/main.js) |
 | frontend shared app state | [`static/js/core/app.js`](../static/js/core/app.js) |
+| media ordering windows | [`app/services/media/media_ordering_service.py`](../app/services/media/media_ordering_service.py), [`static/js/modules/media/ordering.js`](../static/js/modules/media/ordering.js) |
+| hydrated media records | [`app/services/media/media_records_service.py`](../app/services/media/media_records_service.py), [`static/js/modules/media/manifest.js`](../static/js/modules/media/manifest.js) |
+| media browsing adapters | [`static/js/modules/layouts/streaming/mediaDataSource.js`](../static/js/modules/layouts/streaming/mediaDataSource.js), [`static/js/modules/layouts/gallery/mediaDataSource.js`](../static/js/modules/layouts/gallery/mediaDataSource.js), [`static/js/modules/media/searchDataSource.js`](../static/js/modules/media/searchDataSource.js) |
+| media selectors / projections | [`static/js/modules/media/selectors.js`](../static/js/modules/media/selectors.js) |
+| socket → manifest/ordering bridge | [`static/js/modules/media/invalidation.js`](../static/js/modules/media/invalidation.js) |
+| viewer session state | [`static/js/modules/media/viewerState.js`](../static/js/modules/media/viewerState.js) |
+| canonical media view types | `CANON_VIEW_TYPES` in [`app/controllers/media/media_ordering_controller.py`](../app/controllers/media/media_ordering_controller.py) |
 | backend event constants | [`app/constants.py`](../app/constants.py) |
 | frontend socket constants | [`static/js/core/socketEvents.js`](../static/js/core/socketEvents.js) |
 | frontend app bus constants | [`static/js/core/appEvents.js`](../static/js/core/appEvents.js) |

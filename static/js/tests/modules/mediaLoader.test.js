@@ -72,23 +72,20 @@ describe('MediaLoader', () => {
       expect(mediaViewer.classList.contains('hidden')).toBe(false);
     });
 
-    it('should fetch media from API', async () => {
+    it('should fetch media ordering from API', async () => {
       global.fetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
-          media: [
-            { url: '/media/video1.mp4', type: 'video', name: 'Video 1' },
-            { url: '/media/video2.mp4', type: 'video', name: 'Video 2' }
-          ],
-          page: 1,
-          hasMore: true
+          orderedIds: ['movies::video1.mp4', 'movies::video2.mp4'],
+          hasMore: true,
+          viewMeta: { page: 1 }
         })
       });
       
-      const response = await fetch('/api/categories/movies/media?page=1');
+      const response = await fetch('/api/media/order?view=streaming_grid&category_id=movies&page=1');
       const data = await response.json();
       
-      expect(data.media).toHaveLength(2);
+      expect(data.orderedIds).toHaveLength(2);
     });
 
     it('should handle forced order', () => {
@@ -229,20 +226,19 @@ describe('MediaLoader', () => {
     it('should handle fetch errors', async () => {
       global.fetch.mockRejectedValue(new Error('Network error'));
       
-      await expect(fetch('/api/categories/test/media')).rejects.toThrow();
+      await expect(fetch('/api/media/order?view=streaming_grid&category_id=test')).rejects.toThrow();
     });
 
     it('should handle empty response', async () => {
       global.fetch.mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ media: [] })
+        json: () => Promise.resolve({ orderedIds: [] })
       });
       
-      const response = await fetch('/api/categories/empty/media');
+      const response = await fetch('/api/media/order?view=streaming_grid&category_id=empty');
       const data = await response.json();
       
-      expect(data.media).toHaveLength(0);
+      expect(data.orderedIds).toHaveLength(0);
     });
   });
 });
-

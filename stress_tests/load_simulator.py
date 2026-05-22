@@ -67,9 +67,15 @@ class TestResult:
 class GhostHubClient:
     """Base client for interacting with GhostHub API."""
     
-    def __init__(self, base_url: str = "http://localhost:5000", admin_password: str = None):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:5000",
+        session_password: str = None,
+        admin_password: str = None,
+    ):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
+        self.session_password = session_password
         self.admin_password = admin_password
         self.session_id = None
         
@@ -79,24 +85,24 @@ class GhostHubClient:
         })
     
     def authenticate_admin(self) -> bool:
-        """Authenticate as admin if password is set."""
+        """Validate the session password, then claim admin when possible."""
         try:
             # First get a session cookie
             resp = self.session.get(f"{self.base_url}/")
             if 'session_id' in resp.cookies:
                 self.session_id = resp.cookies['session_id']
-            
-            if self.admin_password:
-                # Validate password
+
+            if self.session_password:
                 resp = self.session.post(
                     f"{self.base_url}/api/validate_session_password",
-                    json={'password': self.admin_password}
+                    json={'password': self.session_password}
                 )
-                if resp.status_code == 200 and resp.json().get('valid'):
-                    # Claim admin
-                    resp = self.session.post(f"{self.base_url}/api/admin/claim")
-                    return resp.status_code == 200
-            return True  # No password needed
+                if resp.status_code != 200 or not resp.json().get('valid'):
+                    return False
+
+            payload = {'password': self.admin_password} if self.admin_password else {}
+            resp = self.session.post(f"{self.base_url}/api/admin/claim", json=payload)
+            return resp.status_code == 200
         except Exception as e:
             print(f"Auth error: {e}")
             return False
@@ -110,16 +116,41 @@ class GhostHubClient:
         except Exception as e:
             print(f"Error fetching categories: {e}")
         return []
+
+    def get_drives(self) -> List[str]:
+        """Fetch writable storage drives for upload tests."""
+        try:
+            resp = self.session.get(f"{self.base_url}/api/storage/drives", timeout=10)
+            if resp.status_code == 200:
+                return [
+                    drive.get('path')
+                    for drive in resp.json().get('drives', [])
+                    if drive.get('path')
+                ]
+        except Exception as e:
+            print(f"Error fetching drives: {e}")
+        return []
     
     def get_category_media(self, category_id: str, page: int = 1, limit: int = 50) -> Dict:
         """Fetch media for a category."""
         try:
-            resp = self.session.get(
-                f"{self.base_url}/api/categories/{category_id}/media",
-                params={'page': page, 'limit': limit}
+            view_key = f"load_simulator::{category_id}::{page}::{limit}"
+            resp = self.session.post(
+                f"{self.base_url}/api/media/orders",
+                json={'requests': [{
+                    'view': 'load_simulator',
+                    'viewKey': view_key,
+                    'category_id': category_id,
+                    'page': page,
+                    'limit': limit,
+                    'media_filter': 'all',
+                    'hydrate': 'true',
+                }]},
             )
             if resp.status_code == 200:
-                return resp.json()
+                results = resp.json().get('results') or []
+                if results and results[0].get('status') != 'error':
+                    return {'files': list((results[0].get('records') or {}).values())}
         except Exception as e:
             print(f"Error fetching media: {e}")
         return {'files': [], 'pagination': {}}
@@ -203,20 +234,25 @@ class ChunkedUploadSimulator:
                 for chunk_index in range(total_chunks):
                     chunk_data = f.read(self.CHUNK_SIZE)
                     
-                    chunk_resp = self.client.session.post(
-                        f"{self.client.base_url}/api/storage/upload/chunk",
-                        data={
-                            'upload_id': upload_id,
-                            'chunk_index': chunk_index
-                        },
-                        files={'chunk': ('chunk', chunk_data, 'application/octet-stream')}
-                    )
-                    requests_made += 1
-                    bytes_transferred += len(chunk_data)
-                    
-                    if chunk_resp.status_code != 200:
+                    chunk_resp = None
+                    for attempt in range(1, 7):
+                        chunk_resp = self.client.session.post(
+                            f"{self.client.base_url}/api/storage/upload/chunk",
+                            data={
+                                'upload_id': upload_id,
+                                'chunk_index': chunk_index
+                            },
+                            files={'chunk': ('chunk', chunk_data, 'application/octet-stream')}
+                        )
+                        requests_made += 1
+                        if chunk_resp.status_code == 200:
+                            bytes_transferred += len(chunk_data)
+                            break
+                        if chunk_resp.status_code == 429 and attempt < 6:
+                            time.sleep(min(6.0, attempt))
+                            continue
                         errors.append(f"Chunk {chunk_index} failed: {chunk_resp.text}")
-                        continue
+                        break
                     
                     progress = (chunk_index + 1) / total_chunks * 100
                     speed = bytes_transferred / (time.time() - start_time) / 1024 / 1024
@@ -256,15 +292,18 @@ class ChunkedUploadSimulator:
     
     def cleanup(self):
         """Remove test files from server and local temp files."""
-        for drive_path, filename in self._uploaded_files:
+        if self._uploaded_files:
+            file_paths = [
+                f"{drive_path}/{filename}" if not drive_path.endswith('/') else f"{drive_path}{filename}"
+                for drive_path, filename in self._uploaded_files
+            ]
             try:
-                file_path = f"{drive_path}/{filename}"
-                self.client.session.delete(
-                    f"{self.client.base_url}/api/storage/media",
-                    json={'file_path': file_path},
+                self.client.session.post(
+                    f"{self.client.base_url}/api/storage/media/batch-delete",
+                    json={'file_paths': file_paths},
                     timeout=10,
                 )
-                print(f"  Cleaned up server file: {file_path}")
+                print(f"  Cleaned up {len(file_paths)} server test file(s)")
             except Exception:
                 pass
         self._uploaded_files.clear()
@@ -453,13 +492,11 @@ class WebSocketSpammer:
         if media_count > 1:
             index = random.randint(0, media_count - 1)
 
+        payload = self._sync_payload(category_id, index)
         return {
             'cmd': 'myview',
             'from': f"stress_{client_id}",
-            'arg': {
-                'category_id': category_id,
-                'index': index
-            }
+            'arg': payload
         }
 
     def _run_search_request(self) -> bool:
@@ -626,11 +663,7 @@ class SyncModeSimulator:
             # Enable sync via HTTP API (session becomes host)
             resp = self.http_session.post(
                 f"{self.base_url}/api/sync/toggle",
-                json={'enabled': True, 'media': {
-                    'category_id': category_id,
-                    'file_url': '',
-                    'index': start_index
-                }},
+                json={'enabled': True, 'media': self._sync_payload(category_id, start_index)},
                 timeout=10
             )
             if resp.status_code != 200:
@@ -690,22 +723,15 @@ class SyncModeSimulator:
                     current_index = random.randint(0, total_items - 1)
                 
                 # Send sync update via WebSocket or HTTP
+                payload = self._sync_payload(category_id, current_index)
                 if self.use_websocket and self.host_client:
-                    self.host_client.emit('sync_update', {
-                        'category_id': category_id,
-                        'index': current_index,
-                        'file_url': f'/media/{category_id}/item_{current_index}'
-                    })
+                    self.host_client.emit('sync_update', payload)
                     navigations += 1
                 else:
                     # HTTP fallback
                     resp = self.http_session.post(
                         f"{self.base_url}/api/sync/update",
-                        json={
-                            'category_id': category_id,
-                            'index': current_index,
-                            'file_url': f'/media/{category_id}/item_{current_index}'
-                        }
+                        json=payload
                     )
                     if resp.status_code == 200:
                         navigations += 1
@@ -730,6 +756,20 @@ class SyncModeSimulator:
                 'mode': 'websocket' if self.use_websocket else 'http'
             }
         )
+
+    @staticmethod
+    def _sync_payload(category_id: str, current_index: int) -> Dict:
+        media_id = f"{category_id}::item_{current_index}"
+        return {
+            'category_id': category_id,
+            'viewKey': f"sim::{category_id}::all",
+            'viewType': 'streaming_grid',
+            'viewParams': {
+                'category_id': category_id,
+                'media_filter': 'all',
+            },
+            'mediaId': media_id,
+        }
     
     def cleanup(self):
         """Disconnect all clients and disable sync."""
@@ -793,13 +833,23 @@ class TVCastingSimulator:
         try:
             for i in range(num_cycles):
                 media = media_urls[i % len(media_urls)]
+                category_id = media.get('category_id')
+                media_id = media.get('id') or f"{category_id or 'media'}::item_{i}"
+                view_params = {
+                    'category_id': category_id,
+                    'media_filter': 'all',
+                }
                 
                 # Cast
                 self.sio.emit('cast_media_to_tv', {
                     'media_type': media.get('type', 'video'),
                     'media_path': media.get('url'),
-                    'category_id': media.get('category_id'),
-                    'media_index': i,
+                    'viewKey': f"sim::{category_id or 'media'}::all",
+                    'viewType': 'streaming_grid',
+                    'viewParams': view_params,
+                    'mediaId': media_id,
+                    'category_id': category_id,
+                    'media_id': media_id,
                     'loop': False
                 })
                 
@@ -831,6 +881,253 @@ class TVCastingSimulator:
                 'cycles_per_minute': cycles_completed / (duration / 60) if duration > 0 else 0
             }
         )
+
+
+class MediaBrowsingSimulator:
+    """Hammer the normalized media browsing endpoints.
+
+    Exercises the canonical id-first browsing contract that backs every
+    streaming row, gallery timeline page, and viewer hydration:
+      GET  /api/media/order            single ordered id window
+      POST /api/media/orders           batched ordered id windows (rows fan-out)
+      POST /api/media/records          stable-id hydration
+
+    This is the new hot path on the media-manifest-refactor branch and is
+    not covered by the older streaming/sync/upload stressors.
+    """
+
+    MAX_BATCH_REQUESTS = 50  # Server-enforced cap in MediaOrderingController.
+    MAX_RECORD_IDS = 200     # Server-enforced cap in MediaRecordsService.
+
+    def __init__(self, client: GhostHubClient, categories: List[Dict]):
+        self.client = client
+        self.base_url = client.base_url
+        self.session = client.session
+        self.categories = [c for c in (categories or []) if c.get('id')]
+        self.running = False
+        self.errors: List[str] = []
+        self.requests_made = 0
+        self.bytes_received = 0
+
+    def run_browsing_storm(
+        self,
+        num_clients: int = 5,
+        duration_seconds: int = 30,
+        records_per_batch: int = 20,
+        rows_per_batch: int = 10,
+    ) -> TestResult:
+        """Spawn N worker threads each looping the order → records cycle."""
+        if not self.categories:
+            return TestResult(
+                test_name="media_browsing",
+                success=False,
+                duration_seconds=0,
+                errors=["No categories available for browsing storm"],
+            )
+
+        self.running = True
+        start_time = time.time()
+        per_thread_stats: List[Dict] = []
+        stats_lock = threading.Lock()
+
+        def worker(worker_id: int):
+            stats = {
+                'order_requests': 0,
+                'batch_requests': 0,
+                'records_requests': 0,
+                'errors': 0,
+                'first_error': None,
+            }
+            local_session = requests.Session()
+            local_session.headers.update(self.session.headers)
+            for cookie in self.session.cookies:
+                local_session.cookies.set_cookie(cookie)
+
+            while self.running and (time.time() - start_time) < duration_seconds:
+                roll = random.random()
+                try:
+                    if roll < 0.45:
+                        self._hit_single_order(local_session, stats, records_per_batch)
+                    elif roll < 0.80:
+                        self._hit_batched_orders(local_session, stats, rows_per_batch)
+                    else:
+                        self._hit_records(local_session, stats)
+                except Exception as exc:
+                    stats['errors'] += 1
+                    if not stats['first_error']:
+                        stats['first_error'] = f"worker {worker_id}: {exc}"
+
+                time.sleep(random.uniform(0.05, 0.25))
+
+            with stats_lock:
+                per_thread_stats.append(stats)
+
+        threads = [
+            threading.Thread(target=worker, args=(i,), daemon=True)
+            for i in range(num_clients)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=duration_seconds + 30)
+
+        self.running = False
+        duration = time.time() - start_time
+
+        totals = {
+            'order_requests': sum(s['order_requests'] for s in per_thread_stats),
+            'batch_requests': sum(s['batch_requests'] for s in per_thread_stats),
+            'records_requests': sum(s['records_requests'] for s in per_thread_stats),
+            'errors': sum(s['errors'] for s in per_thread_stats),
+        }
+        total_requests = (
+            totals['order_requests']
+            + totals['batch_requests']
+            + totals['records_requests']
+        )
+        error_samples = [s['first_error'] for s in per_thread_stats if s.get('first_error')]
+
+        # Tolerate 5% error rate — the storm includes random pagination beyond
+        # the actual library size, which the server legitimately rejects.
+        error_rate = totals['errors'] / max(1, total_requests)
+        return TestResult(
+            test_name="media_browsing",
+            success=error_rate <= 0.05,
+            duration_seconds=duration,
+            requests_made=total_requests,
+            bytes_transferred=self.bytes_received,
+            errors=error_samples[:5],
+            metrics={
+                **totals,
+                'requests_per_second': total_requests / duration if duration > 0 else 0,
+                'error_rate': error_rate,
+                'workers': num_clients,
+            },
+        )
+
+    def _hit_single_order(self, session, stats: Dict, page_limit: int) -> None:
+        """GET /api/media/order for a single streaming row / grid window."""
+        cat = random.choice(self.categories)
+        view = random.choice(['streaming_row', 'streaming_grid', 'subfolder_grid'])
+        params = {
+            'view': view,
+            'category_id': cat['id'],
+            'page': random.randint(1, 3),
+            'limit': page_limit,
+            'media_filter': random.choice(['all', 'image', 'video']),
+            'hydrate': random.choice(['true', 'false']),
+        }
+        if view == 'subfolder_grid':
+            # Subfolder views require a subfolder param; the server returns
+            # a clean empty window when the path doesn't exist, which is
+            # exactly the shape the client also has to handle.
+            params['subfolder'] = 'stress'
+        resp = session.get(
+            f"{self.base_url}/api/media/order",
+            params=params,
+            timeout=15,
+        )
+        stats['order_requests'] += 1
+        if resp.status_code == 200:
+            self._consume_body(resp)
+            self._validate_order_shape(resp.json())
+        elif resp.status_code in (400, 404):
+            # Validation rejection is acceptable feedback, not a server fault.
+            return
+        else:
+            raise RuntimeError(f"/api/media/order returned {resp.status_code}")
+
+    def _hit_batched_orders(self, session, stats: Dict, rows_per_batch: int) -> None:
+        """POST /api/media/orders — fan out N rows in one round-trip."""
+        count = min(self.MAX_BATCH_REQUESTS, max(1, rows_per_batch))
+        picks = random.choices(self.categories, k=count)
+        body = {
+            'requests': [
+                {
+                    'view': 'streaming_row',
+                    'viewKey': f"stress::row::{cat['id']}::{idx}",
+                    'category_id': cat['id'],
+                    'page': 1,
+                    'limit': 20,
+                    'media_filter': 'all',
+                    'hydrate': 'true',
+                }
+                for idx, cat in enumerate(picks)
+            ]
+        }
+        resp = session.post(
+            f"{self.base_url}/api/media/orders",
+            json=body,
+            timeout=20,
+        )
+        stats['batch_requests'] += 1
+        if resp.status_code != 200:
+            raise RuntimeError(f"/api/media/orders returned {resp.status_code}")
+        payload = resp.json()
+        results = payload.get('results') or []
+        if len(results) != len(body['requests']):
+            raise RuntimeError(
+                f"/api/media/orders result count {len(results)} != request count {len(body['requests'])}"
+            )
+        self._consume_body(resp)
+
+    def _hit_records(self, session, stats: Dict) -> None:
+        """POST /api/media/records — hydrate stable ids."""
+        cat = random.choice(self.categories)
+        # Seed: pull a real order window first so we hydrate real ids when
+        # possible, then mix in synthetic ids to exercise the missing path.
+        seed_resp = session.get(
+            f"{self.base_url}/api/media/order",
+            params={
+                'view': 'streaming_row',
+                'category_id': cat['id'],
+                'page': 1,
+                'limit': 20,
+                'media_filter': 'all',
+            },
+            timeout=10,
+        )
+        stats['order_requests'] += 1
+        seed_ids = []
+        if seed_resp.status_code == 200:
+            seed_ids = list(seed_resp.json().get('orderedIds') or [])
+        synthetic = [
+            f"{cat['id']}::stress-missing-{random.randint(0, 9999)}.bin"
+            for _ in range(min(5, max(1, self.MAX_RECORD_IDS - len(seed_ids))))
+        ]
+        ids = (seed_ids + synthetic)[: self.MAX_RECORD_IDS]
+        if not ids:
+            return
+        resp = session.post(
+            f"{self.base_url}/api/media/records",
+            json={'ids': ids},
+            timeout=15,
+        )
+        stats['records_requests'] += 1
+        if resp.status_code != 200:
+            raise RuntimeError(f"/api/media/records returned {resp.status_code}")
+        body = resp.json()
+        if not isinstance(body.get('records'), dict) or not isinstance(body.get('missing'), list):
+            raise RuntimeError("/api/media/records payload missing records/missing keys")
+        self._consume_body(resp)
+
+    @staticmethod
+    def _validate_order_shape(payload: Dict) -> None:
+        if not isinstance(payload, dict):
+            raise RuntimeError("/api/media/order returned non-object")
+        if not isinstance(payload.get('orderedIds'), list):
+            raise RuntimeError("/api/media/order missing orderedIds list")
+        if 'hasMore' not in payload:
+            raise RuntimeError("/api/media/order missing hasMore")
+        view_meta = payload.get('viewMeta')
+        if view_meta is not None and not isinstance(view_meta, dict):
+            raise RuntimeError("/api/media/order viewMeta must be an object")
+
+    def _consume_body(self, resp) -> None:
+        try:
+            self.bytes_received += len(resp.content or b'')
+        except Exception:
+            pass
 
 
 class ThumbnailStressTest:
@@ -918,8 +1215,12 @@ def main():
     parser.add_argument('--url', default='http://localhost:5000',
                         help='GhostHub base URL')
     parser.add_argument('--password', default=None,
-                        help='Admin password if set')
-    parser.add_argument('--test', choices=['upload', 'stream', 'websocket', 'sync', 'cast', 'thumbnail', 'all'],
+                        help='Legacy alias for --session-password')
+    parser.add_argument('--session-password', default=None,
+                        help='Session password if password protection is enabled')
+    parser.add_argument('--admin-password', default=None,
+                        help='Admin password for admin claim and cleanup')
+    parser.add_argument('--test', choices=['upload', 'stream', 'websocket', 'sync', 'cast', 'thumbnail', 'browsing', 'all'],
                         default='all', help='Test to run')
     parser.add_argument('--duration', type=int, default=30,
                         help='Test duration in seconds')
@@ -937,13 +1238,15 @@ def main():
     # Create output directory
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     
-    client = GhostHubClient(args.url, args.password)
+    session_password = args.session_password or args.password
+    client = GhostHubClient(args.url, session_password, args.admin_password)
     
     check_dependencies()
     
     print(f"\n🔗 Connecting to GhostHub at {args.url}...")
-    if not client.authenticate_admin():
-        print("⚠️  Warning: Could not authenticate as admin. Some tests may fail.")
+    admin_ok = client.authenticate_admin()
+    if not admin_ok:
+        print("⚠️  Admin was not claimed. Admin-required upload cleanup will be skipped.")
     
     results = []
     
@@ -961,13 +1264,46 @@ def main():
         media = client.get_category_media(cat['id'])
         for f in media.get('files', []):
             if f.get('type') == 'video':
-                video_urls.append(f"/media/{cat['id']}/{f['name']}")
+                video_url = f.get('url') or f.get('media_url')
+                if not video_url:
+                    continue
+                video_urls.append(video_url)
                 if len(video_urls) >= 5:
                     break
         if len(video_urls) >= 5:
             break
     
     # Run requested tests
+    if args.test in ['upload', 'all']:
+        print("\n=== Running Upload Test ===")
+        if not admin_ok:
+            results.append(TestResult(
+                test_name="chunked_upload",
+                success=True,
+                duration_seconds=0,
+                metrics={'skipped': True, 'skip_reason': 'admin was not claimed'},
+            ))
+        else:
+            upload_sim = ChunkedUploadSimulator(client)
+            drives = client.get_drives()
+            if not drives:
+                results.append(TestResult(
+                    test_name="chunked_upload",
+                    success=True,
+                    duration_seconds=0,
+                    metrics={'skipped': True, 'skip_reason': 'no writable drives'},
+                ))
+            else:
+                size = 16 * 1024 * 1024
+                files = [
+                    upload_sim.generate_test_file(size, f"/tmp/ghosthub_load_{os.getpid()}_{i}.bin")
+                    for i in range(min(args.clients, 2))
+                ]
+                try:
+                    results.extend(upload_sim.run_concurrent_uploads(files, drives[0], max_concurrent=2))
+                finally:
+                    upload_sim.cleanup()
+
     if args.test in ['stream', 'all'] and video_urls:
         print("\n=== Running Streaming Test ===")
         sim = StreamingSimulator(client)
@@ -993,6 +1329,15 @@ def main():
         for cat in categories[:2]:  # Test first 2 categories
             result = thumb_test.trigger_thumbnail_generation(cat['id'])
             results.append(result)
+
+    if args.test in ['browsing', 'all'] and categories:
+        print("\n=== Running Media Browsing Storm ===")
+        browse_sim = MediaBrowsingSimulator(client, categories)
+        result = browse_sim.run_browsing_storm(
+            num_clients=args.clients,
+            duration_seconds=args.duration,
+        )
+        results.append(result)
     
     if args.test in ['sync', 'all'] and categories:
         print("\n=== Running Sync Mode Test ===")

@@ -648,6 +648,20 @@ def get_thumbnail_url(category_id, original_filename):
     encoded_thumbnail_filename = quote(thumbnail_filename)
     return f"/thumbnails/{category_id}/{encoded_thumbnail_filename}"
 
+def get_media_item_thumbnail_url(category_id, rel_path, item_type, size=0):
+    """Return the thumbnail URL API payloads should expose for one media item."""
+    if item_type == 'video':
+        return get_thumbnail_url(category_id, rel_path)
+    if item_type == 'image':
+        try:
+            file_size = int(size or 0)
+        except (TypeError, ValueError):
+            file_size = 0
+        if file_size >= IMAGE_THUMBNAIL_MIN_SIZE:
+            return get_thumbnail_url(category_id, rel_path)
+        return f"/media/{category_id}/{quote(rel_path)}"
+    return None
+
 def find_thumbnail(category_path, category_id, category_name, media_files=None, allow_queue=True):
     """
     Find or generate a thumbnail for a category directory.

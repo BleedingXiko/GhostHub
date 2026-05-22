@@ -130,8 +130,13 @@ class ProfileSelector extends Module {
                 throw new Error(data.error || data.message || 'Failed to select profile.');
             }
 
-            await this.refreshProfiles();
-            this._setActiveProfile(data.profile, { closeIfSelected: true });
+            if (Array.isArray(data.profiles)) {
+                this.state.profiles = data.profiles;
+                this._setActiveProfile(data.active_profile || data.profile || null, { closeIfSelected: true });
+            } else {
+                await this.refreshProfiles();
+                this._setActiveProfile(data.profile, { closeIfSelected: true });
+            }
             window.dispatchEvent(new CustomEvent(PROFILE_SELECTED_EVENT, {
                 detail: {
                     profile: data.profile || null,
@@ -248,13 +253,14 @@ class ProfileSelector extends Module {
     async handleRemoteProfileSelected(payload) {
         if (payload && Object.prototype.hasOwnProperty.call(payload, 'profile')) {
             this._setActiveProfile(payload.profile || null, {
-                closeIfSelected: Boolean(payload.profile),
+                closeIfSelected: true,
             });
             this._renderOverlay();
             return;
         }
 
-        await this.refreshProfiles();
+        const data = await this.refreshProfiles();
+        this._setActiveProfile(data.active_profile || null, { closeIfSelected: true });
         this._renderOverlay();
     }
 
@@ -287,13 +293,13 @@ class ProfileSelector extends Module {
         this.state.activeProfile = profile || null;
         syncActiveProfile(profile || null);
 
-        if (profile?.id && closeIfSelected) {
+        if (closeIfSelected) {
             this.state.overlayOpen = false;
             this.state.overlayRequired = false;
         }
 
-        if (profile?.id && this.pendingResolver) {
-            this.pendingResolver(profile);
+        if (this.pendingResolver) {
+            this.pendingResolver(profile || null);
             this.pendingResolver = null;
         }
     }

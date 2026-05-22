@@ -14,6 +14,8 @@ import socketio
 from collections import deque
 from typing import Optional, List, Dict
 
+from app.constants import SOCKET_EVENTS, TV_EVENTS
+
 # GHOSTHUB NATIVE TV RUNTIME
 # Version: 2.1 (Diagnostic Enhanced)
 
@@ -788,9 +790,12 @@ class GhostHubRuntime:
         self.running = True
         self.mode = "IDLE"
         
+        self.view_key = None
+        self.view_type = None
+        self.view_params = {}
         self.category_id = None
         self.media_path = None
-        self.media_index = None
+        self.media_id = None
         self.thumbnail_url = None
         self.is_guest_cast = True
         self.last_reported_time = -1
@@ -861,10 +866,15 @@ class GhostHubRuntime:
             self.estimated_wallclock = now
             self.estimated_paused = p
 
-            self.sio.emit('tv_report_state', {
+            self.sio.emit(TV_EVENTS['TV_REPORT_STATE'], {
                 'currentTime': t,
                 'duration': d,
-                'paused': p
+                'paused': p,
+                'viewKey': self.view_key,
+                'viewType': self.view_type,
+                'viewParams': self.view_params or {},
+                'mediaId': self.media_id,
+                'category_id': self.category_id,
             })
             self.last_reported_time = float(t)
             self.last_reported_pause = p
@@ -887,19 +897,19 @@ class GhostHubRuntime:
             self.mpv.reset_video_geometry()
 
     def _setup_handlers(self):
-        @self.sio.on('connect')
+        @self.sio.on(SOCKET_EVENTS['CONNECT'])
         def on_connect():
             log_immediate("Connected to GhostHub server via socketio")
-            self.sio.emit('tv_connected')
+            self.sio.emit(TV_EVENTS['TV_CONNECTED'])
             # Ensure playback is stopped/cleared when in idle mode on connection
             if self.mode == "IDLE": 
                 self.mpv.stop_playback()
 
-        @self.sio.on('connect_error')
+        @self.sio.on(SOCKET_EVENTS['CONNECTION_ERROR'])
         def on_connect_error(data):
             log_immediate(f"SocketIO Connection Error: {data}")
 
-        @self.sio.on('display_media_on_tv')
+        @self.sio.on(TV_EVENTS['DISPLAY_MEDIA_ON_TV'])
         def on_display_media(data):
             log_immediate(f"EVENT: display_media_on_tv: {data.get('media_path')}")
             self.mode = "CASTING"
@@ -911,8 +921,11 @@ class GhostHubRuntime:
                 log_immediate(f"Using local media path for MPV: {local_path}")
             elif url and url.startswith('/'):
                 url = f"{self.server_url}{url}"
+            self.view_key = data.get('viewKey')
+            self.view_type = data.get('viewType')
+            self.view_params = data.get('viewParams') if isinstance(data.get('viewParams'), dict) else {}
             self.category_id = data.get('category_id')
-            self.media_index = data.get('media_index')
+            self.media_id = data.get('mediaId')
             self.media_path = data.get('media_path')
             self.thumbnail_url = data.get('thumbnail_url')
             self.is_guest_cast = data.get('is_guest_cast', True)
@@ -938,10 +951,15 @@ class GhostHubRuntime:
 
             # Emit an initial state update immediately for faster UI feedback
             try:
-                self.sio.emit('tv_report_state', {
+                self.sio.emit(TV_EVENTS['TV_REPORT_STATE'], {
                     'currentTime': start_time,
                     'duration': data.get('duration', 0),
-                    'paused': False
+                    'paused': False,
+                    'viewKey': self.view_key,
+                    'viewType': self.view_type,
+                    'viewParams': self.view_params or {},
+                    'mediaId': self.media_id,
+                    'category_id': self.category_id,
                 })
                 self.last_reported_time = float(start_time) if start_time is not None else -1
                 self.last_reported_pause = False
@@ -961,7 +979,7 @@ class GhostHubRuntime:
             # Burst state reports for first few seconds to ensure UI updates immediately
             threading.Thread(target=self._burst_state_reports, daemon=True).start()
 
-        @self.sio.on('tv_playback_control')
+        @self.sio.on(TV_EVENTS['TV_PLAYBACK_CONTROL'])
         def on_playback_control(data):
             if self.mode != "CASTING": return
             action = data.get('action')
@@ -992,19 +1010,25 @@ class GhostHubRuntime:
             timer.daemon = True
             timer.start()
 
-        @self.sio.on('tv_request_state')
+        @self.sio.on(TV_EVENTS['TV_REQUEST_STATE'])
         def on_request_state(data=None):
             if self.mode != "CASTING": return
             self._emit_state_snapshot("request")
 
-        @self.sio.on('tv_stop_casting')
+        @self.sio.on(TV_EVENTS['TV_STOP_CASTING'])
         def on_stop_casting(data=None):
             log_immediate("EVENT: tv_stop_casting")
             self.mpv.stop_playback()
             self.mode = "IDLE"
+            self.view_key = None
+            self.view_type = None
+            self.view_params = {}
             self.category_id = None
+            self.media_id = None
+            self.media_path = None
+            self.thumbnail_url = None
 
-        @self.sio.on('tv_add_subtitle')
+        @self.sio.on(TV_EVENTS['TV_ADD_SUBTITLE'])
         def on_add_subtitle(data):
             subtitle_url = data.get('subtitle_url', '')
             label = data.get('label', 'Subtitle')
@@ -1076,10 +1100,15 @@ class GhostHubRuntime:
                                 should_emit = True
 
                             if should_emit:
-                                self.sio.emit('tv_report_state', {
+                                self.sio.emit(TV_EVENTS['TV_REPORT_STATE'], {
                                     'currentTime': t,
                                     'duration': d,
-                                    'paused': p
+                                    'paused': p,
+                                    'viewKey': self.view_key,
+                                    'viewType': self.view_type,
+                                    'viewParams': self.view_params or {},
+                                    'mediaId': self.media_id,
+                                    'category_id': self.category_id,
                                 })
                                 self.last_reported_time = float(t)
                                 self.last_reported_pause = p
@@ -1148,7 +1177,7 @@ class GhostHubRuntime:
             else:
                 log_immediate("Playback failed to start after retries")
                 try:
-                    self.sio.emit('tv_error', {'message': 'TV playback failed to start'})
+                    self.sio.emit(TV_EVENTS['TV_ERROR'], {'message': 'TV playback failed to start'})
                 except Exception:
                     pass
 

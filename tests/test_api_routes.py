@@ -127,22 +127,121 @@ class TestCategoryEndpoints:
 
         assert response.status_code in [404, 400, 403, 500]
 
-    def test_get_category_media(self, client, app_context, mock_media_dir):
-        """Test GET /api/categories/<id>/media endpoint."""
-        with patch("app.controllers.media.media_controller.get_show_hidden_flag", return_value=False), \
+    def test_get_media_newest_returns_id_only_payload(self, client, app_context):
+        """Newest endpoint should return ids without duplicating record payloads."""
+        rows = [{
+            'category_id': 'test-cat',
+            'rel_path': 'clip.mp4',
+            'type': 'video',
+            'size': 123,
+            'mtime': 456,
+            'hash': 'abc',
+            'is_hidden': 0,
+        }]
+        with patch('app.controllers.media.media_discovery_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.media_ordering_service.media_index_service.get_recent_media', return_value=rows) as mock_recent:
+            response = client.get('/api/media/newest?limit=10')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data == {
+            'orderedIds': ['test-cat::clip.mp4'],
+            'records': {},
+            'missing': [],
+        }
+        mock_recent.assert_called_once_with(limit=10, show_hidden=False, filter_type='all')
+
+    def test_get_media_order_streaming_row(self, client, app_context, mock_media_dir):
+        """Test GET /api/media/order endpoint for a streaming row."""
+        rows = [
+            {'category_id': 'test-cat', 'rel_path': 'a.mp4'},
+            {'category_id': 'test-cat', 'rel_path': 'b.jpg'},
+        ]
+        with patch("app.controllers.media.media_ordering_controller.get_show_hidden_flag", return_value=False), \
              patch("app.services.media.hidden_content_service.should_block_category_access", return_value=False), \
-             patch("app.controllers.media.media_controller.media_index_service.has_media_index_entries", return_value=False), \
-             patch("app.controllers.media.media_controller.media_catalog_service.get_async_index_status", return_value=None), \
-             patch("app.controllers.media.media_controller.media_index_service.get_category_version_hash", return_value="v1"), \
-             patch("app.controllers.media.media_controller.SortService.get_sorted_media", return_value=[]), \
-             patch("app.controllers.media.media_controller.SortService.get_total_count", return_value=0), \
-             patch("app.controllers.media.media_controller.SortService.get_subfolders", return_value=[]):
-            response = client.get("/api/categories/test-cat/media")
+             patch("app.services.media.media_ordering_service.media_catalog_service.get_async_index_status", return_value=None), \
+             patch("app.services.media.media_ordering_service.media_index_service.has_media_index_entries", return_value=True), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_paginated_media", return_value=rows), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_media_count", return_value=2) as mock_count, \
+             patch("app.services.media.media_ordering_service.SortService.get_subfolders", return_value=[]):
+            response = client.get("/api/media/order?view=streaming_row&category_id=test-cat&page=1&limit=20&include_total=false")
 
-        assert response.status_code in [200, 404, 500]
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['orderedIds'] == ['test-cat::a.mp4', 'test-cat::b.jpg']
+        assert data['hasMore'] is False
+        assert data['viewMeta']['subfolders'] == []
+        mock_count.assert_not_called()
 
-    def test_get_category_media_async_includes_subfolders(self, client, app_context):
-        """Async indexing response should still include subfolders on page 1."""
+    def test_get_media_order_inline_hydrates_standard_window_without_records_fallback(self, client, app_context):
+        """Standard ordering should inline-hydrate from the page rows without a second records query."""
+        rows = [
+            {
+                'category_id': 'test-cat',
+                'rel_path': 'a.mp4',
+                'name': 'a.mp4',
+                'type': 'video',
+                'size': 100,
+                'mtime': 123,
+                'hash': 'hash-a',
+                'is_hidden': 0,
+            },
+            {
+                'category_id': 'test-cat',
+                'rel_path': 'b.jpg',
+                'name': 'b.jpg',
+                'type': 'image',
+                'size': 200,
+                'mtime': 124,
+                'hash': 'hash-b',
+                'is_hidden': 0,
+            },
+        ]
+        with patch("app.controllers.media.media_ordering_controller.get_show_hidden_flag", return_value=False), \
+             patch("app.services.media.hidden_content_service.should_block_category_access", return_value=False), \
+             patch("app.services.media.media_ordering_service.media_catalog_service.get_async_index_status", return_value=None), \
+             patch("app.services.media.media_ordering_service.media_index_service.has_media_index_entries", return_value=True), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_paginated_media", return_value=rows), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_media_count", return_value=2) as mock_count, \
+             patch("app.services.media.media_ordering_service.SortService.get_subfolders", return_value=[]), \
+             patch("app.services.media.media_records_service.MediaRecordsService.get_records") as mock_records:
+            response = client.get("/api/media/order?view=subfolder_grid&category_id=test-cat&page=1&limit=20&include_total=false&hydrate=true")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['orderedIds'] == ['test-cat::a.mp4', 'test-cat::b.jpg']
+        assert data['records']['test-cat::a.mp4']['relPath'] == 'a.mp4'
+        assert data['records']['test-cat::b.jpg']['type'] == 'image'
+        assert data['missing'] == []
+        assert data['hasMore'] is False
+        mock_count.assert_not_called()
+        mock_records.assert_not_called()
+
+    def test_get_media_order_uses_limit_probe_for_has_more_without_count(self, client, app_context):
+        """Non-total standard ordering should fetch one extra row instead of running COUNT."""
+        rows = [
+            {'category_id': 'test-cat', 'rel_path': 'a.mp4'},
+            {'category_id': 'test-cat', 'rel_path': 'b.mp4'},
+            {'category_id': 'test-cat', 'rel_path': 'c.mp4'},
+        ]
+        with patch("app.controllers.media.media_ordering_controller.get_show_hidden_flag", return_value=False), \
+             patch("app.services.media.hidden_content_service.should_block_category_access", return_value=False), \
+             patch("app.services.media.media_ordering_service.media_catalog_service.get_async_index_status", return_value=None), \
+             patch("app.services.media.media_ordering_service.media_index_service.has_media_index_entries", return_value=True), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_paginated_media", return_value=rows) as mock_page, \
+             patch("app.services.media.media_ordering_service.media_index_service.get_media_count", return_value=3) as mock_count, \
+             patch("app.services.media.media_ordering_service.SortService.get_subfolders", return_value=[]):
+            response = client.get("/api/media/order?view=streaming_row&category_id=test-cat&page=1&limit=2&include_total=false")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['orderedIds'] == ['test-cat::a.mp4', 'test-cat::b.mp4']
+        assert data['hasMore'] is True
+        assert mock_page.call_args.kwargs['limit'] == 3
+        mock_count.assert_not_called()
+
+    def test_get_media_order_async_includes_subfolders(self, client, app_context):
+        """Async indexing order response should include subfolders on page 1."""
         mock_status = {
             'status': 'indexing',
             'progress': 10,
@@ -151,166 +250,187 @@ class TestCategoryEndpoints:
         }
         mock_subfolders = [{'name': 'ShowA', 'count': 3}]
 
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
+        with patch('app.controllers.media.media_ordering_controller.get_show_hidden_flag', return_value=False), \
              patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=False), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=mock_status), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=mock_subfolders):
-            response = client.get('/api/categories/auto::ghost::sda2::TV/media?page=1&limit=20')
+             patch('app.services.media.media_ordering_service.media_index_service.has_media_index_entries', return_value=False), \
+             patch('app.services.media.media_ordering_service.media_catalog_service.get_async_index_status', return_value=mock_status), \
+             patch('app.services.media.media_ordering_service.media_catalog_service.start_async_indexing'), \
+             patch('app.services.media.media_ordering_service.get_category_by_id', return_value={'id': 'auto::ghost::sda2::TV', 'path': '/media/tv'}), \
+             patch('app.services.media.media_ordering_service.SortService.get_subfolders', return_value=mock_subfolders):
+            response = client.get('/api/media/order?view=streaming_row&category_id=auto::ghost::sda2::TV&page=1&limit=20')
 
         assert response.status_code == 200
         data = response.get_json()
-        assert data.get('async_indexing') is True
-        assert data.get('subfolders') == mock_subfolders
+        assert data['viewMeta']['asyncIndexing'] is True
+        assert data['viewMeta']['subfolders'] == mock_subfolders
 
-    def test_get_category_media_async_filters_hidden_files_for_non_admin(self, client, app_context):
-        """Async indexing must not leak hidden files before the indexed path takes over."""
-        mock_status = {
-            'status': 'indexing',
-            'progress': 10,
-            'files': [
-                {'name': 'visible.mp4', 'type': 'video', 'size': 1, 'mtime': 1, 'hash': 'v'},
-                {'name': 'hidden.mp4', 'type': 'video', 'size': 1, 'mtime': 2, 'hash': 'h'},
-            ],
-            'total_files': 2,
+    def test_get_media_order_subfolder_lookup_failure_errors(self, client, app_context):
+        """Ordering errors should use the JSON error wrapper instead of partial old-route shims."""
+        with patch('app.controllers.media.media_ordering_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
+             patch('app.services.media.media_ordering_service.media_index_service.has_media_index_entries', return_value=True), \
+             patch('app.services.media.media_ordering_service.media_catalog_service.get_async_index_status', return_value=None), \
+             patch('app.services.media.media_ordering_service.media_index_service.get_paginated_media', return_value=[]), \
+             patch('app.services.media.media_ordering_service.media_index_service.get_media_count', return_value=0), \
+             patch('app.services.media.media_ordering_service.SortService.get_subfolders', side_effect=RuntimeError('boom')):
+            response = client.get('/api/media/order?view=streaming_row&category_id=auto::ghost::sda2::Movies::Action&page=1&limit=20&include_total=false')
+
+        assert response.status_code == 500
+
+    def test_get_media_records_contract(self, client, app_context):
+        """Hydration endpoint should return canonical records and missing ids."""
+        record = {
+            'id': 'test-cat::clip.mp4',
+            'categoryId': 'test-cat',
+            'relPath': 'clip.mp4',
+            'name': 'clip.mp4',
+            'type': 'video',
+            'url': '/media/test-cat/clip.mp4',
+            'thumbnailUrl': '/thumbnails/test-cat/clip.jpeg',
+            'size': 123,
+            'mtime': 456,
+            'modified': 456,
+            'hash': 'abc',
+            'isHidden': False,
+            'durationMs': None,
         }
-
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=False), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=mock_status), \
-             patch('app.controllers.media.media_controller.get_category_by_id', return_value={'id': 'test-cat', 'path': '/media/test-cat'}), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]), \
-             patch('app.services.media.hidden_content_service.should_block_file_access', side_effect=lambda path, *_args, **_kwargs: path.endswith('hidden.mp4')):
-            response = client.get('/api/categories/test-cat/media?page=1&limit=20')
-
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data.get('async_indexing') is True
-        assert [item['name'] for item in data.get('files', [])] == ['visible.mp4']
-
-    def test_get_category_media_etag_varies_with_shuffle(self, client, app_context):
-        """ETag should change when shuffle mode changes to avoid stale 304 responses."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[]), \
-             patch('app.controllers.media.media_controller.SortService.get_total_count', return_value=0), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]):
-            resp_shuffle_on = client.get('/api/categories/test-cat/media?shuffle=true')
-            resp_shuffle_off = client.get('/api/categories/test-cat/media?shuffle=false')
-
-        assert resp_shuffle_on.status_code == 200
-        assert resp_shuffle_off.status_code == 200
-        assert resp_shuffle_on.headers.get('ETag')
-        assert resp_shuffle_off.headers.get('ETag')
-        assert resp_shuffle_on.headers.get('ETag') != resp_shuffle_off.headers.get('ETag')
-
-    def test_get_category_media_etag_varies_with_subfolder(self, client, app_context):
-        """ETag should change when subfolder filter changes to prevent stale cached responses."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[]), \
-             patch('app.controllers.media.media_controller.SortService.get_total_count', return_value=0), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]):
-            resp_no_subfolder = client.get('/api/categories/test-cat/media')
-            resp_with_subfolder = client.get('/api/categories/test-cat/media?subfolder=Shows%2FShowA')
-
-        assert resp_no_subfolder.status_code == 200
-        assert resp_with_subfolder.status_code == 200
-        assert resp_no_subfolder.headers.get('ETag')
-        assert resp_with_subfolder.headers.get('ETag')
-        assert resp_no_subfolder.headers.get('ETag') != resp_with_subfolder.headers.get('ETag')
-
-    def test_get_category_media_304_with_matching_etag(self, client, app_context):
-        """Matching If-None-Match header should return 304."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[]), \
-             patch('app.controllers.media.media_controller.SortService.get_total_count', return_value=0), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]):
-            first_response = client.get('/api/categories/test-cat/media')
-            etag = first_response.headers.get('ETag')
-            second_response = client.get(
-                '/api/categories/test-cat/media',
-                headers={'If-None-Match': etag}
-            )
-
-        assert first_response.status_code == 200
-        assert etag
-        assert second_response.status_code == 304
-        assert second_response.data == b''
-
-    def test_get_category_media_no_304_for_different_subfolder(self, client, app_context):
-        """ETag from subfolder-scoped request must not 304 a non-subfolder request."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[]), \
-             patch('app.controllers.media.media_controller.SortService.get_total_count', return_value=0), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]):
-            subfolder_response = client.get('/api/categories/test-cat/media?subfolder=Shows%2FShowA')
-            subfolder_etag = subfolder_response.headers.get('ETag')
-            base_response = client.get(
-                '/api/categories/test-cat/media',
-                headers={'If-None-Match': subfolder_etag}
-            )
-
-        assert subfolder_response.status_code == 200
-        assert subfolder_etag
-        assert base_response.status_code == 200
-
-    def test_get_category_media_subfolder_lookup_failure_returns_empty_subfolders(self, client, app_context):
-        """Subfolder lookup failures should not turn category media listing into a 500."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[]), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', side_effect=RuntimeError('boom')):
-            response = client.get('/api/categories/auto::ghost::sda2::Movies::Action/media?page=1&limit=20&include_total=false')
+        with patch('app.controllers.media.media_records_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.media_records_service.MediaRecordsService.get_records', return_value={
+                 'records': {'test-cat::clip.mp4': record},
+                 'missing': ['test-cat::missing.mp4'],
+             }) as mock_get_records:
+            response = client.post('/api/media/records', json={
+                'ids': ['test-cat::clip.mp4', 'test-cat::missing.mp4'],
+            })
 
         assert response.status_code == 200
         data = response.get_json()
-        assert data.get('files') == []
-        assert data.get('subfolders') == []
+        assert data['records']['test-cat::clip.mp4']['categoryId'] == 'test-cat'
+        assert data['missing'] == ['test-cat::missing.mp4']
+        mock_get_records.assert_called_once()
 
-    def test_get_category_media_force_refresh_with_existing_index_returns_full_rows(self, client, app_context):
-        """Force refresh should not downgrade an already-indexed category to async shell rows."""
-        with patch('app.controllers.media.media_controller.get_show_hidden_flag', return_value=False), \
-             patch('app.services.media.hidden_content_service.should_block_category_access', return_value=False), \
-             patch('app.controllers.media.media_controller.media_index_service.has_media_index_entries', return_value=True), \
-             patch('app.controllers.media.media_controller.media_catalog_service.get_async_index_status', return_value=None), \
-             patch('app.controllers.media.media_controller.get_category_by_id', return_value={
-                 'id': 'test-cat',
-                 'name': 'Test Cat',
-                 'path': '/media/ghost/TestCat',
-             }), \
-             patch('app.controllers.media.media_controller.media_catalog_service.start_async_indexing') as mock_start_async, \
-             patch('app.controllers.media.media_controller.media_index_service.get_category_version_hash', return_value='v1'), \
-             patch('app.controllers.media.media_controller.SortService.get_sorted_media', return_value=[
-                 {'name': 'clip.mp4', 'url': '/media/test-cat/clip.mp4'}
-             ]), \
-             patch('app.controllers.media.media_controller.SortService.get_total_count', return_value=1), \
-             patch('app.controllers.media.media_controller.SortService.get_subfolders', return_value=[]):
-            response = client.get('/api/categories/test-cat/media?force_refresh=true')
+    def test_get_media_orders_batch_hydrates_each_request(self, client, app_context):
+        """Batch ordering should preserve per-request results and inline hydration."""
+        order_payload = {
+            'view': 'streaming_row',
+            'orderedIds': ['test-cat::clip.mp4'],
+            'hasMore': False,
+            'pageToken': None,
+            'viewMeta': {'page': 1, 'limit': 20, 'subfolders': []},
+        }
+        record = {
+            'id': 'test-cat::clip.mp4',
+            'categoryId': 'test-cat',
+            'relPath': 'clip.mp4',
+            'name': 'clip.mp4',
+            'type': 'video',
+            'url': '/media/test-cat/clip.mp4',
+            'size': 123,
+            'mtime': 456,
+            'modified': 456,
+            'hash': 'abc',
+            'isHidden': False,
+            'durationMs': None,
+        }
+        with patch('app.controllers.media.media_ordering_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.media_ordering_service.MediaOrderingService.get_order', return_value=order_payload) as mock_get_order, \
+             patch('app.services.media.media_records_service.MediaRecordsService.get_records', return_value={
+                 'records': {'test-cat::clip.mp4': record},
+                 'missing': [],
+             }) as mock_get_records:
+            response = client.post('/api/media/orders', json={
+                'requests': [{
+                    'view': 'streaming_row',
+                    'viewKey': 'streaming_row::test-cat::::all::20',
+                    'category_id': 'test-cat',
+                    'page': 1,
+                    'limit': 20,
+                    'include_total': 'false',
+                    'media_filter': 'all',
+                    'hydrate': 'true',
+                }],
+            })
 
         assert response.status_code == 200
         data = response.get_json()
-        assert data.get('async_indexing') is not True
-        assert data.get('files') == [{'name': 'clip.mp4', 'url': '/media/test-cat/clip.mp4'}]
-        mock_start_async.assert_called_once()
+        assert len(data['results']) == 1
+        result = data['results'][0]
+        assert result['viewKey'] == 'streaming_row::test-cat::::all::20'
+        assert result['orderedIds'] == ['test-cat::clip.mp4']
+        assert result['records']['test-cat::clip.mp4']['categoryId'] == 'test-cat'
+        assert result['status'] == 'ready'
+        mock_get_order.assert_called_once()
+        mock_get_records.assert_called_once_with(['test-cat::clip.mp4'], show_hidden=False)
+
+    def test_get_media_orders_batch_isolates_bad_items(self, client, app_context):
+        """A malformed item returns one error result while valid siblings still load."""
+        order_payload = {
+            'view': 'streaming_row',
+            'orderedIds': ['test-cat::clip.mp4'],
+            'hasMore': False,
+            'pageToken': None,
+            'viewMeta': {'total': 1, 'subfolders': []},
+            'status': 'ready',
+        }
+        with patch('app.controllers.media.media_ordering_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.media_ordering_service.MediaOrderingService.get_order', return_value=order_payload):
+            response = client.post('/api/media/orders', json={
+                'requests': [
+                    {'view': 'nope', 'viewKey': 'bad-view'},
+                    {
+                        'view': 'streaming_row',
+                        'viewKey': 'streaming_row::test-cat::::all::20',
+                        'category_id': 'test-cat',
+                        'page': 1,
+                        'limit': 20,
+                    },
+                ],
+            })
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['results'][0]['status'] == 'error'
+        assert data['results'][0]['viewKey'] == 'bad-view'
+        assert data['results'][1]['status'] == 'ready'
+        assert data['results'][1]['orderedIds'] == ['test-cat::clip.mp4']
+
+    def test_get_media_order_can_hydrate_returned_window(self, client, app_context):
+        """Ordering can inline-hydrate its returned id window to avoid a second round trip."""
+        order_payload = {
+            'view': 'subfolder_grid',
+            'orderedIds': ['test-cat::clip.mp4'],
+            'hasMore': False,
+            'pageToken': None,
+            'viewMeta': {'page': 1, 'limit': 30},
+        }
+        record = {
+            'id': 'test-cat::clip.mp4',
+            'categoryId': 'test-cat',
+            'relPath': 'clip.mp4',
+            'name': 'clip.mp4',
+            'type': 'video',
+            'url': '/media/test-cat/clip.mp4',
+            'size': 123,
+            'mtime': 456,
+            'modified': 456,
+            'hash': 'abc',
+            'isHidden': False,
+            'durationMs': None,
+        }
+        with patch('app.controllers.media.media_ordering_controller.get_show_hidden_flag', return_value=False), \
+             patch('app.services.media.media_ordering_service.MediaOrderingService.get_order', return_value=order_payload), \
+             patch('app.services.media.media_records_service.MediaRecordsService.get_records', return_value={
+                 'records': {'test-cat::clip.mp4': record},
+                 'missing': [],
+             }) as mock_get_records:
+            response = client.get('/api/media/order?view=subfolder_grid&category_id=test-cat&page=1&limit=30&hydrate=true')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['orderedIds'] == ['test-cat::clip.mp4']
+        assert data['records']['test-cat::clip.mp4']['categoryId'] == 'test-cat'
+        assert data['missing'] == []
+        mock_get_records.assert_called_once_with(['test-cat::clip.mp4'], show_hidden=False)
 
     def test_search_honors_limit_parameter(self, client, app_context):
         """Search endpoint should forward caller-provided limits to the DB layer."""
@@ -350,9 +470,10 @@ class TestCategoryEndpoints:
 
         assert response.status_code == 200
         data = response.get_json()
+        view_meta = data.get('viewMeta', {})
 
         parent_match = next(
-            (pf for pf in data.get('matched_parent_folders', []) if pf.get('name', '').lower().startswith('showa')),
+            (pf for pf in view_meta.get('matched_parent_folders', []) if pf.get('name', '').lower().startswith('showa')),
             None
         )
         assert parent_match is not None
@@ -384,7 +505,9 @@ class TestCategoryEndpoints:
 
         assert response.status_code == 200
         data = response.get_json()
-        matched_folders = data.get('matched_folders', [])
+        assert data['viewType'] == 'search'
+        assert 'results' not in data
+        matched_folders = data.get('viewMeta', {}).get('matched_folders', [])
 
         deep_folders = [f for f in matched_folders if f.get('rel_path') == 'Shows/Deep']
         category_ids = sorted(f.get('category_id') for f in deep_folders)
@@ -417,11 +540,12 @@ class TestCategoryEndpoints:
 
         assert response.status_code == 200
         data = response.get_json()
+        view_meta = data.get('viewMeta', {})
 
-        deep_folders = [f for f in data.get('matched_folders', []) if f.get('rel_path') == 'Shows/Deep']
+        deep_folders = [f for f in view_meta.get('matched_folders', []) if f.get('rel_path') == 'Shows/Deep']
         deep_category_ids = sorted(f.get('category_id') for f in deep_folders)
         assert deep_category_ids == ['cat-a', 'cat-b']
-        assert data.get('total_matched_folders', 0) >= 2
+        assert view_meta.get('total_matched_folders', 0) >= 2
 
 
 class TestProgressEndpoints:
@@ -709,20 +833,21 @@ class TestPagination:
         assert response.status_code == 200
 
     def test_media_pagination(self, client, app_context):
-        """Test media list pagination."""
-        with patch("app.controllers.media.media_controller.get_show_hidden_flag", return_value=False), \
+        """Test media ordering pagination."""
+        with patch("app.controllers.media.media_ordering_controller.get_show_hidden_flag", return_value=False), \
              patch("app.services.media.hidden_content_service.should_block_category_access", return_value=False), \
-             patch("app.controllers.media.media_controller.media_index_service.has_media_index_entries", return_value=False), \
-             patch("app.controllers.media.media_controller.media_catalog_service.get_async_index_status", return_value=None), \
-             patch("app.controllers.media.media_controller.media_index_service.get_category_version_hash", return_value="v1"), \
-             patch("app.controllers.media.media_controller.SortService.get_sorted_media", return_value=[]), \
-             patch("app.controllers.media.media_controller.SortService.get_total_count", return_value=0), \
-             patch("app.controllers.media.media_controller.SortService.get_subfolders", return_value=[]):
+             patch("app.services.media.media_ordering_service.media_index_service.has_media_index_entries", return_value=True), \
+             patch("app.services.media.media_ordering_service.media_catalog_service.get_async_index_status", return_value=None), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_paginated_media", return_value=[]), \
+             patch("app.services.media.media_ordering_service.media_index_service.get_media_count", return_value=0), \
+             patch("app.services.media.media_ordering_service.SortService.get_subfolders", return_value=[]):
             response = client.get(
-                "/api/categories/test-cat/media", query_string={"page": 1, "per_page": 20}
+                "/api/media/order",
+                query_string={"view": "streaming_row", "category_id": "test-cat", "page": 1, "limit": 20}
             )
 
-        assert response.status_code in [200, 404]
+        assert response.status_code == 200
+        assert response.get_json()["orderedIds"] == []
 
     def test_pagination_invalid_page(self, client, app_context):
         """Test handling of invalid page parameter."""

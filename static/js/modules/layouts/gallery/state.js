@@ -3,9 +3,7 @@
  * Centralized state for gallery layout (Google Photos / Immich style).
  *
  * GalleryStateModule extends Module so that other modules/components can
- * subscribe to state changes via module.subscribe() / module.watchState().
- * All legacy getter/setter exports are kept as thin wrappers for backward
- * compatibility with data.js, renderer.js, and other gallery files.
+ * subscribe to normalized timeline/order state changes.
  *
  * Note on Set state (selectedMedia):
  *   Module.setState detects changes by object identity. Since selectedMedia is
@@ -14,6 +12,8 @@
  *   selection changes should subscribe on `selectedVersion` (via selector).
  */
 import { $, Module } from '../../../libs/ragot.esm.min.js';
+import { selectRecordsForView } from '../../media/selectors.js';
+import { mediaOrdering } from '../../media/ordering.js';
 
 // Constants (unchanged)
 export const MEDIA_PER_PAGE = 100;
@@ -28,9 +28,9 @@ export class GalleryStateModule extends Module {
             galleryContainer: null,
             isGalleryLayout: false,
 
-            // Media data
-            allMedia: [],
-            mediaByDate: {},
+            // Timeline projection metadata
+            galleryTimelineViewKey: null,
+            timelineProjectionVersion: 0,
             dateTotals: {},
             categoriesData: [],
             isLoading: false,
@@ -94,7 +94,7 @@ export class GalleryStateModule extends Module {
     }
 
     selectAllInDate(dateKey) {
-        const media = this.state.mediaByDate[dateKey] || [];
+        const media = getMediaByDate()[dateKey] || [];
         media.forEach(m => this._selectedMedia.add(m.url));
         if (this._selectedMedia.size > 0) {
             this.setState({ isSelectionMode: true, selectedVersion: this.state.selectedVersion + 1 });
@@ -106,26 +106,36 @@ export class GalleryStateModule extends Module {
     isMediaSelected(url) { return this._selectedMedia.has(url); }
 
     getSelectedMediaItems() {
-        return this.state.allMedia.filter(m => this._selectedMedia.has(m.url));
+        return getAllMedia().filter(m => this._selectedMedia.has(m.url));
     }
 
     // ── Date grouping helpers ────────────────────────────────────────────────
 
     groupMediaByDate() {
         const mediaByDate = {};
-        for (const media of this.state.allMedia) {
+        for (const media of getAllMedia()) {
             const dateKey = media.dateKey || getDateKey(media.modified || media.created || null);
             if (!mediaByDate[dateKey]) mediaByDate[dateKey] = [];
             mediaByDate[dateKey].push(media);
         }
-        this.setState({ mediaByDate });
         return mediaByDate;
     }
 
-    appendMedia(newMedia) {
-        const allMedia = this.state.allMedia.concat(newMedia);
-        this.setState({ allMedia });
-        this.groupMediaByDate();
+    setAllMediaIds(ids, view = {}) {
+        const nextIds = uniqueIds(ids);
+        this._syncTimelineView(nextIds, view);
+    }
+
+    appendMediaIds(ids) {
+        const current = this._currentTimelineIds();
+        const seen = new Set(current);
+        const nextIds = [...current];
+        for (const id of ids || []) {
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            nextIds.push(id);
+        }
+        this._syncTimelineView(nextIds);
     }
 
     mergeDateTotals(newTotals) {
@@ -136,8 +146,8 @@ export class GalleryStateModule extends Module {
     clearAllMedia() {
         this._selectedMedia.clear();
         this.setState({
-            allMedia: [],
-            mediaByDate: {},
+            galleryTimelineViewKey: null,
+            timelineProjectionVersion: this.state.timelineProjectionVersion + 1,
             dateTotals: {},
             datesPage: 1,
             hasMoreDates: true,
@@ -148,6 +158,46 @@ export class GalleryStateModule extends Module {
             allYearsData: [],
         });
     }
+
+    _syncTimelineView(orderedIds, view = {}) {
+        const viewKey = this.state.galleryTimelineViewKey;
+        if (!viewKey) return;
+        const current = mediaOrdering.selectView(viewKey);
+        const params = this._aggregateTimelineParams(view.params || current.params || {});
+        mediaOrdering.ingestView(viewKey, {
+            ...current,
+            viewKey,
+            viewType: view.viewType || view.view || current.viewType || 'gallery_timeline',
+            orderedIds,
+            params,
+            status: current.status === 'idle' ? 'ready' : current.status,
+        });
+        this.bumpTimelineProjection();
+    }
+
+    _currentTimelineIds() {
+        const viewKey = this.state.galleryTimelineViewKey;
+        if (!viewKey) return [];
+        return mediaOrdering.selectView(viewKey)?.orderedIds || [];
+    }
+
+    bumpTimelineProjection() {
+        this.setState({ timelineProjectionVersion: this.state.timelineProjectionVersion + 1 });
+    }
+
+    _aggregateTimelineParams(params) {
+        const next = { ...(params || {}) };
+        if (next.dates_limit != null) {
+            const baseLimit = Math.max(1, Number(next.dates_limit) || 15);
+            const pages = Math.max(1, Number(this.state.datesPage) || 1);
+            next.dates_page = 1;
+            next.dates_limit = Math.min(366, baseLimit * pages);
+        }
+        if (next.jump_to_date) delete next.jump_to_date;
+        if (next.date) delete next.date;
+        if (next.date_offset) delete next.date_offset;
+        return next;
+    }
 }
 
 // Singleton instance — started immediately so subscribers can attach before layout init
@@ -157,7 +207,15 @@ galleryState.start();
 // Lazy-loaded images tracker — module-level WeakSet, not reactive
 export const lazyLoadedImages = new WeakSet();
 
-// ── Legacy Getters ─────────────────────────────────────────────────────────
+function uniqueIds(ids) {
+    return Array.from(new Set((ids || []).filter(Boolean)));
+}
+
+function idsFromMedia(media) {
+    return (media || []).map((item) => item?.id).filter(Boolean);
+}
+
+// ── State Accessors ────────────────────────────────────────────────────────
 
 export function getContainer() {
     return $('#gallery-container') || galleryState.state.galleryContainer;
@@ -166,8 +224,13 @@ export function isActive() {
     return document.documentElement.getAttribute('data-layout') === 'gallery';
 }
 export function getIsLoading() { return galleryState.state.isLoading; }
-export function getAllMedia() { return galleryState.state.allMedia; }
-export function getMediaByDate() { return galleryState.state.mediaByDate; }
+export function getGalleryTimelineIds() {
+    const viewKey = getGalleryTimelineViewKey();
+    return viewKey ? (mediaOrdering.selectView(viewKey)?.orderedIds || []) : [];
+}
+export function getGalleryTimelineViewKey() { return galleryState.state.galleryTimelineViewKey; }
+export function getAllMedia() { return selectRecordsForView(getGalleryTimelineViewKey()); }
+export function getMediaByDate() { return galleryState.groupMediaByDate(); }
 export function getCategoriesData() { return galleryState.state.categoriesData; }
 export function getMediaFilter() { return galleryState.state.mediaFilter; }
 export function getCategoryIdFilter() { return galleryState.state.categoryIdFilter; }
@@ -206,13 +269,19 @@ export function areEventListenersAttached() { return galleryState.state.eventLis
 export function getAllYearsData() { return galleryState.state.allYearsData; }
 export function getSelectedMobileYear() { return galleryState.state.selectedMobileYear; }
 
-// ── Legacy Setters ─────────────────────────────────────────────────────────
+// ── State Mutators ─────────────────────────────────────────────────────────
 
 export function setContainer(container) { galleryState.setState({ galleryContainer: container }); }
 export function setIsGalleryLayout(value) { galleryState.setState({ isGalleryLayout: value }); }
 export function setIsLoading(value) { galleryState.setState({ isLoading: value }); }
-export function setAllMedia(media) { galleryState.setState({ allMedia: media }); }
-export function setMediaByDate(data) { galleryState.setState({ mediaByDate: data }); }
+export function setAllMediaIds(ids, view = {}) { galleryState.setAllMediaIds(ids, view); }
+export function setGalleryTimelineViewKey(viewKey) {
+    galleryState.setState({ galleryTimelineViewKey: viewKey || null });
+    const currentIds = viewKey ? (mediaOrdering.selectView(viewKey)?.orderedIds || []) : [];
+    galleryState._syncTimelineView(currentIds);
+}
+export function appendMediaIds(ids) { galleryState.appendMediaIds(ids); }
+export function bumpTimelineProjection() { galleryState.bumpTimelineProjection(); }
 export function setCategoriesData(data) { galleryState.setState({ categoriesData: data }); }
 export function setMediaFilter(filter) { galleryState.setState({ mediaFilter: filter }); }
 export function setCategoryIdFilter(id) { galleryState.setState({ categoryIdFilter: id }); }
@@ -229,7 +298,7 @@ export function setAllYearsData(data) { galleryState.setState({ allYearsData: da
 export function setSelectedMobileYear(year) { galleryState.setState({ selectedMobileYear: year }); }
 export function setEventListenersAttached(value) { galleryState.setState({ eventListenersAttached: value }); }
 
-// ── Selection operations (legacy function exports) ─────────────────────────
+// ── Selection Operations ───────────────────────────────────────────────────
 
 export function toggleMediaSelection(url) { return galleryState.toggleMediaSelection(url); }
 export function selectMedia(url) { galleryState.selectMedia(url); }
@@ -238,13 +307,13 @@ export function clearSelection() { galleryState.clearSelection(); }
 export function selectAllInDate(dateKey) { galleryState.selectAllInDate(dateKey); }
 export function getSelectedMediaItems() { return galleryState.getSelectedMediaItems(); }
 
-// ── Media helpers (legacy exports) ────────────────────────────────────────
+// ── Media Helpers ─────────────────────────────────────────────────────────
 
 export function clearAllMedia() { galleryState.clearAllMedia(); }
 
 export function mergeDateTotals(newTotals) { galleryState.mergeDateTotals(newTotals); }
 
-export function appendMedia(newMedia) { galleryState.appendMedia(newMedia); }
+export function appendMedia(newMedia) { galleryState.appendMediaIds(idsFromMedia(newMedia)); }
 
 export function groupMediaByDate() { return galleryState.groupMediaByDate(); }
 
@@ -285,7 +354,7 @@ export function formatDateDisplay(dateKey) {
 }
 
 export function getSortedDateKeys() {
-    return Object.keys(galleryState.state.mediaByDate).sort((a, b) => {
+    return Object.keys(getMediaByDate()).sort((a, b) => {
         if (a === 'Unknown') return 1;
         if (b === 'Unknown') return -1;
         return b.localeCompare(a);

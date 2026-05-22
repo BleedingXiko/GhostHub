@@ -7,6 +7,7 @@ import { saveConfig } from '../../utils/configManager.js';
 import { mobileIcon } from '../../utils/icons.js';
 import { Module, createElement, attr, clear, append, remove, $, $$ } from '../../libs/ragot.esm.min.js';
 import { toast, dialog } from '../../utils/notificationManager.js';
+import { SOCKET_EVENTS } from '../../core/socketEvents.js';
 
 function getRuntimeConfig() {
     return window.ragotModules?.appStore?.get?.('config', {}) || {};
@@ -282,7 +283,7 @@ class TunnelModalLifecycle extends Module {
 
         const socket = getSocket();
         if (socket) {
-            this.onSocket(socket, 'tunnel_status_update', (data) => {
+            this.onSocket(socket, SOCKET_EVENTS.TUNNEL_STATUS_UPDATE, (data) => {
                 _lastTunnelStatusKey = null; // Force fresh render on push
                 // Show real-time stage progress during startup
                 if (data && data.status === 'starting' && data.stage) {

@@ -8,7 +8,7 @@ from app.services.core.runtime_config_service import get_runtime_config_value
 from app.services.media import media_index_service
 from app.services.media.hidden_content_service import should_block_category_access
 from app.services.media.sort_runtime_store import sort_runtime_store
-from app.utils.media_utils import get_thumbnail_url, IMAGE_THUMBNAIL_MIN_SIZE
+from app.utils.media_utils import get_media_item_thumbnail_url, get_thumbnail_url
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
@@ -166,8 +166,6 @@ class SortService:
         subfolder,
         filter_type,
         show_hidden,
-        session_id,
-        force_refresh,
         page,
         limit,
     ):
@@ -408,15 +406,14 @@ class SortService:
                 "categoryId": cat_id,
             }
 
-            if enriched["type"] == "video":
-                enriched["thumbnailUrl"] = get_thumbnail_url(cat_id, rel_path)
-            elif enriched["type"] == "image":
-                # Only use thumbnail URL for large images (≥ 2 MB) — small images never
-                # get a thumbnail generated so point them directly at the media URL.
-                if enriched.get("size", 0) >= IMAGE_THUMBNAIL_MIN_SIZE:
-                    enriched["thumbnailUrl"] = get_thumbnail_url(cat_id, rel_path)
-                else:
-                    enriched["thumbnailUrl"] = f"/media/{cat_id}/{quote(rel_path)}"
+            thumbnail_url = get_media_item_thumbnail_url(
+                cat_id,
+                rel_path,
+                enriched["type"],
+                enriched.get("size", 0),
+            )
+            if thumbnail_url:
+                enriched["thumbnailUrl"] = thumbnail_url
 
             enriched_items.append(enriched)
 
@@ -436,106 +433,12 @@ class SortService:
         return enriched_items
 
     @staticmethod
-    def get_sorted_media(
-        category_id=None,
-        subfolder=None,
-        sort_by="name",
-        sort_order="ASC",
-        page=1,
-        limit=50,
-        filter_type="all",
-        show_hidden=False,
-        session_id=None,
-        force_refresh=False,
-        shuffle=None,
-    ):
-        """
-        Get a sorted and paginated slice of media from the index.
-        Seamlessly handles 'shuffle' as a sorting method using session-persistent orders.
-        """
-        from app.services.media import media_catalog_service
-
-        # Ensure category is indexed if it hasn't been already
-        if category_id:
-            media_catalog_service.ensure_category_indexed(category_id, force_refresh)
-
-        # 0. Settings Resolution
-        # "Settings should be THE thing" - Resolve effective sort based on Config vs Overrides
-        if category_id:
-            # Shuffle Priority: Explicit request > Config default
-            is_shuffle_active = (
-                shuffle
-                if shuffle is not None
-                else get_runtime_config_value("SHUFFLE_MEDIA", False)
-            )
-            # TV Sort Priority: Config enabled AND it's a TV show
-            tv_enabled = get_runtime_config_value("ENABLE_TV_SORTING", True)
-            is_tv = SortService._is_tv_category(category_id)
-
-            if sort_by == "name":
-                if is_shuffle_active:
-                    sort_by = "shuffle"
-                elif is_tv and tv_enabled:
-                    sort_by = "tv"
-            elif sort_by == "shuffle" or is_shuffle_active:
-                # If they explicitly chose 'shuffle' OR global shuffle is ON
-                # But we only force 'shuffle' if they aren't on a specific sort like 'mtime' (Gallery)
-                if sort_by not in ["mtime", "size", "type"]:
-                    sort_by = "shuffle"
-
-        # 1. Handle Shuffle Mode
-        if sort_by == "shuffle" and category_id and session_id:
-            return SortService._sort_shuffle(
-                category_id=category_id,
-                subfolder=subfolder,
-                filter_type=filter_type,
-                show_hidden=show_hidden,
-                session_id=session_id,
-                force_refresh=force_refresh,
-                page=page,
-                limit=limit,
-            )
-
-        # 2. TV Sorting (season/episode aware)
-        tv_enabled = get_runtime_config_value("ENABLE_TV_SORTING", True)
-        tv_sort_active = tv_enabled and (
-            sort_by == "tv"
-            or (sort_by == "name" and SortService._is_tv_category(category_id))
-        )
-
-        if tv_sort_active and category_id:
-            return SortService._sort_tv(
-                category_id=category_id,
-                subfolder=subfolder,
-                filter_type=filter_type,
-                show_hidden=show_hidden,
-                sort_order=sort_order,
-                page=page,
-                limit=limit,
-                force_refresh=force_refresh,
-            )
-
-        # 3. Standard Sorted Mode (Pure SQLite)
-        return SortService._sort_standard(
-            category_id=category_id,
-            subfolder=subfolder,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            page=page,
-            limit=limit,
-            filter_type=filter_type,
-            show_hidden=show_hidden,
-            force_refresh=force_refresh,
-        )
-
-    @staticmethod
     def get_total_count(
         category_id=None, subfolder=None, filter_type="all", show_hidden=False
     ):
         """Get total matching items count."""
-        # Note: Indexing is usually triggered by get_sorted_media first.
-        # However, for consistency, we could ensure here too if needed.
-        # Since this is a lightweight query, we assume someone else ensured indexing.
+        # Since this is a lightweight query, callers are responsible for
+        # ensuring the category has been indexed before requesting totals.
         return media_index_service.get_media_count(
             category_id,
             subfolder,
@@ -549,8 +452,8 @@ class SortService:
         Extract immediate subdirectories from the SQLite index for a given path.
         """
 
-        def _fallback_auto_subfolders(base_auto_id, show_hidden_flag):
-            """Fallback for cold start: derive immediate auto subfolders from category hierarchy."""
+        def _category_hierarchy_auto_subfolders(base_auto_id, show_hidden_flag):
+            """Derive immediate auto subfolders from persisted category hierarchy metadata."""
             from app.services.media.category_query_service import get_all_categories_with_details
 
             categories = get_all_categories_with_details(
@@ -592,112 +495,6 @@ class SortService:
 
             return sorted(subfolder_map.values(), key=lambda item: item["name"].lower())
 
-        def _fallback_auto_subfolders_from_fs(base_auto_id, show_hidden_flag):
-            """
-            Last-resort fallback: derive immediate subfolders directly from filesystem.
-            Used when both media_index and category hierarchy are cold/incomplete.
-            """
-            from app.services.media.category_query_service import get_category_by_id
-            from app.utils.media_utils import find_thumbnail
-
-            base_category = get_category_by_id(base_auto_id)
-            if not base_category:
-                return []
-
-            base_path = base_category.get("path")
-            if not base_path or not os.path.isdir(base_path):
-                return []
-
-            subfolders = []
-            skip_names = {
-                ".ghosthub",
-                ".ghosthub_uploads",
-                "$recycle.bin",
-                "system volume information",
-                "recycler",
-            }
-
-            try:
-                with os.scandir(base_path) as it:
-                    for entry in it:
-                        if not entry.is_dir(follow_symlinks=False):
-                            continue
-                        if entry.name.startswith("."):
-                            continue
-                        if entry.name.lower() in skip_names:
-                            continue
-
-                        derived_id = f"{base_auto_id}::{entry.name}"
-                        if not show_hidden_flag and should_block_category_access(
-                            derived_id, show_hidden_flag
-                        ):
-                            continue
-
-                        summary = media_index_service.get_category_media_summary(
-                            derived_id, show_hidden=show_hidden_flag
-                        )
-                        count = int(summary.get("count", 0) or 0) if summary else 0
-                        contains_video = (
-                            bool(summary.get("contains_video", False))
-                            if summary
-                            else False
-                        )
-                        thumbnail_url = None
-                        first_file = None
-
-                        if count > 0:
-                            image_rel = summary.get("image_rel_path")
-                            video_rel = summary.get("video_rel_path")
-                            if image_rel:
-                                first_file = image_rel
-                                thumbnail_url = SortService._build_preview_url(
-                                    derived_id,
-                                    image_rel=image_rel,
-                                )
-                            elif video_rel:
-                                first_file = video_rel
-                                thumbnail_url = SortService._build_preview_url(
-                                    derived_id,
-                                    video_rel=video_rel,
-                                )
-                                contains_video = True
-                        else:
-                            # Fast probe to detect deep media in non-indexed descendants.
-                            probe_count, probe_thumb, probe_has_video = find_thumbnail(
-                                entry.path,
-                                derived_id,
-                                entry.name,
-                                media_files=None,
-                                allow_queue=False,
-                            )
-                            if probe_count <= 0:
-                                continue
-                            count = probe_count
-                            contains_video = probe_has_video
-                            thumbnail_url = probe_thumb
-
-                        subfolders.append(
-                            {
-                                "name": entry.name,
-                                "count": count,
-                                "contains_video": contains_video,
-                                "thumbnail_url": thumbnail_url,
-                                "first_file": first_file,
-                            }
-                        )
-            except Exception as e:
-                logger.debug(
-                    f"Filesystem subfolder fallback failed for {base_auto_id}: {e}"
-                )
-                return []
-
-            return sorted(subfolders, key=lambda item: item["name"].lower())
-
-        if category_id:
-            from app.services.media import media_catalog_service
-
-            media_catalog_service.ensure_category_indexed(category_id)
-
         # Auto categories derive subfolders from child category IDs in the index.
         # When a parent auto:: category is indexed, its child categories are
         # automatically queued by the Specter-owned indexing runtime.
@@ -716,14 +513,12 @@ class SortService:
                 show_hidden=show_hidden,
             )
             if not summaries:
-                # Cold-start fallback: prefer filesystem scan over database hierarchy
-                # because database may only have visited subfolders, not all actual folders.
-                fs_fallback = _fallback_auto_subfolders_from_fs(base_id, show_hidden)
-                if fs_fallback:
-                    return fs_fallback
-                fallback_subfolders = _fallback_auto_subfolders(base_id, show_hidden)
-                if fallback_subfolders:
-                    return fallback_subfolders
+                hierarchy_subfolders = _category_hierarchy_auto_subfolders(
+                    base_id,
+                    show_hidden,
+                )
+                if hierarchy_subfolders:
+                    return hierarchy_subfolders
                 return []
 
             subfolders = []
@@ -774,15 +569,12 @@ class SortService:
             if subfolders:
                 return subfolders
 
-            # If derived IDs exist but nothing is indexed yet, fall back to filesystem first,
-            # then database hierarchy, since filesystem has all actual folders.
-            fs_fallback = _fallback_auto_subfolders_from_fs(base_id, show_hidden)
-            if fs_fallback:
-                return fs_fallback
-
-            fallback_subfolders = _fallback_auto_subfolders(base_id, show_hidden)
-            if fallback_subfolders:
-                return fallback_subfolders
+            hierarchy_subfolders = _category_hierarchy_auto_subfolders(
+                base_id,
+                show_hidden,
+            )
+            if hierarchy_subfolders:
+                return hierarchy_subfolders
 
             return []
 
@@ -861,14 +653,14 @@ class SortService:
                 "url": f"/media/{category_id}/{quote(name)}",
                 "categoryId": category_id,
             }
-            if item_type == "video":
-                enriched["thumbnailUrl"] = get_thumbnail_url(category_id, name)
-            elif item_type == "image":
-                file_size = item.get("size", 0)
-                if file_size >= IMAGE_THUMBNAIL_MIN_SIZE:
-                    enriched["thumbnailUrl"] = get_thumbnail_url(category_id, name)
-                else:
-                    enriched["thumbnailUrl"] = f"/media/{category_id}/{quote(name)}"
+            thumbnail_url = get_media_item_thumbnail_url(
+                category_id,
+                name,
+                item_type,
+                item.get("size", 0),
+            )
+            if thumbnail_url:
+                enriched["thumbnailUrl"] = thumbnail_url
             enriched_items.append(enriched)
         return enriched_items
 
@@ -883,44 +675,3 @@ class SortService:
             filter_type=filter_type,
             show_hidden=show_hidden,
         )
-
-    @staticmethod
-    def get_media_for_date(
-        date_key,
-        category_id=None,
-        filter_type="all",
-        limit=24,
-        offset=0,
-        show_hidden=False,
-    ):
-        """
-        Get media items for a specific date (YYYY-MM-DD).
-        """
-        items = media_index_service.get_media_rows_for_date(
-            date_key,
-            category_id=category_id,
-            filter_type=filter_type,
-            limit=limit,
-            offset=offset,
-            show_hidden=show_hidden,
-        )
-
-        # Enrich items
-        enriched_items = []
-        for item in items:
-            cat_id = item["category_id"]
-            rel_path = item["rel_path"]
-            enriched = {
-                "name": rel_path,
-                "type": item["type"],
-                "size": item["size"],
-                "modified": item["mtime"],
-                "dateKey": date_key,
-                "url": f"/media/{cat_id}/{quote(rel_path)}",
-                "categoryId": cat_id,
-            }
-            if item["type"] == "video":
-                enriched["thumbnailUrl"] = get_thumbnail_url(cat_id, rel_path)
-            enriched_items.append(enriched)
-
-        return enriched_items

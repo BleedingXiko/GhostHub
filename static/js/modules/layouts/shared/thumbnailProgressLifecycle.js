@@ -204,18 +204,6 @@ export function createThumbnailProgressTracker({
         const unregister = ThumbnailProgress.registerGlobalCallback(handleGlobalCallback);
         trackerModule.addCleanup(unregister);
 
-        // Seed from currently tracked categories
-        ThumbnailProgress.getTrackedCategories().forEach(categoryId => {
-            const status = ThumbnailProgress.getThumbnailStatus(categoryId);
-            if (status && ThumbnailProgress.isProcessing(categoryId)) {
-                if (!activeCategories.has(categoryId)) inProgressCount++;
-                activeCategories.set(categoryId, {
-                    ...status,
-                    committedTotal: status.total || 0
-                });
-            }
-        });
-
         // Poll for categories the server reports as actively generating
         const processing = getProcessingCategories();
         processing.forEach(cat => {

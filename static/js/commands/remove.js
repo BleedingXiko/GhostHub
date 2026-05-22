@@ -3,8 +3,8 @@
  * Removes the current media item from the shared session playlist.
  * Only works when viewing the Shared Session Playlist category.
  */
-
-import { setAppState } from '../utils/appStateUtils.js';
+import { getCurrentViewerRecord, getKnownViewerCount, getViewerSession } from '../modules/media/viewerState.js';
+import { selectView } from '../modules/media/selectors.js';
 
 export const remove = {
     description: '- Removes the current item from the Shared Session Playlist.',
@@ -22,15 +22,15 @@ export const remove = {
             return;
         }
 
-        const currentIndex = appState.currentMediaIndex;
-        const currentList = appState.fullMediaList || [];
+        const viewer = getViewerSession(appState);
+        const currentIndex = viewer?.activeIndex;
+        const currentItem = getCurrentViewerRecord(appState);
+        const totalCount = getKnownViewerCount(appState);
 
-        if (currentIndex == null || currentIndex < 0 || currentIndex >= currentList.length) {
+        if (currentIndex == null || currentIndex < 0 || !currentItem) {
             displayLocalMessage('No item selected.', { icon: 'x' });
             return;
         }
-
-        const currentItem = currentList[currentIndex];
 
         try {
             const response = await fetch('/api/session/playlist/remove', {
@@ -45,16 +45,19 @@ export const remove = {
                 displayLocalMessage(`Removed "${currentItem.name}" from playlist.`, { icon: 'checkCircle' });
 
                 // Navigate to next item or go back to categories if playlist is now empty
-                if (currentList.length <= 1) {
+                if (totalCount <= 1) {
                     // Last item removed, go back to category view
                     if (window.ragotModules?.mediaNavigation?.goBackToCategories) {
                         window.ragotModules.mediaNavigation.goBackToCategories();
                     }
                 } else {
-                    // Update state through the store; produce a new array rather than mutating in-place
-                    const updatedList = currentList.filter((_, i) => i !== currentIndex);
-                    setAppState('fullMediaList', updatedList);
-                    const newIndex = Math.min(currentIndex, updatedList.length - 1);
+                    const currentView = selectView(viewer.viewKey);
+                    const orderedIds = (currentView?.orderedIds || []).filter((id) => id !== currentItem.id);
+                    window.ragotModules?.mediaOrdering?.ingestView?.(viewer.viewKey, {
+                        ...currentView,
+                        orderedIds,
+                    });
+                    const newIndex = Math.min(currentIndex, totalCount - 2);
                     if (window.ragotModules?.mediaNavigation?.renderMediaWindow) {
                         window.ragotModules.mediaNavigation.renderMediaWindow(newIndex);
                     }

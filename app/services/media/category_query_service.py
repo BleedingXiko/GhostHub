@@ -97,7 +97,13 @@ def get_all_categories_with_details(use_cache=True, show_hidden=False):
         drive_folder_labels = None
 
     auto_categories = discover_auto_categories(all_summaries_map, drive_folder_labels)
-    auto_categories = add_missing_parent_categories(auto_categories, show_hidden, drive_folder_labels)
+    # Always build the cache with the full hierarchy (including parents of
+    # hidden categories). Visibility is enforced at output via
+    # filter_hidden_categories below; if we baked the caller's show_hidden flag
+    # into the cache build, the first show_hidden=False call would permanently
+    # omit hidden parents and toggling "reveal hidden" later could not bring
+    # them back (filter_hidden_categories can only strip, not synthesize).
+    auto_categories = add_missing_parent_categories(auto_categories, True, drive_folder_labels)
 
     categories = build_manual_categories(manual_categories, all_summaries_map) + auto_categories
     enrich_categories_with_runtime_data(categories)

@@ -1,11 +1,14 @@
 /**
- * Streaming Rows Unit Tests
+ * Streaming Row Shell Unit Tests
+ *
+ * Covers the pure helpers exported by streaming/rowShell.js plus baseline
+ * DOM-shape expectations the row Components rely on.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isWithinPrimeWindow, shouldPrefetchNextChunk } from '../../../modules/layouts/streaming/rows.js';
+import { isWithinPrimeWindow, shouldPrefetchNextChunk } from '../../../modules/layouts/streaming/rowShell.js';
 
-describe('Streaming Rows', () => {
+describe('Streaming row shell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     

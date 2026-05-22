@@ -61,7 +61,7 @@ Images   .jpg .jpeg .png .gif .webp  (.heic on Safari)
 Subs     .srt .vtt .ass .ssa  (text tracks auto-extracted via ffmpeg)
 ```
 
-Plays through **[GhostStream](https://github.com/BleedingXiko/GhostStream)**, an optional companion transcoder that runs on a separate machine:
+Plays through **[GhostStream](https://github.com/BleedingXiko/GhostStream)**, an **experimental** companion transcoder that runs on a separate machine:
 
 ```text
 .mkv .avi .mov .wmv .flv .ts .m2ts .mpg .vob
@@ -70,7 +70,7 @@ AC3 / DTS / TrueHD / E-AC3 audio
 Anything above ~25 Mbps over remote links
 ```
 
-GhostStream is **not bundled** and is **off by default**. Without it, files in the second list show a "No transcoding server connected" message instead of playing. Most phone recordings, screen captures, and downloaded `.mp4` files are in the first list and play directly.
+GhostStream is **not bundled**, is **off by default**, and its transcoding path has not been heavily tested inside GhostHub yet. Without it, files in the second list show a "No transcoding server connected" message instead of playing. Most phone recordings, screen captures, and downloaded `.mp4` files are in the first list and play directly.
 
 ## Quick Start
 
@@ -211,8 +211,8 @@ Start with [Architecture](docs/ARCHITECTURE.md) before changing internals.
 GhostHub uses three open-source companion projects:
 
 - **[SPECTER](https://github.com/BleedingXiko/specter)** — backend runtime for services, controllers, handlers, and the event bus. Installed from PyPI as `specter-runtime`.
-- **[RAGOT](https://github.com/BleedingXiko/RAGOT)** — frontend runtime for component lifecycle, module lifecycle, DOM updates, events, and sockets. Vendored as a git submodule under `static/js/ragot/`.
-- **[GhostStream](https://github.com/BleedingXiko/GhostStream)** — optional companion transcoder for `.mkv`, HEVC, AV1, DTS, and other browser-incompatible formats. Runs on a separate machine and is off by default.
+- **[RAGOT](https://github.com/BleedingXiko/RAGOT)** — frontend runtime for component lifecycle, module lifecycle, DOM updates, events, and sockets. Shipped as a prebuilt bundle at `static/js/libs/ragot.esm.min.js`.
+- **[GhostStream](https://github.com/BleedingXiko/GhostStream)** — experimental companion transcoder for `.mkv`, HEVC, AV1, DTS, and other browser-incompatible formats. Runs on a separate machine, is off by default, and has not been heavily tested inside GhostHub yet.
 
 ## Documentation
 

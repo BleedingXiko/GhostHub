@@ -20,6 +20,12 @@ import {
 } from './progressPersistence.js';
 import { SOCKET_EVENTS } from '../../core/socketEvents.js';
 import { getCurrentLayout } from '../../utils/layoutUtils.js';
+import {
+    getKnownViewerCount,
+    getViewerRecordAt,
+    getViewerSession
+} from './viewerState.js';
+import { selectParams, selectView } from './selectors.js';
 
 /**
  * Update Media Session API metadata and action handlers
@@ -126,7 +132,23 @@ export function updateMediaSession(file) {
 
 // Module-level state
 let socket = null;
-let lastSentOrderHash = null;
+
+export function isPlaybackProgressAllowed(appState = getAppState()) {
+    if (getCurrentLayout() === 'gallery') return false;
+
+    const viewer = getViewerSession(appState);
+    const viewKey = viewer?.viewKey || '';
+    if (viewKey.startsWith('gallery_') || viewKey.startsWith('viewer::gallery_')) {
+        return false;
+    }
+
+    const view = viewKey ? selectView(viewKey) : null;
+    if (view?.viewType && String(view.viewType).startsWith('gallery_')) {
+        return false;
+    }
+
+    return true;
+}
 
 /**
  * Initialize the progress sync module
@@ -142,6 +164,7 @@ export function initProgressSync(socketInstance) {
  * @returns {Object|null} - {video_timestamp, video_duration} or null if no video found
  */
 export function getCurrentVideoProgress(requirePlaying = false) {
+    if (!isPlaybackProgressAllowed()) return null;
     const viewer = window.ragotModules?.appDom?.mediaViewer;
     const activeVideo = getViewerPlaybackVideo(viewer);
     return getVideoProgressSnapshot(activeVideo, requirePlaying);
@@ -155,6 +178,7 @@ export function getCurrentVideoProgress(requirePlaying = false) {
  */
 export function emitMyStateUpdate(categoryId, index, includeVideoProgress = false) {
     const appState = getAppState();
+    if (!isPlaybackProgressAllowed(appState)) return;
     if (!socket) {
         console.warn('emitMyStateUpdate: Socket instance is not available.');
         return;
@@ -174,13 +198,23 @@ export function emitMyStateUpdate(categoryId, index, includeVideoProgress = fals
         index = 0;
     }
 
+    const currentMedia = getViewerRecordAt(index, appState);
+    const viewer = getViewerSession(appState);
+    const currentView = viewer ? selectView(viewer.viewKey) : null;
     const payload = {
         category_id: categoryId,
+        viewKey: viewer?.viewKey || null,
+        viewType: currentView?.viewType || null,
+        viewParams: viewer ? selectParams(viewer.viewKey) : {},
+        mediaId: currentMedia?.id || null,
         index: index,
-        total_count: appState.fullMediaList?.length || 0
+        total_count: getKnownViewerCount(appState)
     };
+    if (!payload.viewKey || !payload.viewType || !payload.mediaId) {
+        console.warn('emitMyStateUpdate: Missing canonical view identity; skipping state update.');
+        return;
+    }
 
-    const currentMedia = appState.fullMediaList?.[index];
     if (currentMedia) {
         payload.thumbnail_url = currentMedia.thumbnailUrl || currentMedia.url;
     }
@@ -194,15 +228,6 @@ export function emitMyStateUpdate(categoryId, index, includeVideoProgress = fals
                 payload.video_url = currentMedia.url;
             }
         }
-    }
-
-    // Only send media_order when it changes
-    const list = appState.fullMediaList;
-    const orderHash = list.length + '_' + (list[0]?.url || '') + '_' + (list[list.length - 1]?.url || '');
-
-    if (orderHash !== lastSentOrderHash) {
-        payload.media_order = list.map(item => item?.url).filter(Boolean);
-        lastSentOrderHash = orderHash;
     }
 
     if (hasActiveProfile()) {
@@ -228,13 +253,6 @@ export function emitMyStateUpdate(categoryId, index, includeVideoProgress = fals
 }
 
 /**
- * Reset the order hash (used when category changes)
- */
-export function resetOrderHash() {
-    lastSentOrderHash = null;
-}
-
-/**
  * Create video progress save handler for a video element
  * @param {HTMLVideoElement} videoElement - The video element
  * @param {Object} file - The file info object
@@ -244,22 +262,22 @@ export function resetOrderHash() {
 export function createVideoProgressSaver(videoElement, file, categoryId) {
     let lastSavedTime = 0;
     const boundIndex = Number.parseInt(videoElement?.dataset?.index, 10);
-    const getBoundIndex = () => Number.isInteger(boundIndex) ? boundIndex : getAppState().currentMediaIndex;
+    const getBoundIndex = () => Number.isInteger(boundIndex)
+        ? boundIndex
+        : (getViewerSession(getAppState())?.activeIndex ?? 0);
     const getBoundMedia = () => {
         const idx = getBoundIndex();
-        const list = getAppState().fullMediaList || [];
-        return list[idx] || file || null;
+        return getViewerRecordAt(idx, getAppState()) || file || null;
     };
 
     const saveVideoProgress = (isCritical = false, videoCompleted = false) => {
         const appState = getAppState();
-        // Sync Mode: Never save progress for anyone
-        if (appState.syncModeEnabled) {
+        if (!isPlaybackProgressAllowed(appState)) {
             return;
         }
 
-        // Gallery layout does NOT save progress
-        if (getCurrentLayout() === 'gallery') {
+        // Sync Mode: Never save progress for anyone
+        if (appState.syncModeEnabled) {
             return;
         }
 
@@ -268,7 +286,7 @@ export function createVideoProgressSaver(videoElement, file, categoryId) {
             const index = getBoundIndex();
             const mediaUrl = currentMedia?.url || file?.url || null;
             const thumbnailUrl = currentMedia?.thumbnailUrl || currentMedia?.url || file?.thumbnailUrl || file?.url;
-            const totalCount = appState.fullMediaList?.length || 0;
+            const totalCount = getKnownViewerCount(appState);
             const timestamp = videoElement.currentTime;
             const duration = videoElement.duration;
 
@@ -289,9 +307,6 @@ export function createVideoProgressSaver(videoElement, file, categoryId) {
                 duration,
                 videoCompleted,
                 isCritical,
-                mediaOrder: appState.trackingMode === 'video' && mediaUrl
-                    ? appState.fullMediaList?.map(item => item?.url).filter(Boolean)
-                    : null,
                 optimisticLayout: isCritical
             });
         }

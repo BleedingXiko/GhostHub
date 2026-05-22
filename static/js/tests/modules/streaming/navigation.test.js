@@ -3,6 +3,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { openViewerByUrl } from '../../../modules/layouts/streaming/navigation.js';
+import { streamingState } from '../../../modules/layouts/streaming/state.js';
+
+vi.mock('../../../utils/authManager.js', () => ({
+  ensureFeatureAccess: vi.fn(async () => true)
+}));
+
+vi.mock('../../../modules/ui/controller.js', () => ({
+  toggleSpinner: vi.fn()
+}));
 
 describe('Streaming Navigation', () => {
   beforeEach(() => {
@@ -27,9 +37,41 @@ describe('Streaming Navigation', () => {
     
     window.ragotModules = {
       mediaLoader: {
-        viewCategory: vi.fn()
+        openCategoryViewer: vi.fn(),
+        openViewerFromView: vi.fn()
+      },
+      mediaOrdering: {
+        getOrder: vi.fn(() => ({
+          orderedIds: ['movies::movie1.mp4', 'movies::movie2.mp4'],
+          status: 'ready',
+          hasMore: false,
+          pageToken: null,
+          viewMeta: {}
+        })),
+        state: { version: 1 },
+        subscribe: vi.fn(() => () => {})
+      },
+      mediaManifest: {
+        get: vi.fn((id) => ({
+          id,
+          url: id === 'movies::movie1.mp4' ? '/media/movies/movie1.mp4' : '/media/movies/movie2.mp4',
+          categoryId: 'movies',
+          name: id.split('::').pop(),
+          type: 'video'
+        })),
+        getMany: vi.fn((ids) => ids.map((id) => window.ragotModules.mediaManifest.get(id)).filter(Boolean)),
+        has: vi.fn(() => false),
+        isMissing: vi.fn(() => false),
+        subscribe: vi.fn(() => () => {}),
+        recordsVersion: 1
       }
     };
+
+    streamingState.setState({
+      categoriesData: [],
+      mediaFilter: 'all',
+      subfolderFilter: null
+    });
   });
 
   describe('Card click navigation', () => {
@@ -46,16 +88,39 @@ describe('Streaming Navigation', () => {
       expect(handler).toHaveBeenCalledWith('/media/movie1.mp4');
     });
 
-    it('should call mediaLoader.viewCategory', async () => {
+    it('should call mediaLoader.openCategoryViewer', async () => {
       const categoryId = 'movies';
-      const mediaUrls = ['/media/movie1.mp4', '/media/movie2.mp4'];
       const startIndex = 0;
       
-      await window.ragotModules.mediaLoader.viewCategory(categoryId, mediaUrls, startIndex);
+      await window.ragotModules.mediaLoader.openCategoryViewer({ categoryId, startIndex });
       
-      expect(window.ragotModules.mediaLoader.viewCategory).toHaveBeenCalledWith(
-        categoryId, mediaUrls, startIndex
-      );
+      expect(window.ragotModules.mediaLoader.openCategoryViewer).toHaveBeenCalledWith({ categoryId, startIndex });
+    });
+
+    it('opens with manifest-backed row records so viewer swipe navigation has the full list', async () => {
+      streamingState.setState({
+        categoriesData: [{
+          id: 'movies',
+          name: 'Movies',
+          viewKey: 'streaming_row::movies',
+          viewPage: 1,
+          viewHasMore: false,
+          viewStatus: 'ready',
+          viewSubfolder: '',
+          viewMediaFilter: 'all',
+          subfolders: []
+        }]
+      });
+
+      await openViewerByUrl('movies', '/media/movies/movie2.mp4');
+
+      expect(window.ragotModules.mediaLoader.openViewerFromView).toHaveBeenCalledWith({
+        sourceViewKey: 'streaming_row::movies',
+        categoryId: 'movies',
+        startIndex: 1,
+        startRecordId: 'movies::movie2.mp4',
+        mediaUrl: '/media/movies/movie2.mp4'
+      });
     });
   });
 

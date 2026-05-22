@@ -89,10 +89,10 @@ class Config:
     # Rate limiting (Mbps) - Prevents network saturation and abuse
     # These are base limits for AP/WiFi; Ethernet gets 4x multiplier via network detection
     # Set to 0 to disable rate limiting for that category
-    UPLOAD_RATE_LIMIT_PER_CLIENT = 50.0    # Mbps per client for uploads (base for AP/WiFi)
-    UPLOAD_RATE_LIMIT_GLOBAL = 500.0       # Mbps total for all uploads
+    UPLOAD_RATE_LIMIT_PER_CLIENT = 500.0   # Mbps per client for uploads (LAN-class; chunks block-and-wait, not 429)
+    UPLOAD_RATE_LIMIT_GLOBAL = 1000.0      # Mbps total for all uploads (~125 MB/s; above realistic Pi+USB disk write)
     DOWNLOAD_RATE_LIMIT_PER_CLIENT = 50.0  # Mbps per client for downloads (base for AP/WiFi)
-    DOWNLOAD_RATE_LIMIT_GLOBAL = 500.0     # Mbps total for all downloads
+    DOWNLOAD_RATE_LIMIT_GLOBAL = 100.0     # Mbps total for all downloads
     STREAM_MAX_DURATION_SECONDS = 0         # 0 = unlimited, >0 = hard cap per stream request
     STREAM_READ_TIMEOUT_SECONDS = 15        # Per-chunk file read timeout for streaming
     STALE_MEDIA_CLEANUP_INTERVAL = 21600    # Run stale media cleanup every 6 hours

@@ -168,7 +168,7 @@ class StabilityTest:
         Progress endpoints require an active profile_id in the session.
         Created profiles are tracked in self._test_profile_ids for cleanup.
         """
-        profile_name = f'stability-{id(session)}-{int(time.time())}'
+        profile_name = f'ghst-test-stability-{id(session)}-{int(time.time())}'
         try:
             resp = session.post(
                 f"{self.base_url}/api/profiles",

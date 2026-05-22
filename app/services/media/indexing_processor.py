@@ -22,6 +22,13 @@ DB_WRITE_RETRY_ATTEMPTS = 4
 DB_WRITE_RETRY_BASE_DELAY_SECONDS = 0.05
 STALE_DELETION_SET_DIFF_THRESHOLD = 50000
 STALE_DELETION_DB_BATCH_SIZE = 5000
+SKIPPED_DIRECTORY_NAMES = {
+    ".ghosthub",
+    ".ghosthub_uploads",
+    "$recycle.bin",
+    "system volume information",
+    "recycler",
+}
 
 
 def _is_retryable_db_error(err):
@@ -86,6 +93,46 @@ def get_indexing_chunk_size():
     if tier == "STANDARD":
         return standard_chunk
     return base_chunk
+
+
+def _is_skipped_directory_name(name):
+    """Return True for hidden/system directories ignored by media indexing."""
+    if not name:
+        return True
+    return name.startswith(".") or name.lower() in SKIPPED_DIRECTORY_NAMES
+
+
+def _indexed_metadata_is_stale(existing, entry, *, force_refresh=False):
+    """Return True when an indexed row should be rewritten from current stat data."""
+    if force_refresh or existing is None:
+        return True
+
+    existing_hash = existing.get("hash", "")
+    existing_size = existing.get("size")
+    existing_mtime = existing.get("mtime")
+    current_size = entry.get("size")
+    current_mtime = entry.get("mtime")
+    entry_type = entry.get("type")
+
+    if existing_hash == "":
+        return True
+    if existing_mtime != current_mtime:
+        return True
+    if existing_size != current_size:
+        return True
+
+    if entry_type == "image":
+        try:
+            existing_size_int = int(existing_size)
+            current_size_int = int(current_size or 0)
+        except (TypeError, ValueError):
+            return True
+        if existing_size_int <= 0 and current_size_int > 0:
+            return True
+        if existing_size_int < 1024 and current_size_int > existing_size_int:
+            return True
+
+    return False
 
 
 def process_indexing_task(
@@ -187,13 +234,7 @@ def process_indexing_task(
                     dirs[:] = [
                         d
                         for d in dirs
-                        if d.lower()
-                        not in [
-                            ".ghosthub",
-                            ".ghosthub_uploads",
-                            "$recycle.bin",
-                            "system volume information",
-                        ]
+                        if not _is_skipped_directory_name(d)
                     ]
                     for filename in sorted(files):
                         if is_media_file(filename):
@@ -228,13 +269,7 @@ def process_indexing_task(
                 dirs[:] = [
                     d
                     for d in dirs
-                    if d.lower()
-                    not in [
-                        ".ghosthub",
-                        ".ghosthub_uploads",
-                        "$recycle.bin",
-                        "system volume information",
-                    ]
+                    if not _is_skipped_directory_name(d)
                 ]
                 total_files += sum(1 for filename in files if is_media_file(filename))
                 gevent.sleep(0)
@@ -315,13 +350,11 @@ def process_indexing_task(
                 existing_size = existing.get("size") if existing else None
                 existing_mtime = existing.get("mtime") if existing else None
 
-                is_modified = force_refresh or existing is None
-                if not is_modified and (
-                    existing_hash == ""
-                    or existing_size != entry.get("size")
-                    or existing_mtime != entry.get("mtime")
-                ):
-                    is_modified = True
+                is_modified = _indexed_metadata_is_stale(
+                    existing,
+                    entry,
+                    force_refresh=force_refresh,
+                )
 
                 if is_modified:
                     file_hash = generate_file_hash(
@@ -504,32 +537,24 @@ def process_indexing_task(
         and os.path.isdir(category_path)
     ):
         try:
+            scanned_dirs = 0
             for entry in os.scandir(category_path):
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                if entry.name.startswith("."):
-                    continue
-                name_lower = entry.name.lower()
-                if name_lower in (
-                    ".ghosthub",
-                    ".ghosthub_uploads",
-                    "$recycle.bin",
-                    "system volume information",
-                ):
+                if _is_skipped_directory_name(entry.name):
                     continue
 
                 child_id = f"{category_id}::{entry.name}"
-                if not media_index_service.has_media_index_entries(
+                logger.debug("Queueing child category '%s' for indexing", entry.name)
+                queue_child_category(
                     child_id,
-                    show_hidden=True,
-                ):
-                    logger.debug("Queueing child category '%s' for indexing", entry.name)
-                    queue_child_category(
-                        child_id,
-                        entry.path,
-                        entry.name,
-                        force_refresh=False,
-                    )
+                    entry.path,
+                    entry.name,
+                    force_refresh=False,
+                )
+                scanned_dirs += 1
+                if scanned_dirs % max(1, chunk_size) == 0:
+                    gevent.sleep(0)
         except Exception as child_err:
             logger.debug(
                 "Could not queue child categories for '%s': %s",
